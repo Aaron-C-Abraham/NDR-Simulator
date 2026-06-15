@@ -714,9 +714,14 @@ func runSNMPEnum(req AttackRequest) (*AttackResult, error) {
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "UDP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
 
+		if attackerDev == nil || dev == nil {
+			logWarn("runSNMPEnum target=%s: no device with MAC address available, skipping PCAP", targetIP)
+			continue
+		}
+
 		// PCAP
 		srcMAC := parseMACAddress(attackerDev.MACAddress)
-		dstMAC := parseMACAddress(targetDev.MACAddress)
+		dstMAC := parseMACAddress(dev.MACAddress)
 		src_port := randomPort()
 		var frames [][]byte
 		// SNMP query

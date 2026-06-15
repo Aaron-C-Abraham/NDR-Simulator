@@ -436,7 +436,11 @@ func runBruteForceSNMP(req AttackRequest) (*AttackResult, error) {
 			dev = d
 		}
 		for _, c := range communities {
-			msg := fmt.Sprintf("SNMP: community '%s' attempted from %s to %s — %s", c, req.AttackerIP, targetIP, map[bool]string{c == "public": "accepted", true: "rejected"}[c != "public"])
+			status := "rejected"
+			if c == "public" {
+				status = "accepted"
+			}
+			msg := fmt.Sprintf("SNMP: community '%s' attempted from %s to %s — %s", c, req.AttackerIP, targetIP, status)
 			ev := sendSyslog(dev, msg, 5)
 			result.SyslogCount++
 			eventID, _ := recordRunEvent(req.RunID, "syslog", targetIP, req.AttackerIP, targetIP, "UDP", ev)
@@ -754,7 +758,7 @@ func runPowerShellC2(req AttackRequest) (*AttackResult, error) {
 		}
 		msgs := []string{
 			fmt.Sprintf("PowerShell: encoded command executed on %s — IEX([System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String(...)))", targetIP),
-			fmt.Sprintf("EDR: PowerShell C2 beacon from %s to %s — base64 encoded HTTPS POST every 60s with %d% jitter", targetIP, c2IP, 20),
+			fmt.Sprintf("EDR: PowerShell C2 beacon from %s to %s — base64 encoded HTTPS POST every 60s with %d%% jitter", targetIP, c2IP, 20),
 		}
 		for _, msg := range msgs {
 			ev := sendSyslog(dev, msg, 3)
