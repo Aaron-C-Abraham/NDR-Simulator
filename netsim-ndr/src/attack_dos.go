@@ -385,15 +385,22 @@ func runRUDY(req AttackRequest) (*AttackResult, error) {
 	fw := getFirewall()
 	for _, targetIP := range req.TargetIPs {
 		targetDev, _ := getDeviceByIP(targetIP)
-		if targetDev != nil && targetDev.Telemetry.Syslog {
-			msg := fmt.Sprintf("R.U.D.Y. attack: %d slow POST connections from %s — Content-Length declared but body sent 1 byte/10s", connections, req.AttackerIP)
-			ev := sendSyslog(targetDev, msg, 3)
-			result.SyslogCount++
-			eventID, _ := recordRunEvent(req.RunID, "syslog", targetDev.Name, req.AttackerIP, targetIP, "TCP", ev)
-			result.EventIDs = append(result.EventIDs, eventID)
+		dev := targetDev
+		if dev == nil {
+			dev = fw
+		}
+		msg := fmt.Sprintf("R.U.D.Y. attack: %d slow POST connections from %s — Content-Length declared but body sent 1 byte/10s", connections, req.AttackerIP)
+		ev := sendSyslog(dev, msg, 3)
+		result.SyslogCount++
+		eventID, _ := recordRunEvent(req.RunID, "syslog", targetIP, req.AttackerIP, targetIP, "TCP", ev)
+		result.EventIDs = append(result.EventIDs, eventID)
+
+		flowCount := connections / 5
+		if flowCount < 1 {
+			flowCount = 1
 		}
 		var flows []FlowRecord
-		for idx := 0; idx < connections/5; idx++ {
+		for idx := 0; idx < flowCount; idx++ {
 			flows = append(flows, FlowRecord{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 50, Packets: 1, StartTime: time.Now().Add(-600 * time.Second), EndTime: time.Now(), TCPFlags: 0x18})
 		}
 		if fw != nil && fw.Telemetry.Netflow {

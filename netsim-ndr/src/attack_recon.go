@@ -1022,18 +1022,18 @@ func runSubdomainEnum(req AttackRequest) (*AttackResult, error) {
 		return result, nil
 	}
 	subdomains := []string{"mail", "vpn", "dev", "stage", "prod", "api", "git", "admin", "portal", "intranet", "owa", "remote", "secure", "dc01", "dc02"}
-	for idx, sub := range subdomains {
-		if idx >= count {
-			break
-		}
+	queriesSent := 0
+	for idx := 0; idx < count; idx++ {
+		sub := subdomains[idx%len(subdomains)]
 		msg := fmt.Sprintf("client %s#%d: query: %s.%s IN A +", req.AttackerIP, randomPort(), sub, domain)
 		ev := sendSyslog(dnsDev, msg, 6)
 		result.SyslogCount++
+		queriesSent++
 		eventID, _ := recordRunEvent(req.RunID, "syslog", dnsDev.Name, req.AttackerIP, dnsDev.IPAddress, "UDP", ev)
 		result.EventIDs = append(result.EventIDs, eventID)
 		time.Sleep(10 * time.Millisecond)
 	}
-	flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: dnsDev.IPAddress, SrcPort: randomPort(), DstPort: 53, Protocol: 17, Bytes: uint32(count * 60), Packets: uint32(count * 2), StartTime: time.Now(), EndTime: time.Now().Add(time.Duration(count/10) * time.Second)}}
+	flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: dnsDev.IPAddress, SrcPort: randomPort(), DstPort: 53, Protocol: 17, Bytes: uint32(queriesSent * 60), Packets: uint32(queriesSent * 2), StartTime: time.Now(), EndTime: time.Now().Add(time.Duration(queriesSent/10) * time.Second)}}
 	fw := getFirewall()
 	if fw != nil && fw.Telemetry.Netflow {
 		ExportNetflowV9(fw.IPAddress, flows)
