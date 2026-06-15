@@ -27,8 +27,22 @@ func runPortScan(req AttackRequest) (*AttackResult, error) {
 	}
 	portRange, _ := req.Params["port_range"]
 	low_up := strings.Split(portRange, "-")
-	lower_range, _ := strconv.Atoi(low_up[0])
-	upper_range, _ := strconv.Atoi(low_up[1])
+	if len(low_up) != 2 {
+		// port_range missing or malformed (e.g. when a scenario launches this
+		// attack without specifying it) — fall back to a sensible default range.
+		low_up = []string{"1", "1024"}
+	}
+	lower_range, err := strconv.Atoi(strings.TrimSpace(low_up[0]))
+	if err != nil {
+		lower_range = 1
+	}
+	upper_range, err := strconv.Atoi(strings.TrimSpace(low_up[1]))
+	if err != nil {
+		upper_range = 1024
+	}
+	if lower_range > upper_range {
+		lower_range, upper_range = upper_range, lower_range
+	}
 	ports := make([]uint16, 0)
 	for p := lower_range; p <= upper_range; p++ {
 		ports = append(ports, uint16(p))
