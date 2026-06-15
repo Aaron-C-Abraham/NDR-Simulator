@@ -784,10 +784,15 @@ func runSMTPUserEnum(req AttackRequest) (*AttackResult, error) {
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
 
+		attackerDev, _ := getDeviceByIP(req.AttackerIP)
+		if attackerDev == nil || targetDev == nil {
+			logWarn("runSMTPUserEnum target=%s: no device with MAC address available, skipping PCAP", targetIP)
+			continue
+		}
+
 		var frames [][]byte
 
 		attackerdomain := fmt.Sprintf("mail.%s", domain)
-		attackerDev, _ := getDeviceByIP(req.AttackerIP)
 		seq := rand.Uint32()
 		srcMAC := parseMACAddress(attackerDev.MACAddress)
 		dstMAC := parseMACAddress(targetDev.MACAddress)
@@ -826,11 +831,27 @@ func runWebDirBrute(req AttackRequest) (*AttackResult, error) {
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	targetPort := getAttackParamInt(req.Params, "target_port", 80)
 	fw := getFirewall()
-	paths := []string{"/admin", "/backup", "/.git", "/wp-admin", "/phpmyadmin", "/api/v1", "/swagger", "/actuator", "/.env", "/config"}
+	// path → HTTP status the simulated server returns. A real dir brute-force
+	// is only useful when some paths are "found" (200/403/301) among the 404s.
+	paths := []struct {
+		path   string
+		status int
+	}{
+		{"/admin", 403},
+		{"/backup", 200},
+		{"/.git", 200},
+		{"/wp-admin", 301},
+		{"/phpmyadmin", 403},
+		{"/api/v1", 200},
+		{"/swagger", 200},
+		{"/actuator", 403},
+		{"/.env", 200},
+		{"/config", 404},
+	}
 	for _, targetIP := range req.TargetIPs {
 		targetDev, _ := getDeviceByIP(targetIP)
-		for _, path := range paths {
-			msg := fmt.Sprintf("%s - - \"GET %s HTTP/1.1\" 404 0 \"-\" \"gobuster/3.1.0\"", req.AttackerIP, path)
+		for _, p := range paths {
+			msg := fmt.Sprintf("%s - - \"GET %s HTTP/1.1\" %d 0 \"-\" \"gobuster/3.1.0\"", req.AttackerIP, p.path, p.status)
 			dev := targetDev
 			if dev == nil {
 				dev = fw
