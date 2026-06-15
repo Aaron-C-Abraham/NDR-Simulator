@@ -13,18 +13,18 @@ import (
 
 // FlowRecord represents a single network flow tuple.
 type FlowRecord struct {
-	SrcIP      string    `json:"src_ip"`
-	DstIP      string    `json:"dst_ip"`
-	SrcPort    uint16    `json:"src_port"`
-	DstPort    uint16    `json:"dst_port"`
-	Protocol   uint8     `json:"protocol"` // 6=TCP, 17=UDP, 1=ICMP
-	Bytes      uint32    `json:"bytes"`
-	Packets    uint32    `json:"packets"`
-	StartTime  time.Time `json:"start_time"`
-	EndTime    time.Time `json:"end_time"`
-	TCPFlags   uint8     `json:"tcp_flags"`
-	InputIface uint16    `json:"input_iface"`
-	OutputIface uint16   `json:"output_iface"`
+	SrcIP       string    `json:"src_ip"`
+	DstIP       string    `json:"dst_ip"`
+	SrcPort     uint16    `json:"src_port"`
+	DstPort     uint16    `json:"dst_port"`
+	Protocol    uint8     `json:"protocol"` // 6=TCP, 17=UDP, 1=ICMP
+	Bytes       uint32    `json:"bytes"`
+	Packets     uint32    `json:"packets"`
+	StartTime   time.Time `json:"start_time"`
+	EndTime     time.Time `json:"end_time"`
+	TCPFlags    uint8     `json:"tcp_flags"`
+	InputIface  uint16    `json:"input_iface"`
+	OutputIface uint16    `json:"output_iface"`
 }
 
 // GlobalNetflowConn is the UDP connection for NetFlow v9 export.
@@ -67,7 +67,13 @@ func initFlowExporters() error {
 	return nil
 }
 
-// ExportNetflowV9 sends a NetFlow v9 packet for the given flow records.
+// netflowMaxRecordsPerPacket caps how many flow records go into a single
+// NetFlow v9 datagram so the packet stays well under the UDP size limit.
+const netflowMaxRecordsPerPacket = 30
+
+// ExportNetflowV9 sends the given flow records to the NetFlow collector,
+// splitting them across multiple datagrams so no single packet exceeds the
+// maximum UDP payload size.
 func ExportNetflowV9(exporterIP string, flows []FlowRecord) {
 	defer panicHandler(traceFunc(), nil)
 	if GlobalNetflowConn == nil {
@@ -75,15 +81,27 @@ func ExportNetflowV9(exporterIP string, flows []FlowRecord) {
 	}
 	logInfo("Entering ExportNetflowV9 exporter=%s flows=%d", exporterIP, len(flows))
 
-	GlobalFlowSeqNumber++
-	packet := buildNetflowV9Packet(exporterIP, flows, GlobalFlowSeqNumber)
-	if _, err := GlobalNetflowConn.Write(packet); err != nil {
-		logError("ExportNetflowV9 write: %v", err)
+	totalBytes := 0
+	for start := 0; start < len(flows); start += netflowMaxRecordsPerPacket {
+		end := start + netflowMaxRecordsPerPacket
+		if end > len(flows) {
+			end = len(flows)
+		}
+		batch := flows[start:end]
+
+		GlobalFlowSeqNumber++
+		packet := buildNetflowV9Packet(exporterIP, batch, GlobalFlowSeqNumber)
+		if _, err := GlobalNetflowConn.Write(packet); err != nil {
+			logError("ExportNetflowV9 write: %v", err)
+		} else {
+			totalBytes += len(packet)
+		}
 	}
+
 	for _, flow := range flows {
 		storeFlowRecord(flow, exporterIP, "netflow9")
 	}
-	logInfo("Return from ExportNetflowV9 bytes=%d", len(packet))
+	logInfo("Return from ExportNetflowV9 bytes=%d", totalBytes)
 }
 
 // buildNetflowV9Packet builds a binary NetFlow v9 packet.
@@ -110,11 +128,11 @@ func buildNetflowV9Packet(exporterIP string, flows []FlowRecord, seqNum uint32) 
 	// NetFlow v9 Header
 	hdr := make([]byte, 20)
 	binary.BigEndian.PutUint16(hdr[0:], 9)                              // version
-	binary.BigEndian.PutUint16(hdr[2:], uint16(2))                     // count (2 flowsets)
+	binary.BigEndian.PutUint16(hdr[2:], uint16(2))                      // count (2 flowsets)
 	binary.BigEndian.PutUint32(hdr[4:], uint32(time.Now().Unix()-3600)) // sys uptime ms (approximate)
-	binary.BigEndian.PutUint32(hdr[8:], uint32(time.Now().Unix()))     // unix secs
-	binary.BigEndian.PutUint32(hdr[12:], seqNum)                       // sequence
-	binary.BigEndian.PutUint32(hdr[16:], ipToUint32(exporterIP))       // source ID
+	binary.BigEndian.PutUint32(hdr[8:], uint32(time.Now().Unix()))      // unix secs
+	binary.BigEndian.PutUint32(hdr[12:], seqNum)                        // sequence
+	binary.BigEndian.PutUint32(hdr[16:], ipToUint32(exporterIP))        // source ID
 
 	buf = append(buf, hdr...)
 	buf = append(buf, templateSet...)
@@ -141,9 +159,9 @@ func buildNetflowV9Template() []byte {
 	fieldCount := len(fields)
 	recLen := 4 + fieldCount*4 // template header + fields
 	buf := make([]byte, 4+4+recLen)
-	binary.BigEndian.PutUint16(buf[0:], 0)              // FlowSet ID = 0 (template)
-	binary.BigEndian.PutUint16(buf[2:], uint16(4+recLen)) // Length
-	binary.BigEndian.PutUint16(buf[4:], 256)            // Template ID
+	binary.BigEndian.PutUint16(buf[0:], 0)                  // FlowSet ID = 0 (template)
+	binary.BigEndian.PutUint16(buf[2:], uint16(4+recLen))   // Length
+	binary.BigEndian.PutUint16(buf[4:], 256)                // Template ID
 	binary.BigEndian.PutUint16(buf[6:], uint16(fieldCount)) // Field count
 	offset := 8
 	for _, field := range fields {
@@ -211,11 +229,11 @@ func buildIPFIXPacket(flows []FlowRecord, seqNum uint32) []byte {
 
 	// IPFIX Message Header (16 bytes)
 	hdr := make([]byte, 16)
-	binary.BigEndian.PutUint16(hdr[0:], 10)                         // version = 10
-	binary.BigEndian.PutUint16(hdr[2:], totalLen)                   // length
-	binary.BigEndian.PutUint32(hdr[4:], uint32(time.Now().Unix()))  // export time
-	binary.BigEndian.PutUint32(hdr[8:], seqNum)                     // sequence number
-	binary.BigEndian.PutUint32(hdr[12:], 1)                         // observation domain ID
+	binary.BigEndian.PutUint16(hdr[0:], 10)                        // version = 10
+	binary.BigEndian.PutUint16(hdr[2:], totalLen)                  // length
+	binary.BigEndian.PutUint32(hdr[4:], uint32(time.Now().Unix())) // export time
+	binary.BigEndian.PutUint32(hdr[8:], seqNum)                    // sequence number
+	binary.BigEndian.PutUint32(hdr[12:], 1)                        // observation domain ID
 
 	buf = append(buf, hdr...)
 	buf = append(buf, dataSet...)
@@ -246,13 +264,13 @@ func buildSflowV5Packet(switchDev *Device, flows []FlowRecord) []byte {
 
 	// sFlow v5 header (28 bytes)
 	hdr := make([]byte, 28)
-	binary.BigEndian.PutUint32(hdr[0:], 5)                            // version
-	binary.BigEndian.PutUint32(hdr[4:], 1)                            // address type = IPv4
+	binary.BigEndian.PutUint32(hdr[0:], 5)                               // version
+	binary.BigEndian.PutUint32(hdr[4:], 1)                               // address type = IPv4
 	binary.BigEndian.PutUint32(hdr[8:], ipToUint32(switchDev.IPAddress)) // agent address
-	binary.BigEndian.PutUint32(hdr[12:], 1)                           // sub-agent ID
-	binary.BigEndian.PutUint32(hdr[16:], GlobalFlowSeqNumber)         // sequence number
-	binary.BigEndian.PutUint32(hdr[20:], 500)                         // uptime ms (fake)
-	binary.BigEndian.PutUint32(hdr[24:], uint32(len(flows)))          // number of samples
+	binary.BigEndian.PutUint32(hdr[12:], 1)                              // sub-agent ID
+	binary.BigEndian.PutUint32(hdr[16:], GlobalFlowSeqNumber)            // sequence number
+	binary.BigEndian.PutUint32(hdr[20:], 500)                            // uptime ms (fake)
+	binary.BigEndian.PutUint32(hdr[24:], uint32(len(flows)))             // number of samples
 
 	buf = append(buf, hdr...)
 
@@ -271,15 +289,15 @@ func buildSflowFlowSample(flow FlowRecord, seqNum uint32) []byte {
 	buf := make([]byte, 8+sampleLen)
 	binary.BigEndian.PutUint32(buf[0:], 1) // enterprise=0, format=1 (flow sample)
 	binary.BigEndian.PutUint32(buf[4:], uint32(sampleLen))
-	binary.BigEndian.PutUint32(buf[8:], seqNum)     // sequence
-	binary.BigEndian.PutUint32(buf[12:], 1000)       // sampling rate
-	binary.BigEndian.PutUint32(buf[16:], 1000)       // sample pool
-	binary.BigEndian.PutUint32(buf[20:], 0)          // drops
-	binary.BigEndian.PutUint32(buf[24:], 1)          // input
-	binary.BigEndian.PutUint32(buf[28:], 2)          // output
-	binary.BigEndian.PutUint32(buf[32:], 1)          // num records
+	binary.BigEndian.PutUint32(buf[8:], seqNum) // sequence
+	binary.BigEndian.PutUint32(buf[12:], 1000)  // sampling rate
+	binary.BigEndian.PutUint32(buf[16:], 1000)  // sample pool
+	binary.BigEndian.PutUint32(buf[20:], 0)     // drops
+	binary.BigEndian.PutUint32(buf[24:], 1)     // input
+	binary.BigEndian.PutUint32(buf[28:], 2)     // output
+	binary.BigEndian.PutUint32(buf[32:], 1)     // num records
 	// Record type = raw packet header
-	binary.BigEndian.PutUint32(buf[36:], 1)          // enterprise=0, format=1
+	binary.BigEndian.PutUint32(buf[36:], 1) // enterprise=0, format=1
 	binary.BigEndian.PutUint32(buf[40:], uint32(len(rawPkt)))
 	copy(buf[44:], rawPkt)
 	return buf
@@ -296,8 +314,8 @@ func buildSflowRawPacketHeader(flow FlowRecord) []byte {
 	// IP header
 	buf[14] = 0x45 // version=4, IHL=5
 	buf[15] = 0x00
-	binary.BigEndian.PutUint16(buf[16:], 40)          // total length (IP+TCP, no data)
-	buf[22] = 64                                       // TTL
+	binary.BigEndian.PutUint16(buf[16:], 40) // total length (IP+TCP, no data)
+	buf[22] = 64                             // TTL
 	buf[23] = flow.Protocol
 	binary.BigEndian.PutUint32(buf[26:], ipToUint32(flow.SrcIP))
 	binary.BigEndian.PutUint32(buf[30:], ipToUint32(flow.DstIP))
@@ -312,23 +330,23 @@ func buildSflowRawPacketHeader(flow FlowRecord) []byte {
 // --- Flow generation helpers for attack scenarios ---
 
 // FlowScan creates flow records representing a port scan.
-func FlowScan(attackerIP, targetIP string, ports []uint16,duration uint64) []FlowRecord {
+func FlowScan(attackerIP, targetIP string, ports []uint16, duration uint64) []FlowRecord {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering FlowScan attacker=%s target=%s ports=%d", attackerIP, targetIP, len(ports))
 	var flows []FlowRecord
 	for _, port := range ports {
 		if duration > 0 {
-		sleepTime := time.Second / time.Duration(duration)
-		time.Sleep(sleepTime)// simulate scan duration
+			sleepTime := time.Second / time.Duration(duration)
+			time.Sleep(sleepTime) // simulate scan duration
 		}
 		flows = append(flows, FlowRecord{
-			SrcIP:    attackerIP,
-			DstIP:    targetIP,
-			SrcPort:  randomPort(),
-			DstPort:  port,
-			Protocol: 6,
-			Bytes:    60,
-			Packets:  1,
+			SrcIP:     attackerIP,
+			DstIP:     targetIP,
+			SrcPort:   randomPort(),
+			DstPort:   port,
+			Protocol:  6,
+			Bytes:     60,
+			Packets:   1,
 			StartTime: time.Now(),
 			EndTime:   time.Now().Add(time.Millisecond),
 			TCPFlags:  0x02, // SYN
@@ -347,13 +365,13 @@ func FlowBeaconing(srcIP, dstIP string, count int, interval time.Duration) []Flo
 	for idx := 0; idx < count; idx++ {
 		ts := start.Add(time.Duration(idx) * interval)
 		flows = append(flows, FlowRecord{
-			SrcIP:    srcIP,
-			DstIP:    dstIP,
-			SrcPort:  randomPort(),
-			DstPort:  443,
-			Protocol: 6,
-			Bytes:    uint32(200 + rand.Intn(800)),
-			Packets:  uint32(2 + rand.Intn(5)),
+			SrcIP:     srcIP,
+			DstIP:     dstIP,
+			SrcPort:   randomPort(),
+			DstPort:   443,
+			Protocol:  6,
+			Bytes:     uint32(200 + rand.Intn(800)),
+			Packets:   uint32(2 + rand.Intn(5)),
 			StartTime: ts,
 			EndTime:   ts.Add(500 * time.Millisecond),
 			TCPFlags:  0x18, // PSH+ACK
@@ -368,13 +386,13 @@ func FlowExfil(srcIP, dstIP string, totalBytes uint32) []FlowRecord {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering FlowExfil src=%s dst=%s bytes=%d", srcIP, dstIP, totalBytes)
 	flows := []FlowRecord{{
-		SrcIP:    srcIP,
-		DstIP:    dstIP,
-		SrcPort:  randomPort(),
-		DstPort:  443,
-		Protocol: 6,
-		Bytes:    totalBytes,
-		Packets:  totalBytes / 1460,
+		SrcIP:     srcIP,
+		DstIP:     dstIP,
+		SrcPort:   randomPort(),
+		DstPort:   443,
+		Protocol:  6,
+		Bytes:     totalBytes,
+		Packets:   totalBytes / 1460,
 		StartTime: time.Now().Add(-2 * time.Minute),
 		EndTime:   time.Now(),
 		TCPFlags:  0x18,
@@ -390,13 +408,13 @@ func FlowDDoS(sources []string, targetIP string, targetPort uint16, packetsPerSr
 	var flows []FlowRecord
 	for _, src := range sources {
 		flows = append(flows, FlowRecord{
-			SrcIP:    src,
-			DstIP:    targetIP,
-			SrcPort:  randomPort(),
-			DstPort:  targetPort,
-			Protocol: 6,
-			Bytes:    packetsPerSrc * 60,
-			Packets:  packetsPerSrc,
+			SrcIP:     src,
+			DstIP:     targetIP,
+			SrcPort:   randomPort(),
+			DstPort:   targetPort,
+			Protocol:  6,
+			Bytes:     packetsPerSrc * 60,
+			Packets:   packetsPerSrc,
 			StartTime: time.Now().Add(-30 * time.Second),
 			EndTime:   time.Now(),
 			TCPFlags:  0x02,
