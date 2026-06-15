@@ -1,0 +1,2117 @@
+2026/05/18 17:25:37.888743 [INFO]  Starting netsim-ndr
+2026/05/18 17:25:37.889280 [INFO]  Entering startNetSimServer
+2026/05/18 17:25:37.889280 Entering loadConfiguration serverName=netsim-ndr
+2026/05/18 17:25:37.889810 Return from loadConfiguration loaded=17 keys
+2026/05/18 17:25:37.889810 [INFO]  Entering initDatabase
+2026/05/18 17:25:37.889810 [TRACE] db.path=netsim-ndr.db
+2026/05/18 17:25:37.890882 [INFO]  Entering runSchemaMigration
+2026/05/18 17:25:37.906217 [INFO]  Return from runSchemaMigration ok tables=10
+2026/05/18 17:25:37.906217 [INFO]  Return from initDatabase path=netsim-ndr.db
+2026/05/18 17:25:37.906217 [INFO]  Entering loadTopology
+2026/05/18 17:25:37.906762 [INFO]  Return from loadTopology devices=24
+2026/05/18 17:25:37.906762 [INFO]  Entering seedDefaultTopology
+2026/05/18 17:25:37.907332 [INFO]  Return from seedDefaultTopology already seeded count=24
+2026/05/18 17:25:37.907332 [INFO]  Entering loadBuiltInScenarios
+2026/05/18 17:25:37.907916 [WARN]  loadBuiltInScenarios: no YAML files found in scenarios, seeding defaults
+2026/05/18 17:25:37.907916 [INFO]  Entering seedBuiltInScenarios
+2026/05/18 17:25:37.907916 [INFO]  Return from seedBuiltInScenarios already seeded count=6
+2026/05/18 17:25:37.907916 [INFO]  Entering initAttackRegistry
+2026/05/18 17:25:37.907916 [INFO]  Return from initAttackRegistry attacks=34
+2026/05/18 17:25:37.907916 [INFO]  Entering initSyslogEmitter
+2026/05/18 17:25:37.909659 [INFO]  Return from initSyslogEmitter target=127.0.0.1:514
+2026/05/18 17:25:37.910146 [INFO]  Entering initFlowExporters
+2026/05/18 17:25:37.910459 [INFO]  Return from initFlowExporters
+2026/05/18 17:25:37.910459 [INFO]  Entering initPCAPWriter
+2026/05/18 17:25:37.910459 [INFO]  Return from initPCAPWriter dir=output/pcap
+2026/05/18 17:25:37.910459 [INFO]  startNetSimServer all components ready — starting API server
+2026/05/18 17:25:37.910459 [INFO]  Entering startAPIServer
+2026/05/18 17:25:37.910459 [INFO]  startAPIServer listening on :8090
+2026/05/18 17:25:38.697159 [INFO]  HTTP GET /ws 200 565µs
+2026/05/18 17:25:48.724583 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:25:48.724583 [INFO]  Entering getTelemetryStats
+2026/05/18 17:25:48.724583 [INFO]  Entering getPCAPFiles
+2026/05/18 17:25:48.724583 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:25:48.724583 [INFO]  Return from getTelemetryStats syslog=0 flows=0 pcap=0
+2026/05/18 17:25:48.727412 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:25:48.727412 [INFO]  HTTP GET /api/v1/telemetry/stats 200 2.8288ms
+2026/05/18 17:25:58.667423 [INFO]  Entering handleGetMitreCoverage
+2026/05/18 17:25:58.667423 [INFO]  Entering getMitreCoverage
+2026/05/18 17:25:58.668497 [INFO]  Return from getMitreCoverage tactics=8
+2026/05/18 17:25:58.669110 [INFO]  Return from handleGetMitreCoverage tactics=8
+2026/05/18 17:25:58.669110 [INFO]  HTTP GET /api/v1/mitre/coverage 200 1.6869ms
+2026/05/18 17:25:58.721424 [INFO]  Entering handleGetAuditLog
+2026/05/18 17:25:58.721424 [INFO]  Entering getAuditLogEntries limit=100
+2026/05/18 17:25:58.722252 [INFO]  Return from getAuditLogEntries count=19
+2026/05/18 17:25:58.722252 [INFO]  Return from handleGetAuditLog count=19
+2026/05/18 17:25:58.722621 [INFO]  HTTP GET /api/v1/audit 200 1.197ms
+2026/05/18 17:25:58.765385 [INFO]  Entering handleListReports
+2026/05/18 17:25:58.765385 [INFO]  Entering listReports
+2026/05/18 17:25:58.765385 [INFO]  Return from listReports count=0
+2026/05/18 17:25:58.765385 [INFO]  Return from handleListReports count=0
+2026/05/18 17:25:58.765385 [INFO]  HTTP GET /api/v1/reports 200 0s
+2026/05/18 17:26:08.218425 [INFO]  Entering handleGetMitreCoverage
+2026/05/18 17:26:08.218425 [INFO]  Entering getMitreCoverage
+2026/05/18 17:26:08.218425 [INFO]  Return from getMitreCoverage tactics=8
+2026/05/18 17:26:08.218930 [INFO]  Return from handleGetMitreCoverage tactics=8
+2026/05/18 17:26:08.218930 [INFO]  HTTP GET /api/v1/mitre/coverage 200 505.4µs
+2026/05/18 17:26:31.584036 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:26:31.584036 [INFO]  Entering getTelemetryStats
+2026/05/18 17:26:31.584036 [INFO]  Entering getPCAPFiles
+2026/05/18 17:26:31.584543 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:26:31.584543 [INFO]  Return from getTelemetryStats syslog=0 flows=0 pcap=0
+2026/05/18 17:26:31.584543 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:26:31.584543 [INFO]  HTTP GET /api/v1/telemetry/stats 200 507.1µs
+2026/05/18 17:26:49.194164 [INFO]  Entering handleListScenarios
+2026/05/18 17:26:49.194164 [INFO]  Entering loadAllScenariosDB
+2026/05/18 17:26:49.195566 [INFO]  Return from loadAllScenariosDB count=6
+2026/05/18 17:26:49.195566 [INFO]  Return from handleListScenarios count=6
+2026/05/18 17:26:49.195566 [INFO]  HTTP GET /api/v1/scenarios 200 1.4018ms
+2026/05/18 17:26:56.169522 [INFO]  Entering handleListScenarios
+2026/05/18 17:26:56.169522 [INFO]  Entering loadAllScenariosDB
+2026/05/18 17:26:56.170033 [INFO]  Return from loadAllScenariosDB count=6
+2026/05/18 17:26:56.170033 [INFO]  Return from handleListScenarios count=6
+2026/05/18 17:26:56.170033 [INFO]  HTTP GET /api/v1/scenarios 200 511.4µs
+2026/05/18 17:26:56.225550 [INFO]  Entering handleStartRun
+2026/05/18 17:26:56.225550 [INFO]  HTTP POST /api/v1/runs 400 0s
+2026/05/18 17:27:00.826394 [INFO]  Entering handleListScenarios
+2026/05/18 17:27:00.826394 [INFO]  Entering loadAllScenariosDB
+2026/05/18 17:27:00.826900 [INFO]  Return from loadAllScenariosDB count=6
+2026/05/18 17:27:00.826900 [INFO]  Return from handleListScenarios count=6
+2026/05/18 17:27:00.826900 [INFO]  HTTP GET /api/v1/scenarios 200 505.8µs
+2026/05/18 17:27:00.906521 [INFO]  Entering handleStartRun
+2026/05/18 17:27:00.906521 [INFO]  Entering getScenarioDB id=06d079f5-cf1d-4f3c-aa42-f6fdd63c3830
+2026/05/18 17:27:00.906521 [INFO]  Return from getScenarioDB name=B1 — C2 Beaconing (HTTPS)
+2026/05/18 17:27:00.906521 [INFO]  Entering createTestRun scenario=B1 — C2 Beaconing (HTTPS) attacker=198.51.100.100 targets=[10.0.3.102 10.0.3.105 10.0.3.101 10.0.3.103 10.0.3.104]
+2026/05/18 17:27:00.911009 [INFO]  Return from createTestRun runID=e779174c-2318-4c6a-bb3b-d475fe83704a
+2026/05/18 17:27:00.911009 [INFO]  Entering executeScenario runID=e779174c-2318-4c6a-bb3b-d475fe83704a scenario=B1 — C2 Beaconing (HTTPS)
+2026/05/18 17:27:00.911009 [INFO]  Entering updateRunStatus runID=e779174c-2318-4c6a-bb3b-d475fe83704a status=running
+2026/05/18 17:27:00.915339 [INFO]  Return from updateRunStatus runID=e779174c-2318-4c6a-bb3b-d475fe83704a status=running
+2026/05/18 17:27:00.915339 [INFO]  executeScenario runID=e779174c-2318-4c6a-bb3b-d475fe83704a step=1/2 attack=recon-portscan
+2026/05/18 17:27:00.915339 [INFO]  Entering executeAttack attackID=recon-portscan runID=e779174c-2318-4c6a-bb3b-d475fe83704a attacker=198.51.100.100
+2026/05/18 17:27:00.915339 [INFO]  Entering runPortScan attacker=198.51.100.100 targets=[10.0.2.10]
+2026/05/18 17:27:00.915339 [INFO]  Entering SyslogPortScan attacker=198.51.100.100 target=10.0.2.10
+2026/05/18 17:27:00.919034 [INFO]  Return from handleStartRun runID=e779174c-2318-4c6a-bb3b-d475fe83704a
+2026/05/18 17:27:00.919034 [INFO]  HTTP POST /api/v1/runs 201 12.5135ms
+2026/05/18 17:27:00.944478 [INFO]  Return from SyslogPortScan events=6
+2026/05/18 17:27:00.970506 [INFO]  Entering FlowScan attacker=198.51.100.100 target=10.0.2.10 ports=20
+2026/05/18 17:27:00.970506 [INFO]  Return from FlowScan flows=20
+2026/05/18 17:27:00.971034 [INFO]  Entering ExportNetflowV9 exporter=10.0.0.1 flows=20
+2026/05/18 17:27:01.037021 [INFO]  Return from ExportNetflowV9 bytes=684
+2026/05/18 17:27:01.040685 [INFO]  Entering PCAPPortScan attacker=198.51.100.100 target=10.0.2.10 ports=20
+2026/05/18 17:27:01.040685 [INFO]  Entering writePCAPFile runID=scan attack=portscan packets=40
+2026/05/18 17:27:01.041330 PANIC recovered at main.writePCAPFile (C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/pcap_writer.go:56): runtime error: slice bounds out of range [:8] with length 4
+goroutine 59 [running]:
+runtime/debug.Stack()
+	C:/Users/aakur/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.windows-amd64/src/runtime/debug/stack.go:26 +0x5e
+main.panicHandler({0xc000490230, 0x6e}, 0x0)
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/utils.go:72 +0x58
+panic({0x7ff6a4b88880?, 0xc0003b2e10?})
+	C:/Users/aakur/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.windows-amd64/src/runtime/panic.go:783 +0x132
+main.writePCAPFile({0x7ff6a4bc19fb, 0x4}, {0x7ff6a4bcbdfc, 0x8}, {0xc0003c0a08, 0x28, 0x14?})
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/pcap_writer.go:59 +0x985
+main.PCAPPortScan(0xc0001b2750, 0xc000033a00, {0xc00023da88, 0x14, 0x7ff6a4af4800?})
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/pcap_writer.go:229 +0x6fa
+main.runPortScan({{0xc00000ba00, 0xe}, {0xc00040a840, 0x24}, {0xc00000ba20, 0xe}, {0xc0001faca0, 0x1, 0x1}, 0xc000391e90})
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/attack_recon.go:50 +0x551
+main.executeAttack({{0xc00000ba00, 0xe}, {0xc00040a840, 0x24}, {0xc00000ba20, 0xe}, {0xc0001faca0, 0x1, 0x1}, 0xc000391e90})
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/attack_engine.go:93 +0x93b
+main.executeScenario(0xc000448f00)
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/scenario_engine.go:294 +0x4d8
+created by main.handleStartRun in goroutine 69
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/api_handlers.go:304 +0x3e5
+2026/05/18 17:27:01.041330 [INFO]  Return from PCAPPortScan frames=40 path=
+2026/05/18 17:27:01.041330 [INFO]  Return from runPortScan syslogs=6 flows=20
+2026/05/18 17:27:01.045892 [INFO]  Return from executeAttack attackID=recon-portscan syslogs=6 flows=20 pcap=1
+2026/05/18 17:27:01.045892 [INFO]  executeScenario runID=e779174c-2318-4c6a-bb3b-d475fe83704a step=2/2 attack=c2-beaconing
+2026/05/18 17:27:14.289288 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:27:14.289288 [INFO]  Entering getTelemetryStats
+2026/05/18 17:27:14.289288 [INFO]  Entering getPCAPFiles
+2026/05/18 17:27:14.289800 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:27:14.289800 [INFO]  Return from getTelemetryStats syslog=6 flows=20 pcap=0
+2026/05/18 17:27:14.289800 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:27:14.289800 [INFO]  HTTP GET /api/v1/telemetry/stats 200 512.2µs
+2026/05/18 17:27:25.393791 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:27:25.393791 [INFO]  Entering getRecentSyslogMessages limit=5 device= format=
+2026/05/18 17:27:25.393791 [INFO]  Return from getRecentSyslogMessages count=5
+2026/05/18 17:27:25.394294 [INFO]  Return from handleGetSyslogTelemetry count=5
+2026/05/18 17:27:25.394294 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 503µs
+2026/05/18 17:27:31.046182 [INFO]  Entering executeAttack attackID=c2-beaconing runID=e779174c-2318-4c6a-bb3b-d475fe83704a attacker=198.51.100.100
+2026/05/18 17:27:31.046182 [INFO]  Entering runC2Beaconing attacker=198.51.100.100 targets=[10.0.3.101]
+2026/05/18 17:27:31.046182 [INFO]  Entering SyslogBeaconing device=ws-finance-01 c2=198.51.100.200 interval=100ms count=5
+2026/05/18 17:27:31.590067 [INFO]  Return from SyslogBeaconing events=5
+2026/05/18 17:27:31.612224 [INFO]  Entering FlowBeaconing src=10.0.3.101 dst=198.51.100.200 count=5
+2026/05/18 17:27:31.612224 [INFO]  Return from FlowBeaconing flows=5
+2026/05/18 17:27:31.612224 [INFO]  Entering ExportNetflowV9 exporter=10.0.0.1 flows=5
+2026/05/18 17:27:31.634941 [INFO]  Return from ExportNetflowV9 bytes=234
+2026/05/18 17:27:31.645462 [INFO]  Return from executeAttack attackID=c2-beaconing syslogs=5 flows=5 pcap=0
+2026/05/18 17:27:31.645462 [INFO]  Entering updateRunStatus runID=e779174c-2318-4c6a-bb3b-d475fe83704a status=completed
+2026/05/18 17:27:31.647048 [INFO]  Return from updateRunStatus runID=e779174c-2318-4c6a-bb3b-d475fe83704a status=completed
+2026/05/18 17:27:31.647048 [INFO]  Return from executeScenario runID=e779174c-2318-4c6a-bb3b-d475fe83704a
+2026/05/18 17:27:31.647048 [INFO]  Entering scoreTestRun runID=e779174c-2318-4c6a-bb3b-d475fe83704a
+2026/05/18 17:27:31.647048 [INFO]  Entering getScenarioDB id=06d079f5-cf1d-4f3c-aa42-f6fdd63c3830
+2026/05/18 17:27:31.647048 [INFO]  Return from getScenarioDB name=B1 — C2 Beaconing (HTTPS)
+2026/05/18 17:27:31.647048 [INFO]  Entering computeScore runID=e779174c-2318-4c6a-bb3b-d475fe83704a expected=3 received=0
+2026/05/18 17:27:31.647048 [INFO]  Return from computeScore tp=0 fp=0 fn=3 total=0.40
+2026/05/18 17:27:31.647048 [INFO]  Entering saveScoringResult runID=e779174c-2318-4c6a-bb3b-d475fe83704a
+2026/05/18 17:27:31.652518 [INFO]  Return from saveScoringResult runID=e779174c-2318-4c6a-bb3b-d475fe83704a score=0.40
+2026/05/18 17:27:31.652518 [INFO]  Return from scoreTestRun runID=e779174c-2318-4c6a-bb3b-d475fe83704a score=0.40 dr=0.00
+2026/05/18 17:29:05.469411 [INFO]  Entering handleTopologyGraph
+2026/05/18 17:29:05.469411 [INFO]  Return from handleTopologyGraph nodes=24 edges=21
+2026/05/18 17:29:05.469411 [INFO]  HTTP GET /api/v1/topology/graph 200 0s
+2026/05/18 17:29:11.716687 [INFO]  Entering handleTopologyGraph
+2026/05/18 17:29:11.716687 [INFO]  Return from handleTopologyGraph nodes=24 edges=21
+2026/05/18 17:29:11.716687 [INFO]  HTTP GET /api/v1/topology/graph 200 0s
+2026/05/18 17:32:09.143543 [INFO]  Entering handleListDevices
+2026/05/18 17:32:09.144141 [INFO]  Entering handleTopologySummary
+2026/05/18 17:32:09.144141 [INFO]  Return from handleListDevices count=24
+2026/05/18 17:32:09.144141 [INFO]  HTTP GET /api/v1/topology/devices 200 597.4µs
+2026/05/18 17:32:09.144141 [INFO]  Return from handleTopologySummary
+2026/05/18 17:32:09.144141 [INFO]  HTTP GET /api/v1/topology/summary 200 0s
+2026/05/18 17:33:08.266644 [INFO]  HTTP GET /ws 200 509.2µs
+2026/05/18 17:33:08.429710 [INFO]  Entering handleTopologyGraph
+2026/05/18 17:33:08.429710 [INFO]  Entering handleTopologySummary
+2026/05/18 17:33:08.430216 [INFO]  Return from handleTopologySummary
+2026/05/18 17:33:08.430216 [INFO]  HTTP GET /api/v1/topology/summary 200 506µs
+2026/05/18 17:33:08.430216 [INFO]  Return from handleTopologyGraph nodes=24 edges=21
+2026/05/18 17:33:08.430216 [INFO]  HTTP GET /api/v1/topology/graph 200 506µs
+2026/05/18 17:34:02.420341 [INFO]  Entering handleListAttacks
+2026/05/18 17:34:02.421527 [INFO]  Return from handleListAttacks count=34
+2026/05/18 17:34:02.421527 [INFO]  HTTP GET /api/v1/attacks 200 1.1858ms
+2026/05/18 17:34:08.139272 [INFO]  Entering handleExecuteAttack
+2026/05/18 17:34:08.139272 [INFO]  Entering executeAttack attackID=wireless-deauth runID= attacker=198.51.100.100
+2026/05/18 17:34:08.139272 [INFO]  Entering sendSyslog device=ap-floor1 msg=Deauthentication flood: 373 deauth frames from 198.51.100.100 targeting client a
+2026/05/18 17:34:08.144668 [TRACE] sendSyslog format=rfc3164 raw=<186>May 18 17:34:08 apfloor1 %CISCO-6-SYSLOG: 872787: %SYS-2-MSG: Deauthentication flood: 373 deauth frames from 198.51
+2026/05/18 17:34:08.144668 [INFO]  Return from sendSyslog device=ap-floor1
+2026/05/18 17:34:08.149734 [INFO]  Entering sendSyslog device=ap-floor1 msg=Deauthentication flood: 493 deauth frames from 198.51.100.100 targeting client a
+2026/05/18 17:34:08.155665 [TRACE] sendSyslog format=rfc3164 raw=<186>May 18 17:34:08 apfloor1 %CISCO-6-SYSLOG: 485253: %SYS-2-MSG: Deauthentication flood: 493 deauth frames from 198.51
+2026/05/18 17:34:08.155665 [INFO]  Return from sendSyslog device=ap-floor1
+2026/05/18 17:34:08.159976 [INFO]  Entering sendSyslog device=ap-floor1 msg=Deauthentication flood: 114 deauth frames from 198.51.100.100 targeting client a
+2026/05/18 17:34:08.163425 [TRACE] sendSyslog format=rfc3164 raw=<186>May 18 17:34:08 apfloor1 %CISCO-6-SYSLOG: 445094: %SYS-2-MSG: Deauthentication flood: 114 deauth frames from 198.51
+2026/05/18 17:34:08.164217 [INFO]  Return from sendSyslog device=ap-floor1
+2026/05/18 17:34:08.168091 [INFO]  Entering sendSyslog device=ap-floor1 msg=Deauthentication flood: 225 deauth frames from 198.51.100.100 targeting client a
+2026/05/18 17:34:08.173212 [TRACE] sendSyslog format=rfc3164 raw=<186>May 18 17:34:08 apfloor1 %CISCO-6-SYSLOG: 431234: %SYS-2-MSG: Deauthentication flood: 225 deauth frames from 198.51
+2026/05/18 17:34:08.173212 [INFO]  Return from sendSyslog device=ap-floor1
+2026/05/18 17:34:08.177545 [INFO]  Entering sendSyslog device=ap-floor1 msg=Deauthentication flood: 167 deauth frames from 198.51.100.100 targeting client a
+2026/05/18 17:34:08.181464 [TRACE] sendSyslog format=rfc3164 raw=<186>May 18 17:34:08 apfloor1 %CISCO-6-SYSLOG: 280854: %SYS-2-MSG: Deauthentication flood: 167 deauth frames from 198.51
+2026/05/18 17:34:08.181464 [INFO]  Return from sendSyslog device=ap-floor1
+2026/05/18 17:34:08.186175 [INFO]  Entering sendSyslog device=ap-floor1 msg=Deauthentication flood: 318 deauth frames from 198.51.100.100 targeting client a
+2026/05/18 17:34:08.190583 [TRACE] sendSyslog format=rfc3164 raw=<186>May 18 17:34:08 apfloor1 %CISCO-6-SYSLOG: 604498: %SYS-2-MSG: Deauthentication flood: 318 deauth frames from 198.51
+2026/05/18 17:34:08.190583 [INFO]  Return from sendSyslog device=ap-floor1
+2026/05/18 17:34:08.194487 [INFO]  Entering sendSyslog device=ap-floor1 msg=Deauthentication flood: 493 deauth frames from 198.51.100.100 targeting client a
+2026/05/18 17:34:08.198410 [TRACE] sendSyslog format=rfc3164 raw=<186>May 18 17:34:08 apfloor1 %CISCO-6-SYSLOG: 980928: %SYS-2-MSG: Deauthentication flood: 493 deauth frames from 198.51
+2026/05/18 17:34:08.198964 [INFO]  Return from sendSyslog device=ap-floor1
+2026/05/18 17:34:08.203189 [INFO]  Entering sendSyslog device=ap-floor1 msg=Deauthentication flood: 328 deauth frames from 198.51.100.100 targeting client a
+2026/05/18 17:34:08.208143 [TRACE] sendSyslog format=rfc3164 raw=<186>May 18 17:34:08 apfloor1 %CISCO-6-SYSLOG: 258640: %SYS-2-MSG: Deauthentication flood: 328 deauth frames from 198.51
+2026/05/18 17:34:08.208143 [INFO]  Return from sendSyslog device=ap-floor1
+2026/05/18 17:34:08.213003 [INFO]  Entering sendSyslog device=ap-floor1 msg=Deauthentication flood: 212 deauth frames from 198.51.100.100 targeting client a
+2026/05/18 17:34:08.217427 [TRACE] sendSyslog format=rfc3164 raw=<186>May 18 17:34:08 apfloor1 %CISCO-6-SYSLOG: 172215: %SYS-2-MSG: Deauthentication flood: 212 deauth frames from 198.51
+2026/05/18 17:34:08.218009 [INFO]  Return from sendSyslog device=ap-floor1
+2026/05/18 17:34:08.220843 [INFO]  Entering sendSyslog device=ap-floor1 msg=Deauthentication flood: 171 deauth frames from 198.51.100.100 targeting client a
+2026/05/18 17:34:08.223905 [TRACE] sendSyslog format=rfc3164 raw=<186>May 18 17:34:08 apfloor1 %CISCO-6-SYSLOG: 315531: %SYS-2-MSG: Deauthentication flood: 171 deauth frames from 198.51
+2026/05/18 17:34:08.223905 [INFO]  Return from sendSyslog device=ap-floor1
+2026/05/18 17:34:08.235461 [INFO]  Return from executeAttack attackID=wireless-deauth syslogs=10 flows=0 pcap=0
+2026/05/18 17:34:08.235461 [INFO]  Return from handleExecuteAttack attackID=wireless-deauth
+2026/05/18 17:34:08.235461 [INFO]  HTTP POST /api/v1/attacks/execute 200 96.189ms
+2026/05/18 17:34:21.590256 [INFO]  Entering handleGetDashboard
+2026/05/18 17:34:21.591770 [INFO]  Return from handleGetDashboard
+2026/05/18 17:34:21.591770 [INFO]  HTTP GET /api/v1/dashboard 200 1.5147ms
+2026/05/18 17:34:21.592276 [INFO]  Entering handleListRuns
+2026/05/18 17:34:21.592276 [INFO]  Entering getTestRunsDB filter=
+2026/05/18 17:34:21.592276 [INFO]  Entering handleTopologySummary
+2026/05/18 17:34:21.592276 [INFO]  Return from handleTopologySummary
+2026/05/18 17:34:21.592276 [INFO]  HTTP GET /api/v1/topology/summary 200 0s
+2026/05/18 17:34:21.593284 [INFO]  Return from getTestRunsDB count=6
+2026/05/18 17:34:21.593284 [INFO]  Return from handleListRuns count=6
+2026/05/18 17:34:21.593284 [INFO]  HTTP GET /api/v1/runs 200 1.5135ms
+2026/05/18 17:34:37.521701 [INFO]  Entering handleTopologyGraph
+2026/05/18 17:34:37.522207 [INFO]  Return from handleTopologyGraph nodes=24 edges=21
+2026/05/18 17:34:37.522207 [INFO]  HTTP GET /api/v1/topology/graph 200 506.2µs
+2026/05/18 17:34:37.526474 [INFO]  Entering handleTopologySummary
+2026/05/18 17:34:37.526474 [INFO]  Return from handleTopologySummary
+2026/05/18 17:34:37.526474 [INFO]  HTTP GET /api/v1/topology/summary 200 0s
+2026/05/18 17:34:38.857785 [INFO]  Entering handleListAttacks
+2026/05/18 17:34:38.857785 [INFO]  Return from handleListAttacks count=34
+2026/05/18 17:34:38.857785 [INFO]  HTTP GET /api/v1/attacks 200 0s
+2026/05/18 17:34:40.318466 [INFO]  Entering handleListScenarios
+2026/05/18 17:34:40.318466 [INFO]  Entering loadAllScenariosDB
+2026/05/18 17:34:40.318979 [INFO]  Return from loadAllScenariosDB count=6
+2026/05/18 17:34:40.319578 [INFO]  Return from handleListScenarios count=6
+2026/05/18 17:34:40.319578 [INFO]  HTTP GET /api/v1/scenarios 200 1.1122ms
+2026/05/18 17:34:41.285203 [INFO]  Entering handleListRuns
+2026/05/18 17:34:41.285203 [INFO]  Entering getTestRunsDB filter=
+2026/05/18 17:34:41.285908 [INFO]  Return from getTestRunsDB count=6
+2026/05/18 17:34:41.285908 [INFO]  Return from handleListRuns count=6
+2026/05/18 17:34:41.285908 [INFO]  HTTP GET /api/v1/runs 200 705.7µs
+2026/05/18 17:34:42.627049 [INFO]  Entering handleListScoring
+2026/05/18 17:34:42.627049 [INFO]  Entering getAllScoringResultsDB
+2026/05/18 17:34:42.628148 [INFO]  Return from getAllScoringResultsDB count=6
+2026/05/18 17:34:42.628148 [INFO]  Return from handleListScoring count=6
+2026/05/18 17:34:42.628148 [INFO]  HTTP GET /api/v1/scoring 200 1.0996ms
+2026/05/18 17:34:46.104291 [INFO]  Entering handleComputeScore runID=e779174c-2318-4c6a-bb3b-d475fe83704a
+2026/05/18 17:34:46.104291 [INFO]  Return from handleComputeScore runID=e779174c-2318-4c6a-bb3b-d475fe83704a
+2026/05/18 17:34:46.104291 [INFO]  HTTP POST /api/v1/scoring/e779174c-2318-4c6a-bb3b-d475fe83704a/compute 202 0s
+2026/05/18 17:34:46.104291 [INFO]  Entering scoreTestRun runID=e779174c-2318-4c6a-bb3b-d475fe83704a
+2026/05/18 17:34:46.104799 [INFO]  Entering getScenarioDB id=06d079f5-cf1d-4f3c-aa42-f6fdd63c3830
+2026/05/18 17:34:46.104799 [INFO]  Return from getScenarioDB name=B1 — C2 Beaconing (HTTPS)
+2026/05/18 17:34:46.104799 [INFO]  Entering computeScore runID=e779174c-2318-4c6a-bb3b-d475fe83704a expected=3 received=0
+2026/05/18 17:34:46.105362 [INFO]  Return from computeScore tp=0 fp=0 fn=3 total=0.40
+2026/05/18 17:34:46.105362 [INFO]  Entering saveScoringResult runID=e779174c-2318-4c6a-bb3b-d475fe83704a
+2026/05/18 17:34:46.111269 [INFO]  Return from saveScoringResult runID=e779174c-2318-4c6a-bb3b-d475fe83704a score=0.40
+2026/05/18 17:34:46.111269 [INFO]  Return from scoreTestRun runID=e779174c-2318-4c6a-bb3b-d475fe83704a score=0.40 dr=0.00
+2026/05/18 17:34:49.121168 [INFO]  Entering handleListScoring
+2026/05/18 17:34:49.121168 [INFO]  Entering getAllScoringResultsDB
+2026/05/18 17:34:49.121168 [INFO]  Return from getAllScoringResultsDB count=6
+2026/05/18 17:34:49.121168 [INFO]  Return from handleListScoring count=6
+2026/05/18 17:34:49.121168 [INFO]  HTTP GET /api/v1/scoring 200 0s
+2026/05/18 17:34:49.856229 [INFO]  Entering handleComputeScore runID=912be903-c010-4e76-b66d-8027027b0406
+2026/05/18 17:34:49.856229 [INFO]  Return from handleComputeScore runID=912be903-c010-4e76-b66d-8027027b0406
+2026/05/18 17:34:49.856229 [INFO]  HTTP POST /api/v1/scoring/912be903-c010-4e76-b66d-8027027b0406/compute 202 0s
+2026/05/18 17:34:49.856229 [INFO]  Entering scoreTestRun runID=912be903-c010-4e76-b66d-8027027b0406
+2026/05/18 17:34:49.856733 [INFO]  Entering getScenarioDB id=5db0a1a2-5ece-449e-8867-c21d815a17dc
+2026/05/18 17:34:49.856733 [INFO]  Return from getScenarioDB name=B4 — Data Exfiltration
+2026/05/18 17:34:49.856733 [INFO]  Entering computeScore runID=912be903-c010-4e76-b66d-8027027b0406 expected=3 received=0
+2026/05/18 17:34:49.857292 [INFO]  Return from computeScore tp=0 fp=0 fn=3 total=0.40
+2026/05/18 17:34:49.857292 [INFO]  Entering saveScoringResult runID=912be903-c010-4e76-b66d-8027027b0406
+2026/05/18 17:34:49.865000 [INFO]  Return from saveScoringResult runID=912be903-c010-4e76-b66d-8027027b0406 score=0.40
+2026/05/18 17:34:49.865000 [INFO]  Return from scoreTestRun runID=912be903-c010-4e76-b66d-8027027b0406 score=0.40 dr=0.00
+2026/05/18 17:34:51.119669 [INFO]  Entering handleComputeScore runID=5308eecf-8e37-4780-9c37-96750d753f9a
+2026/05/18 17:34:51.119669 [INFO]  Return from handleComputeScore runID=5308eecf-8e37-4780-9c37-96750d753f9a
+2026/05/18 17:34:51.119669 [INFO]  HTTP POST /api/v1/scoring/5308eecf-8e37-4780-9c37-96750d753f9a/compute 202 0s
+2026/05/18 17:34:51.119669 [INFO]  Entering scoreTestRun runID=5308eecf-8e37-4780-9c37-96750d753f9a
+2026/05/18 17:34:51.120203 [INFO]  Entering getScenarioDB id=a4fe3ed3-c7f3-4b53-8df7-58d117cd4bfc
+2026/05/18 17:34:51.120203 [INFO]  Return from getScenarioDB name=B3 — Lateral Movement (SMB)
+2026/05/18 17:34:51.120203 [INFO]  Entering computeScore runID=5308eecf-8e37-4780-9c37-96750d753f9a expected=3 received=0
+2026/05/18 17:34:51.120795 [INFO]  Return from computeScore tp=0 fp=0 fn=3 total=0.40
+2026/05/18 17:34:51.120795 [INFO]  Entering saveScoringResult runID=5308eecf-8e37-4780-9c37-96750d753f9a
+2026/05/18 17:34:51.126544 [INFO]  Return from saveScoringResult runID=5308eecf-8e37-4780-9c37-96750d753f9a score=0.40
+2026/05/18 17:34:51.126544 [INFO]  Return from scoreTestRun runID=5308eecf-8e37-4780-9c37-96750d753f9a score=0.40 dr=0.00
+2026/05/18 17:34:52.878829 [INFO]  Entering handleListScoring
+2026/05/18 17:34:52.878829 [INFO]  Entering getAllScoringResultsDB
+2026/05/18 17:34:52.878829 [INFO]  Return from getAllScoringResultsDB count=6
+2026/05/18 17:34:52.878829 [INFO]  Return from handleListScoring count=6
+2026/05/18 17:34:52.878829 [INFO]  HTTP GET /api/v1/scoring 200 0s
+2026/05/18 17:34:54.138463 [INFO]  Entering handleListScoring
+2026/05/18 17:34:54.138463 [INFO]  Entering getAllScoringResultsDB
+2026/05/18 17:34:54.139180 [INFO]  Return from getAllScoringResultsDB count=6
+2026/05/18 17:34:54.139862 [INFO]  Return from handleListScoring count=6
+2026/05/18 17:34:54.139862 [INFO]  HTTP GET /api/v1/scoring 200 1.3989ms
+2026/05/18 17:34:55.266733 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:34:55.266733 [INFO]  Entering getTelemetryStats
+2026/05/18 17:34:55.267488 [INFO]  Entering getPCAPFiles
+2026/05/18 17:34:55.268205 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:34:55.268205 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:34:55.268205 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:34:55.268205 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.4724ms
+2026/05/18 17:34:55.269568 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:34:55.269568 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:34:55.270074 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:34:55.270603 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:34:55.270603 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.0353ms
+2026/05/18 17:35:00.258175 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:35:00.258175 [INFO]  Entering getTelemetryStats
+2026/05/18 17:35:00.258175 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:35:00.258175 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:35:00.259325 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:35:00.259904 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:35:00.259904 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.7292ms
+2026/05/18 17:35:00.260435 [INFO]  Entering getPCAPFiles
+2026/05/18 17:35:00.261000 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:35:00.261000 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:35:00.261000 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:35:00.261000 [INFO]  HTTP GET /api/v1/telemetry/stats 200 3.2143ms
+2026/05/18 17:35:01.211436 [INFO]  Entering handleGetFlowTelemetry
+2026/05/18 17:35:01.211436 [INFO]  Entering getRecentFlowRecords limit=200
+2026/05/18 17:35:01.211436 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:35:01.211436 [INFO]  Entering getTelemetryStats
+2026/05/18 17:35:01.212130 [INFO]  Return from getRecentFlowRecords count=25
+2026/05/18 17:35:01.212684 [INFO]  Return from handleGetFlowTelemetry count=25
+2026/05/18 17:35:01.212684 [INFO]  HTTP GET /api/v1/telemetry/flows 200 1.2471ms
+2026/05/18 17:35:01.212684 [INFO]  Entering getPCAPFiles
+2026/05/18 17:35:01.213449 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:35:01.213449 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:35:01.213449 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:35:01.213449 [INFO]  HTTP GET /api/v1/telemetry/stats 200 2.0127ms
+2026/05/18 17:35:03.074067 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:35:03.074067 [INFO]  Entering getTelemetryStats
+2026/05/18 17:35:03.074574 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:35:03.074574 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:35:03.074574 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:35:03.075118 [INFO]  Entering getPCAPFiles
+2026/05/18 17:35:03.075118 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:35:03.075118 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:35:03.075118 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:35:03.075118 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.0512ms
+2026/05/18 17:35:03.076194 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:35:03.076194 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 2.1272ms
+2026/05/18 17:35:05.268260 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:35:05.268260 [INFO]  Entering getTelemetryStats
+2026/05/18 17:35:05.268260 [INFO]  Entering getPCAPFiles
+2026/05/18 17:35:05.268260 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:35:05.268260 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:35:05.268260 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:35:05.268260 [INFO]  HTTP GET /api/v1/telemetry/stats 200 0s
+2026/05/18 17:35:05.268260 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:35:05.268260 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:35:05.268260 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:35:05.270504 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:35:05.270504 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 2.2444ms
+2026/05/18 17:35:07.952914 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:35:07.953427 [INFO]  Entering getTelemetryStats
+2026/05/18 17:35:07.953427 [INFO]  Entering handleGetFlowTelemetry
+2026/05/18 17:35:07.953427 [INFO]  Entering getRecentFlowRecords limit=200
+2026/05/18 17:35:07.953427 [INFO]  Return from getRecentFlowRecords count=25
+2026/05/18 17:35:07.953997 [INFO]  Return from handleGetFlowTelemetry count=25
+2026/05/18 17:35:07.953997 [INFO]  HTTP GET /api/v1/telemetry/flows 200 570.3µs
+2026/05/18 17:35:07.953997 [INFO]  Entering getPCAPFiles
+2026/05/18 17:35:07.953997 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:35:07.953997 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:35:07.953997 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:35:07.953997 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.083ms
+2026/05/18 17:35:09.120690 [INFO]  Entering handleGetPCAPFiles
+2026/05/18 17:35:09.120690 [INFO]  Entering getPCAPFiles
+2026/05/18 17:35:09.121372 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:35:09.121372 [INFO]  Return from handleGetPCAPFiles count=0
+2026/05/18 17:35:09.121372 [INFO]  HTTP GET /api/v1/telemetry/pcap 200 682.1µs
+2026/05/18 17:35:09.121372 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:35:09.121372 [INFO]  Entering getTelemetryStats
+2026/05/18 17:35:09.121372 [INFO]  Entering getPCAPFiles
+2026/05/18 17:35:09.121961 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:35:09.121961 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:35:09.121961 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:35:09.121961 [INFO]  HTTP GET /api/v1/telemetry/stats 200 589.4µs
+2026/05/18 17:35:10.258717 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:35:10.258717 [INFO]  Entering getTelemetryStats
+2026/05/18 17:35:10.258717 [INFO]  Entering handleGetPCAPFiles
+2026/05/18 17:35:10.258717 [INFO]  Entering getPCAPFiles
+2026/05/18 17:35:10.258717 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:35:10.258717 [INFO]  Return from handleGetPCAPFiles count=0
+2026/05/18 17:35:10.258717 [INFO]  HTTP GET /api/v1/telemetry/pcap 200 0s
+2026/05/18 17:35:10.258717 [INFO]  Entering getPCAPFiles
+2026/05/18 17:35:10.259439 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:35:10.259439 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:35:10.259439 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:35:10.259439 [INFO]  HTTP GET /api/v1/telemetry/stats 200 722.1µs
+2026/05/18 17:35:14.033515 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:35:14.033515 [INFO]  Entering getTelemetryStats
+2026/05/18 17:35:14.033515 [INFO]  Entering handleGetPCAPFiles
+2026/05/18 17:35:14.033515 [INFO]  Entering getPCAPFiles
+2026/05/18 17:35:14.034056 [INFO]  Entering getPCAPFiles
+2026/05/18 17:35:14.034056 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:35:14.034056 [INFO]  Return from handleGetPCAPFiles count=0
+2026/05/18 17:35:14.034056 [INFO]  HTTP GET /api/v1/telemetry/pcap 200 540.4µs
+2026/05/18 17:35:14.034056 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:35:14.034056 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:35:14.034056 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:35:14.034056 [INFO]  HTTP GET /api/v1/telemetry/stats 200 540.4µs
+2026/05/18 17:35:15.257553 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:35:15.257553 [INFO]  Entering getTelemetryStats
+2026/05/18 17:35:15.257553 [INFO]  Entering handleGetPCAPFiles
+2026/05/18 17:35:15.257553 [INFO]  Entering getPCAPFiles
+2026/05/18 17:35:15.258058 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:35:15.258058 [INFO]  Return from handleGetPCAPFiles count=0
+2026/05/18 17:35:15.258058 [INFO]  HTTP GET /api/v1/telemetry/pcap 200 505.1µs
+2026/05/18 17:35:15.258058 [INFO]  Entering getPCAPFiles
+2026/05/18 17:35:15.258058 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:35:15.258058 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:35:15.258058 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:35:15.258058 [INFO]  HTTP GET /api/v1/telemetry/stats 200 505.1µs
+2026/05/18 17:35:16.129684 [INFO]  Entering handleListReports
+2026/05/18 17:35:16.129684 [INFO]  Entering listReports
+2026/05/18 17:35:16.129684 [INFO]  Entering handleListRuns
+2026/05/18 17:35:16.130257 [INFO]  Entering getTestRunsDB filter=completed
+2026/05/18 17:35:16.130257 [INFO]  Return from listReports count=0
+2026/05/18 17:35:16.130257 [INFO]  Return from handleListReports count=0
+2026/05/18 17:35:16.130257 [INFO]  HTTP GET /api/v1/reports 200 573.7µs
+2026/05/18 17:35:16.130799 [INFO]  Return from getTestRunsDB count=6
+2026/05/18 17:35:16.130799 [INFO]  Return from handleListRuns count=6
+2026/05/18 17:35:16.131479 [INFO]  HTTP GET /api/v1/runs 200 1.7956ms
+2026/05/18 17:35:21.693065 [INFO]  Entering handleGetMitreCoverage
+2026/05/18 17:35:21.693065 [INFO]  Entering getMitreCoverage
+2026/05/18 17:35:21.693701 [INFO]  Return from getMitreCoverage tactics=8
+2026/05/18 17:35:21.694150 [INFO]  Return from handleGetMitreCoverage tactics=8
+2026/05/18 17:35:21.694150 [INFO]  HTTP GET /api/v1/mitre/coverage 200 1.0849ms
+2026/05/18 17:36:08.099692 [INFO]  Entering handleListReports
+2026/05/18 17:36:08.099692 [INFO]  Entering listReports
+2026/05/18 17:36:08.100205 [INFO]  Return from listReports count=0
+2026/05/18 17:36:08.100205 [INFO]  Return from handleListReports count=0
+2026/05/18 17:36:08.100205 [INFO]  HTTP GET /api/v1/reports 200 513.7µs
+2026/05/18 17:36:08.101452 [INFO]  Entering handleListRuns
+2026/05/18 17:36:08.101452 [INFO]  Entering getTestRunsDB filter=completed
+2026/05/18 17:36:08.102042 [INFO]  Return from getTestRunsDB count=6
+2026/05/18 17:36:08.102042 [INFO]  Return from handleListRuns count=6
+2026/05/18 17:36:08.102042 [INFO]  HTTP GET /api/v1/runs 200 589.8µs
+2026/05/18 17:36:10.978707 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:36:10.978707 [INFO]  Entering getTelemetryStats
+2026/05/18 17:36:10.979429 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:36:10.979429 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:36:10.979429 [INFO]  Entering getPCAPFiles
+2026/05/18 17:36:10.979429 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:36:10.979429 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:36:10.979429 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:36:10.980045 [INFO]  HTTP GET /api/v1/telemetry/stats 200 721.8µs
+2026/05/18 17:36:10.980045 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:36:10.980045 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:36:10.980045 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.3376ms
+2026/05/18 17:36:15.980092 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:36:15.980800 [INFO]  Entering getTelemetryStats
+2026/05/18 17:36:15.980800 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:36:15.980800 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:36:15.981352 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:36:15.981352 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:36:15.981352 [INFO]  Entering getPCAPFiles
+2026/05/18 17:36:15.981352 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 551.6µs
+2026/05/18 17:36:15.981352 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:36:15.981352 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:36:15.981352 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:36:15.981352 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.2603ms
+2026/05/18 17:36:18.139938 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:36:18.139938 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc3164
+2026/05/18 17:36:18.139938 [INFO]  Return from getRecentSyslogMessages count=10
+2026/05/18 17:36:18.140445 [INFO]  Return from handleGetSyslogTelemetry count=10
+2026/05/18 17:36:18.140445 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 507.6µs
+2026/05/18 17:36:19.822375 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:36:19.822375 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:36:19.822375 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:36:19.822375 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:36:19.822375 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 0s
+2026/05/18 17:36:20.978907 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:36:20.978907 [INFO]  Entering getTelemetryStats
+2026/05/18 17:36:20.978907 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:36:20.979501 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:36:20.979501 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:36:20.979501 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:36:20.979501 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 594.5µs
+2026/05/18 17:36:20.980189 [INFO]  Entering getPCAPFiles
+2026/05/18 17:36:20.980189 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:36:20.980189 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:36:20.980189 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:36:20.980189 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.2828ms
+2026/05/18 17:36:25.976655 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:36:25.976655 [INFO]  Entering getTelemetryStats
+2026/05/18 17:36:25.976655 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:36:25.976655 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:36:25.977161 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:36:25.977161 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:36:25.977161 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 506.1µs
+2026/05/18 17:36:25.977686 [INFO]  Entering getPCAPFiles
+2026/05/18 17:36:25.977686 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:36:25.977686 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:36:25.977686 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:36:25.977686 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.031ms
+2026/05/18 17:36:30.974721 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:36:30.974721 [INFO]  Entering getTelemetryStats
+2026/05/18 17:36:30.974721 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:36:30.974721 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:36:30.975227 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:36:30.975227 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:36:30.975227 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 505.8µs
+2026/05/18 17:36:30.975227 [INFO]  Entering getPCAPFiles
+2026/05/18 17:36:30.975227 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:36:30.975227 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:36:30.975766 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:36:30.975766 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.0444ms
+2026/05/18 17:36:35.978692 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:36:35.978692 [INFO]  Entering getTelemetryStats
+2026/05/18 17:36:35.979722 [INFO]  Entering getPCAPFiles
+2026/05/18 17:36:35.979722 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:36:35.979722 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:36:35.979722 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:36:35.979722 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:36:35.979722 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:36:35.979722 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.0304ms
+2026/05/18 17:36:35.980256 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:36:35.980256 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:36:35.980256 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 533.8µs
+2026/05/18 17:36:40.974426 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:36:40.974426 [INFO]  Entering getTelemetryStats
+2026/05/18 17:36:40.974426 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:36:40.974426 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:36:40.975127 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:36:40.975127 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:36:40.975127 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 701µs
+2026/05/18 17:36:40.975671 [INFO]  Entering getPCAPFiles
+2026/05/18 17:36:40.975671 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:36:40.975671 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:36:40.975671 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:36:40.975671 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.2455ms
+2026/05/18 17:36:45.974811 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:36:45.974811 [INFO]  Entering getTelemetryStats
+2026/05/18 17:36:45.974811 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:36:45.974811 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:36:45.975422 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:36:45.976043 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:36:45.976043 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.2318ms
+2026/05/18 17:36:45.976043 [INFO]  Entering getPCAPFiles
+2026/05/18 17:36:45.976043 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:36:45.976043 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:36:45.976043 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:36:45.976043 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.2318ms
+2026/05/18 17:36:50.972310 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:36:50.972310 [INFO]  Entering getTelemetryStats
+2026/05/18 17:36:50.972815 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:36:50.972815 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:36:50.972815 [INFO]  Entering getPCAPFiles
+2026/05/18 17:36:50.972815 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:36:50.973341 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:36:50.973341 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:36:50.973341 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.0319ms
+2026/05/18 17:36:50.973341 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:36:50.973341 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:36:50.973341 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 526µs
+2026/05/18 17:36:55.970899 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:36:55.970899 [INFO]  Entering getTelemetryStats
+2026/05/18 17:36:55.971405 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:36:55.971405 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:36:55.971405 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:36:55.971405 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:36:55.971405 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 0s
+2026/05/18 17:36:55.971405 [INFO]  Entering getPCAPFiles
+2026/05/18 17:36:55.971405 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:36:55.971405 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:36:55.971405 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:36:55.972060 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.1614ms
+2026/05/18 17:37:00.987464 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:37:00.987464 [INFO]  Entering getTelemetryStats
+2026/05/18 17:37:00.987464 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:37:00.987464 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:37:00.988156 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:37:00.988156 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:37:00.988156 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 692.2µs
+2026/05/18 17:37:00.988156 [INFO]  Entering getPCAPFiles
+2026/05/18 17:37:00.988704 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:37:00.988704 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:37:00.988704 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:37:00.988704 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.2398ms
+2026/05/18 17:37:05.987942 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:37:05.987942 [INFO]  Entering getTelemetryStats
+2026/05/18 17:37:05.987942 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:37:05.987942 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:37:05.988596 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:37:05.988596 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:37:05.988596 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 654.6µs
+2026/05/18 17:37:05.989196 [INFO]  Entering getPCAPFiles
+2026/05/18 17:37:05.989196 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:37:05.989196 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:37:05.989196 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:37:05.989196 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.2538ms
+2026/05/18 17:37:10.982991 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:37:10.982991 [INFO]  Entering getTelemetryStats
+2026/05/18 17:37:10.982991 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:37:10.982991 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:37:10.983611 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:37:10.983611 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:37:10.983611 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 620.6µs
+2026/05/18 17:37:10.983611 [INFO]  Entering getPCAPFiles
+2026/05/18 17:37:10.983611 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:37:10.983611 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:37:10.983611 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:37:10.983611 [INFO]  HTTP GET /api/v1/telemetry/stats 200 620.6µs
+2026/05/18 17:37:15.984328 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:37:15.984328 [INFO]  Entering getTelemetryStats
+2026/05/18 17:37:15.984328 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:37:15.984328 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:37:15.985046 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:37:15.985046 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:37:15.985046 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 718µs
+2026/05/18 17:37:15.985046 [INFO]  Entering getPCAPFiles
+2026/05/18 17:37:15.985046 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:37:15.985046 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:37:15.985046 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:37:15.985046 [INFO]  HTTP GET /api/v1/telemetry/stats 200 718µs
+2026/05/18 17:37:20.981994 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:37:20.981994 [INFO]  Entering getTelemetryStats
+2026/05/18 17:37:20.981994 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:37:20.981994 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:37:20.981994 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:37:20.981994 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:37:20.981994 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 0s
+2026/05/18 17:37:20.981994 [INFO]  Entering getPCAPFiles
+2026/05/18 17:37:20.982561 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:37:20.982561 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:37:20.982561 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:37:20.982561 [INFO]  HTTP GET /api/v1/telemetry/stats 200 567µs
+2026/05/18 17:37:25.980041 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:37:25.980041 [INFO]  Entering getTelemetryStats
+2026/05/18 17:37:25.980041 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:37:25.980041 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:37:25.980763 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:37:25.980763 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:37:25.980763 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 721.8µs
+2026/05/18 17:37:25.981375 [INFO]  Entering getPCAPFiles
+2026/05/18 17:37:25.981375 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:37:25.981375 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:37:25.981375 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:37:25.981375 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.3342ms
+2026/05/18 17:37:30.978317 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:37:30.978317 [INFO]  Entering getTelemetryStats
+2026/05/18 17:37:30.978317 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:37:30.978317 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:37:30.978931 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:37:30.978931 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:37:30.978931 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 614.6µs
+2026/05/18 17:37:30.978931 [INFO]  Entering getPCAPFiles
+2026/05/18 17:37:30.978931 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:37:30.978931 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:37:30.978931 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:37:30.978931 [INFO]  HTTP GET /api/v1/telemetry/stats 200 614.6µs
+2026/05/18 17:37:35.980564 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:37:35.980564 [INFO]  Entering getTelemetryStats
+2026/05/18 17:37:35.981258 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:37:35.981258 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:37:35.981837 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:37:35.981837 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:37:35.981837 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 579.3µs
+2026/05/18 17:37:35.981837 [INFO]  Entering getPCAPFiles
+2026/05/18 17:37:35.981837 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:37:35.981837 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:37:35.981837 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:37:35.981837 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.2732ms
+2026/05/18 17:37:41.002527 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:37:41.002527 [INFO]  Entering getTelemetryStats
+2026/05/18 17:37:41.002527 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:37:41.002527 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:37:41.003032 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:37:41.003032 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:37:41.003032 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 504.7µs
+2026/05/18 17:37:41.003032 [INFO]  Entering getPCAPFiles
+2026/05/18 17:37:41.003546 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:37:41.003546 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:37:41.003546 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:37:41.003546 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.0196ms
+2026/05/18 17:37:45.976573 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:37:45.977079 [INFO]  Entering getTelemetryStats
+2026/05/18 17:37:45.977079 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:37:45.977079 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:37:45.977079 [INFO]  Entering getPCAPFiles
+2026/05/18 17:37:45.977079 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:37:45.977607 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:37:45.977607 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:37:45.977607 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.034ms
+2026/05/18 17:37:45.977607 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:37:45.977607 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:37:45.977607 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 527.8µs
+2026/05/18 17:37:50.973798 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:37:50.974305 [INFO]  Entering getTelemetryStats
+2026/05/18 17:37:50.974305 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:37:50.974305 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:37:50.974840 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:37:50.974840 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:37:50.974840 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 535.6µs
+2026/05/18 17:37:50.974840 [INFO]  Entering getPCAPFiles
+2026/05/18 17:37:50.974840 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:37:50.974840 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:37:50.974840 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:37:50.974840 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.0419ms
+2026/05/18 17:37:55.975361 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:37:55.975361 [INFO]  Entering getTelemetryStats
+2026/05/18 17:37:55.975876 [INFO]  Entering getPCAPFiles
+2026/05/18 17:37:55.975876 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:37:55.976474 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:37:55.976474 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:37:55.976474 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:37:55.976474 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:37:55.976474 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.1134ms
+2026/05/18 17:37:55.976474 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:37:55.976474 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:37:55.976474 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 598.2µs
+2026/05/18 17:38:00.972115 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:38:00.972115 [INFO]  Entering getTelemetryStats
+2026/05/18 17:38:00.972620 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:38:00.972620 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:38:00.972620 [INFO]  Entering getPCAPFiles
+2026/05/18 17:38:00.972620 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:38:00.972620 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:38:00.972620 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:38:00.972620 [INFO]  HTTP GET /api/v1/telemetry/stats 200 505µs
+2026/05/18 17:38:00.972620 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:38:00.972620 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:38:00.972620 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 0s
+2026/05/18 17:38:05.972620 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:38:05.972620 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:38:05.972620 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:38:05.972620 [INFO]  Entering getTelemetryStats
+2026/05/18 17:38:05.973126 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:38:05.973126 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:38:05.973126 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 505.3µs
+2026/05/18 17:38:05.973126 [INFO]  Entering getPCAPFiles
+2026/05/18 17:38:05.973656 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:38:05.973656 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:38:05.973656 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:38:05.973656 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.0356ms
+2026/05/18 17:38:10.971462 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:38:10.971462 [INFO]  Entering getTelemetryStats
+2026/05/18 17:38:10.971462 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:38:10.971462 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:38:10.972210 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:38:10.972210 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:38:10.972210 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 747.8µs
+2026/05/18 17:38:10.972210 [INFO]  Entering getPCAPFiles
+2026/05/18 17:38:10.972210 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:38:10.972210 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:38:10.972210 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:38:10.972210 [INFO]  HTTP GET /api/v1/telemetry/stats 200 747.8µs
+2026/05/18 17:38:15.985876 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:38:15.985876 [INFO]  Entering getTelemetryStats
+2026/05/18 17:38:15.985876 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:38:15.985876 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:38:15.986395 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:38:15.986395 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:38:15.986395 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 518.3µs
+2026/05/18 17:38:15.986395 [INFO]  Entering getPCAPFiles
+2026/05/18 17:38:15.986395 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:38:15.986395 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:38:15.986395 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:38:15.986395 [INFO]  HTTP GET /api/v1/telemetry/stats 200 518.3µs
+2026/05/18 17:38:20.987134 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:38:20.987134 [INFO]  Entering getTelemetryStats
+2026/05/18 17:38:20.987134 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:38:20.987134 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:38:20.987134 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:38:20.987134 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:38:20.987134 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 0s
+2026/05/18 17:38:20.987856 [INFO]  Entering getPCAPFiles
+2026/05/18 17:38:20.987856 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:38:20.987856 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:38:20.987856 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:38:20.987856 [INFO]  HTTP GET /api/v1/telemetry/stats 200 721.8µs
+2026/05/18 17:38:25.984131 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:38:25.984131 [INFO]  Entering getTelemetryStats
+2026/05/18 17:38:25.984131 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:38:25.984131 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:38:25.984131 [INFO]  Entering getPCAPFiles
+2026/05/18 17:38:25.984636 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:38:25.984636 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:38:25.984636 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:38:25.984636 [INFO]  HTTP GET /api/v1/telemetry/stats 200 504.6µs
+2026/05/18 17:38:25.984636 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:38:25.984636 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:38:25.984636 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 504.6µs
+2026/05/18 17:38:30.985863 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:38:30.985863 [INFO]  Entering getTelemetryStats
+2026/05/18 17:38:30.985863 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:38:30.985863 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:38:30.986475 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:38:30.986475 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:38:30.986475 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 612.1µs
+2026/05/18 17:38:30.986475 [INFO]  Entering getPCAPFiles
+2026/05/18 17:38:30.987126 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:38:30.987126 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:38:30.987126 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:38:30.987126 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.2626ms
+2026/05/18 17:38:35.986168 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:38:35.986168 [INFO]  Entering getTelemetryStats
+2026/05/18 17:38:35.986802 [INFO]  Entering getPCAPFiles
+2026/05/18 17:38:35.986802 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:38:35.986802 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:38:35.986802 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:38:35.986802 [INFO]  HTTP GET /api/v1/telemetry/stats 200 633.6µs
+2026/05/18 17:38:35.989576 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:38:35.989576 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:38:35.990219 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:38:35.990219 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:38:35.990219 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 642.7µs
+2026/05/18 17:38:41.059650 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:38:41.059650 [INFO]  Entering getTelemetryStats
+2026/05/18 17:38:41.060327 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:38:41.060327 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:38:41.060327 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:38:41.060327 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:38:41.060327 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 0s
+2026/05/18 17:38:41.060327 [INFO]  Entering getPCAPFiles
+2026/05/18 17:38:41.060327 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:38:41.060327 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:38:41.060327 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:38:41.060327 [INFO]  HTTP GET /api/v1/telemetry/stats 200 677µs
+2026/05/18 17:38:45.980256 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:38:45.980256 [INFO]  Entering getTelemetryStats
+2026/05/18 17:38:45.980256 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:38:45.980256 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:38:45.981026 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:38:45.981026 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:38:45.981026 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 769.6µs
+2026/05/18 17:38:45.981026 [INFO]  Entering getPCAPFiles
+2026/05/18 17:38:45.981026 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:38:45.981026 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:38:45.981026 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:38:45.981026 [INFO]  HTTP GET /api/v1/telemetry/stats 200 769.6µs
+2026/05/18 17:38:50.984378 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:38:50.984378 [INFO]  Entering getTelemetryStats
+2026/05/18 17:38:50.985772 [INFO]  Entering getPCAPFiles
+2026/05/18 17:38:50.985772 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:38:50.985772 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:38:50.985772 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:38:50.985772 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.3933ms
+2026/05/18 17:38:50.986534 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:38:50.986534 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:38:50.986534 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:38:50.986534 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:38:50.986534 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 0s
+2026/05/18 17:38:56.815914 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:38:56.815914 [INFO]  Entering getTelemetryStats
+2026/05/18 17:38:56.816693 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:38:56.816693 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:38:56.816693 [INFO]  Entering getPCAPFiles
+2026/05/18 17:38:56.817335 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:38:56.817335 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:38:56.817335 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:38:56.817335 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.4202ms
+2026/05/18 17:38:56.817335 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:38:56.817335 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:38:56.817335 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 641.5µs
+2026/05/18 17:39:01.806863 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:39:01.806863 [INFO]  Entering getTelemetryStats
+2026/05/18 17:39:01.806863 [INFO]  Entering getPCAPFiles
+2026/05/18 17:39:01.807369 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:39:01.807369 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:39:01.807369 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:39:01.807369 [INFO]  HTTP GET /api/v1/telemetry/stats 200 505.9µs
+2026/05/18 17:39:01.807369 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:39:01.807369 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:39:01.807369 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:39:01.807369 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:39:01.807369 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 0s
+2026/05/18 17:39:06.809914 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:39:06.809914 [INFO]  Entering getTelemetryStats
+2026/05/18 17:39:06.809914 [INFO]  Entering getPCAPFiles
+2026/05/18 17:39:06.810475 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:39:06.810475 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:39:06.810475 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:39:06.810475 [INFO]  HTTP GET /api/v1/telemetry/stats 200 561.3µs
+2026/05/18 17:39:06.810475 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:39:06.810475 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:39:06.811048 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:39:06.811048 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:39:06.811048 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 572.4µs
+2026/05/18 17:39:11.803849 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:39:11.803849 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:39:11.803849 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:39:11.803849 [INFO]  Entering getTelemetryStats
+2026/05/18 17:39:11.804566 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:39:11.804566 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:39:11.804566 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 716.5µs
+2026/05/18 17:39:11.804964 [INFO]  Entering getPCAPFiles
+2026/05/18 17:39:11.805681 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:39:11.805681 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:39:11.805681 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:39:11.805681 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.8312ms
+2026/05/18 17:39:16.809822 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:39:16.809822 [INFO]  Entering getTelemetryStats
+2026/05/18 17:39:16.809822 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:39:16.809822 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:39:16.810327 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:39:16.810327 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:39:16.810327 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 505.4µs
+2026/05/18 17:39:16.810327 [INFO]  Entering getPCAPFiles
+2026/05/18 17:39:16.810327 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:39:16.810327 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:39:16.810327 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:39:16.810327 [INFO]  HTTP GET /api/v1/telemetry/stats 200 505.4µs
+2026/05/18 17:39:21.805784 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:39:21.806290 [INFO]  Entering getTelemetryStats
+2026/05/18 17:39:21.806290 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:39:21.806290 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:39:21.806290 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:39:21.806290 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:39:21.806290 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 0s
+2026/05/18 17:39:21.806290 [INFO]  Entering getPCAPFiles
+2026/05/18 17:39:21.806936 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:39:21.806936 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:39:21.806936 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:39:21.806936 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.1517ms
+2026/05/18 17:39:26.817533 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:39:26.817533 [INFO]  Entering getTelemetryStats
+2026/05/18 17:39:26.817533 [INFO]  Entering getPCAPFiles
+2026/05/18 17:39:26.818330 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:39:26.818330 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:39:26.818330 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:39:26.818330 [INFO]  HTTP GET /api/v1/telemetry/stats 200 796.5µs
+2026/05/18 17:39:26.818905 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:39:26.818905 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:39:26.819455 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:39:26.819455 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:39:26.819455 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 550.7µs
+2026/05/18 17:39:31.814549 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:39:31.814549 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:39:31.814549 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:39:31.814549 [INFO]  Entering getTelemetryStats
+2026/05/18 17:39:31.815054 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:39:31.815054 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:39:31.815054 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 505.1µs
+2026/05/18 17:39:31.815054 [INFO]  Entering getPCAPFiles
+2026/05/18 17:39:31.815614 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:39:31.815614 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:39:31.815614 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:39:31.815614 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.0648ms
+2026/05/18 17:39:36.809808 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:39:36.809808 [INFO]  Entering getTelemetryStats
+2026/05/18 17:39:36.810318 [INFO]  Entering getPCAPFiles
+2026/05/18 17:39:36.810918 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:39:36.810918 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:39:36.810918 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:39:36.810918 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:39:36.810918 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:39:36.810918 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.1097ms
+2026/05/18 17:39:36.811532 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:39:36.812109 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:39:36.812109 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.191ms
+2026/05/18 17:39:41.815797 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:39:41.815797 [INFO]  Entering getTelemetryStats
+2026/05/18 17:39:41.816372 [INFO]  Entering getPCAPFiles
+2026/05/18 17:39:41.816372 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:39:41.816372 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:39:41.816372 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:39:41.816372 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:39:41.816372 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:39:41.816372 [INFO]  HTTP GET /api/v1/telemetry/stats 200 574.8µs
+2026/05/18 17:39:41.816372 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:39:41.816372 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:39:41.816372 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 0s
+2026/05/18 17:39:46.802262 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:39:46.802262 [INFO]  Entering getTelemetryStats
+2026/05/18 17:39:46.802262 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:39:46.802262 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:39:46.802262 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:39:46.802262 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:39:46.802262 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 0s
+2026/05/18 17:39:46.803052 [INFO]  Entering getPCAPFiles
+2026/05/18 17:39:46.803052 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:39:46.803052 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:39:46.803052 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:39:46.803052 [INFO]  HTTP GET /api/v1/telemetry/stats 200 789.5µs
+2026/05/18 17:40:36.907041 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:40:36.907041 [INFO]  Entering getTelemetryStats
+2026/05/18 17:40:36.907041 [INFO]  Entering getPCAPFiles
+2026/05/18 17:40:36.907656 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:40:36.907656 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:40:36.907656 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:40:36.907656 [INFO]  HTTP GET /api/v1/telemetry/stats 200 614.6µs
+2026/05/18 17:40:37.123166 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:40:37.123166 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:40:37.123675 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:40:37.123675 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:40:37.123675 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 508.1µs
+2026/05/18 17:41:36.809629 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:41:36.809629 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:41:36.809629 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:41:36.809629 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:41:36.809629 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:41:36.809629 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 0s
+2026/05/18 17:41:36.809629 [INFO]  Entering getTelemetryStats
+2026/05/18 17:41:36.810696 [INFO]  Entering getPCAPFiles
+2026/05/18 17:41:36.811228 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:41:36.811228 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:41:36.811228 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:41:36.811228 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.5983ms
+2026/05/18 17:42:18.843481 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:42:18.843481 [INFO]  Entering getTelemetryStats
+2026/05/18 17:42:18.844055 [INFO]  Entering getPCAPFiles
+2026/05/18 17:42:18.844611 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:42:18.844611 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:42:18.844611 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:42:18.844611 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.13ms
+2026/05/18 17:42:18.844611 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:42:18.844611 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=rfc5424
+2026/05/18 17:42:18.845152 [INFO]  Return from getRecentSyslogMessages count=0
+2026/05/18 17:42:18.845152 [INFO]  Return from handleGetSyslogTelemetry count=0
+2026/05/18 17:42:18.845152 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 540.5µs
+2026/05/18 17:42:20.597946 [INFO]  Entering handleListAttacks
+2026/05/18 17:42:20.598405 [INFO]  Return from handleListAttacks count=34
+2026/05/18 17:42:20.598405 [INFO]  HTTP GET /api/v1/attacks 200 458.1µs
+2026/05/18 17:42:21.137223 [INFO]  Entering handleTopologyGraph
+2026/05/18 17:42:21.137729 [INFO]  Return from handleTopologyGraph nodes=24 edges=21
+2026/05/18 17:42:21.137729 [INFO]  HTTP GET /api/v1/topology/graph 200 506.6µs
+2026/05/18 17:42:21.140750 [INFO]  Entering handleTopologySummary
+2026/05/18 17:42:21.140750 [INFO]  Return from handleTopologySummary
+2026/05/18 17:42:21.140750 [INFO]  HTTP GET /api/v1/topology/summary 200 0s
+2026/05/18 17:42:22.492751 [INFO]  Entering handleGetDashboard
+2026/05/18 17:42:22.492751 [INFO]  Entering handleListRuns
+2026/05/18 17:42:22.492751 [INFO]  Entering getTestRunsDB filter=
+2026/05/18 17:42:22.492751 [INFO]  Entering handleTopologySummary
+2026/05/18 17:42:22.492751 [INFO]  Return from handleTopologySummary
+2026/05/18 17:42:22.492751 [INFO]  HTTP GET /api/v1/topology/summary 200 0s
+2026/05/18 17:42:22.493256 [INFO]  Return from getTestRunsDB count=6
+2026/05/18 17:42:22.493256 [INFO]  Return from handleListRuns count=6
+2026/05/18 17:42:22.493256 [INFO]  HTTP GET /api/v1/runs 200 504.6µs
+2026/05/18 17:42:22.494675 [INFO]  Return from handleGetDashboard
+2026/05/18 17:42:22.494675 [INFO]  HTTP GET /api/v1/dashboard 200 1.9237ms
+2026/05/18 17:42:25.368706 [INFO]  Entering handleTopologyGraph
+2026/05/18 17:42:25.369213 [INFO]  Return from handleTopologyGraph nodes=24 edges=21
+2026/05/18 17:42:25.369213 [INFO]  HTTP GET /api/v1/topology/graph 200 507.2µs
+2026/05/18 17:42:25.372589 [INFO]  Entering handleTopologySummary
+2026/05/18 17:42:25.372589 [INFO]  Return from handleTopologySummary
+2026/05/18 17:42:25.372589 [INFO]  HTTP GET /api/v1/topology/summary 200 0s
+2026/05/18 17:42:28.373374 [INFO]  Entering handleGetDashboard
+2026/05/18 17:42:28.373676 [INFO]  Entering handleListRuns
+2026/05/18 17:42:28.373676 [INFO]  Entering getTestRunsDB filter=
+2026/05/18 17:42:28.374180 [INFO]  Return from getTestRunsDB count=6
+2026/05/18 17:42:28.374735 [INFO]  Return from handleListRuns count=6
+2026/05/18 17:42:28.374735 [INFO]  HTTP GET /api/v1/runs 200 1.0592ms
+2026/05/18 17:42:28.375874 [INFO]  Return from handleGetDashboard
+2026/05/18 17:42:28.375874 [INFO]  HTTP GET /api/v1/dashboard 200 2.4993ms
+2026/05/18 17:42:28.376449 [INFO]  Entering handleTopologySummary
+2026/05/18 17:42:28.376449 [INFO]  Return from handleTopologySummary
+2026/05/18 17:42:28.376449 [INFO]  HTTP GET /api/v1/topology/summary 200 0s
+2026/05/18 17:50:48.400992 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:50:48.400992 [INFO]  Entering getTelemetryStats
+2026/05/18 17:50:48.400992 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:50:48.400992 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:50:48.400992 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:50:48.404630 [INFO]  Entering getPCAPFiles
+2026/05/18 17:50:48.404630 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:50:48.404630 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 3.6375ms
+2026/05/18 17:50:48.404630 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:50:48.404630 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:50:48.404630 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:50:48.404630 [INFO]  HTTP GET /api/v1/telemetry/stats 200 3.6375ms
+2026/05/18 17:50:51.612409 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:50:51.612409 [INFO]  Entering getTelemetryStats
+2026/05/18 17:50:51.612958 [INFO]  Entering handleGetFlowTelemetry
+2026/05/18 17:50:51.612958 [INFO]  Entering getRecentFlowRecords limit=200
+2026/05/18 17:50:51.612958 [INFO]  Entering getPCAPFiles
+2026/05/18 17:50:51.613559 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:50:51.613559 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:50:51.613559 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:50:51.613559 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.1496ms
+2026/05/18 17:50:51.613559 [INFO]  Return from getRecentFlowRecords count=25
+2026/05/18 17:50:51.614683 [INFO]  Return from handleGetFlowTelemetry count=25
+2026/05/18 17:50:51.614683 [INFO]  HTTP GET /api/v1/telemetry/flows 200 1.7253ms
+2026/05/18 17:50:52.289377 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:50:52.289377 [INFO]  Entering getTelemetryStats
+2026/05/18 17:50:52.289377 [INFO]  Entering handleGetPCAPFiles
+2026/05/18 17:50:52.289377 [INFO]  Entering getPCAPFiles
+2026/05/18 17:50:52.289909 [INFO]  Entering getPCAPFiles
+2026/05/18 17:50:52.289909 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:50:52.289909 [INFO]  Return from handleGetPCAPFiles count=0
+2026/05/18 17:50:52.289909 [INFO]  HTTP GET /api/v1/telemetry/pcap 200 532.2µs
+2026/05/18 17:50:52.289909 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:50:52.289909 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:50:52.289909 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:50:52.289909 [INFO]  HTTP GET /api/v1/telemetry/stats 200 532.2µs
+2026/05/18 17:50:53.218163 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:50:53.218163 [INFO]  Entering getTelemetryStats
+2026/05/18 17:50:53.218672 [INFO]  Entering handleGetFlowTelemetry
+2026/05/18 17:50:53.218672 [INFO]  Entering getRecentFlowRecords limit=200
+2026/05/18 17:50:53.219264 [INFO]  Return from getRecentFlowRecords count=25
+2026/05/18 17:50:53.219264 [INFO]  Return from handleGetFlowTelemetry count=25
+2026/05/18 17:50:53.219264 [INFO]  HTTP GET /api/v1/telemetry/flows 200 591.6µs
+2026/05/18 17:50:53.219264 [INFO]  Entering getPCAPFiles
+2026/05/18 17:50:53.219264 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:50:53.219862 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:50:53.219862 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:50:53.219862 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.6985ms
+2026/05/18 17:50:53.396110 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:50:53.396110 [INFO]  Entering getTelemetryStats
+2026/05/18 17:50:53.396110 [INFO]  Entering getPCAPFiles
+2026/05/18 17:50:53.396110 [INFO]  Entering handleGetFlowTelemetry
+2026/05/18 17:50:53.396110 [INFO]  Entering getRecentFlowRecords limit=200
+2026/05/18 17:50:53.396110 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:50:53.396110 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:50:53.396110 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:50:53.396110 [INFO]  HTTP GET /api/v1/telemetry/stats 200 0s
+2026/05/18 17:50:53.396935 [INFO]  Return from getRecentFlowRecords count=25
+2026/05/18 17:50:53.396935 [INFO]  Return from handleGetFlowTelemetry count=25
+2026/05/18 17:50:53.396935 [INFO]  HTTP GET /api/v1/telemetry/flows 200 824.9µs
+2026/05/18 17:50:54.649418 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:50:54.649418 [INFO]  Entering getTelemetryStats
+2026/05/18 17:50:54.649418 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:50:54.649418 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:50:54.650730 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:50:54.651269 [INFO]  Entering getPCAPFiles
+2026/05/18 17:50:54.651269 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:50:54.651269 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.8507ms
+2026/05/18 17:50:54.651269 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:50:54.651269 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:50:54.651269 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:50:54.651269 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.8507ms
+2026/05/18 17:50:58.400638 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:50:58.400638 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:50:58.400638 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:50:58.400638 [INFO]  Entering getTelemetryStats
+2026/05/18 17:50:58.401144 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:50:58.401144 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:50:58.401144 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 505.9µs
+2026/05/18 17:50:58.401671 [INFO]  Entering getPCAPFiles
+2026/05/18 17:50:58.401671 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:50:58.401671 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:50:58.401671 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:50:58.401671 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.033ms
+2026/05/18 17:51:03.408673 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:51:03.408673 [INFO]  Entering getTelemetryStats
+2026/05/18 17:51:03.408673 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:51:03.409200 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:51:03.409863 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:51:03.409863 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:51:03.409863 [INFO]  Entering getPCAPFiles
+2026/05/18 17:51:03.409863 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.1897ms
+2026/05/18 17:51:03.409863 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:51:03.409863 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:51:03.409863 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:51:03.409863 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.1897ms
+2026/05/18 17:51:08.406776 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:51:08.406776 [INFO]  Entering getTelemetryStats
+2026/05/18 17:51:08.406776 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:51:08.406776 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:51:08.407316 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:51:08.408033 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:51:08.408033 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.2564ms
+2026/05/18 17:51:08.408033 [INFO]  Entering getPCAPFiles
+2026/05/18 17:51:08.408033 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:51:08.408033 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:51:08.408684 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:51:08.408684 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.9077ms
+2026/05/18 17:51:13.404575 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:51:13.404575 [INFO]  Entering getTelemetryStats
+2026/05/18 17:51:13.404575 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:51:13.404575 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:51:13.405253 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:51:13.406103 [INFO]  Entering getPCAPFiles
+2026/05/18 17:51:13.406715 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:51:13.406715 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 2.1396ms
+2026/05/18 17:51:13.406715 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:51:13.407373 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:51:13.407948 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:51:13.407948 [INFO]  HTTP GET /api/v1/telemetry/stats 200 3.3723ms
+2026/05/18 17:51:18.403636 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:51:18.403636 [INFO]  Entering getTelemetryStats
+2026/05/18 17:51:18.403636 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:51:18.403636 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:51:18.404142 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:51:18.404686 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:51:18.404686 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.0503ms
+2026/05/18 17:51:18.404686 [INFO]  Entering getPCAPFiles
+2026/05/18 17:51:18.404686 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:51:18.404686 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:51:18.404686 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:51:18.404686 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.0503ms
+2026/05/18 17:51:23.405253 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:51:23.405253 [INFO]  Entering getTelemetryStats
+2026/05/18 17:51:23.405994 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:51:23.405994 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:51:23.406547 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:51:23.406547 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:51:23.406547 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 552.5µs
+2026/05/18 17:51:23.406547 [INFO]  Entering getPCAPFiles
+2026/05/18 17:51:23.407101 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:51:23.407101 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:51:23.407101 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:51:23.407101 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.8472ms
+2026/05/18 17:51:28.402315 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:51:28.402315 [INFO]  Entering getTelemetryStats
+2026/05/18 17:51:28.402315 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:51:28.402315 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:51:28.402315 [INFO]  Entering getPCAPFiles
+2026/05/18 17:51:28.402315 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:51:28.402315 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:51:28.402315 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:51:28.402315 [INFO]  HTTP GET /api/v1/telemetry/stats 200 0s
+2026/05/18 17:51:28.402897 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:51:28.402897 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:51:28.402897 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 581.1µs
+2026/05/18 17:51:33.394228 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:51:33.394228 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:51:33.394733 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:51:33.394733 [INFO]  Entering getTelemetryStats
+2026/05/18 17:51:33.394733 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:51:33.395680 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:51:33.395680 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.4518ms
+2026/05/18 17:51:33.395680 [INFO]  Entering getPCAPFiles
+2026/05/18 17:51:33.395680 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:51:33.395680 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:51:33.395680 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:51:33.395680 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.4518ms
+2026/05/18 17:51:38.400197 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:51:38.400197 [INFO]  Entering getTelemetryStats
+2026/05/18 17:51:38.400197 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:51:38.400197 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:51:38.400740 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:51:38.400740 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:51:38.400740 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 543µs
+2026/05/18 17:51:38.400740 [INFO]  Entering getPCAPFiles
+2026/05/18 17:51:38.401384 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:51:38.401384 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:51:38.401384 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:51:38.401384 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.1871ms
+2026/05/18 17:51:43.399408 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:51:43.399408 [INFO]  Entering getTelemetryStats
+2026/05/18 17:51:43.399408 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:51:43.399408 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:51:43.400028 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:51:43.400028 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:51:43.400028 [INFO]  Entering getPCAPFiles
+2026/05/18 17:51:43.400028 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 620.1µs
+2026/05/18 17:51:43.400691 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:51:43.400691 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:51:43.400691 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:51:43.400691 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.2831ms
+2026/05/18 17:51:48.399533 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:51:48.399533 [INFO]  Entering getTelemetryStats
+2026/05/18 17:51:48.399533 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:51:48.399533 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:51:48.400220 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:51:48.400771 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:51:48.400771 [INFO]  Entering getPCAPFiles
+2026/05/18 17:51:48.400771 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.238ms
+2026/05/18 17:51:48.400771 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:51:48.400771 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:51:48.400771 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:51:48.400771 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.238ms
+2026/05/18 17:51:53.396544 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:51:53.396962 [INFO]  Entering getTelemetryStats
+2026/05/18 17:51:53.396962 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:51:53.396962 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:51:53.397504 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:51:53.397504 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:51:53.397504 [INFO]  Entering getPCAPFiles
+2026/05/18 17:51:53.397504 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 541.5µs
+2026/05/18 17:51:53.397504 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:51:53.397504 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:51:53.397504 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:51:53.397504 [INFO]  HTTP GET /api/v1/telemetry/stats 200 959.3µs
+2026/05/18 17:51:58.395356 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:51:58.395356 [INFO]  Entering getTelemetryStats
+2026/05/18 17:51:58.395356 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:51:58.395356 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:51:58.395356 [INFO]  Entering getPCAPFiles
+2026/05/18 17:51:58.395862 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:51:58.395862 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:51:58.395862 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:51:58.395862 [INFO]  HTTP GET /api/v1/telemetry/stats 200 505.7µs
+2026/05/18 17:51:58.397132 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:51:58.397712 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:51:58.397712 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 2.3562ms
+2026/05/18 17:52:03.394196 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:52:03.394196 [INFO]  Entering getTelemetryStats
+2026/05/18 17:52:03.394196 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:52:03.394196 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:52:03.394196 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:52:03.394196 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:52:03.394196 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 0s
+2026/05/18 17:52:03.394966 [INFO]  Entering getPCAPFiles
+2026/05/18 17:52:03.394966 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:52:03.394966 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:52:03.394966 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:52:03.394966 [INFO]  HTTP GET /api/v1/telemetry/stats 200 770.3µs
+2026/05/18 17:52:08.393940 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:52:08.393940 [INFO]  Entering getTelemetryStats
+2026/05/18 17:52:08.394660 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:52:08.394660 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:52:08.395408 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:52:08.395408 [INFO]  Entering getPCAPFiles
+2026/05/18 17:52:08.395408 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:52:08.395408 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 747.6µs
+2026/05/18 17:52:08.395408 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:52:08.395408 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:52:08.396114 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:52:08.396114 [INFO]  HTTP GET /api/v1/telemetry/stats 200 2.1738ms
+2026/05/18 17:52:13.391534 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:52:13.392090 [INFO]  Entering getTelemetryStats
+2026/05/18 17:52:13.392090 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:52:13.392090 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:52:13.392090 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:52:13.392767 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:52:13.392767 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 676.8µs
+2026/05/18 17:52:13.392767 [INFO]  Entering getPCAPFiles
+2026/05/18 17:52:13.392767 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:52:13.392767 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:52:13.392767 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:52:13.392767 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.2327ms
+2026/05/18 17:52:18.394248 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:52:18.394248 [INFO]  Entering getTelemetryStats
+2026/05/18 17:52:18.394248 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:52:18.394248 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:52:18.394248 [INFO]  Entering getPCAPFiles
+2026/05/18 17:52:18.394248 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:52:18.394248 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:52:18.394248 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:52:18.394248 [INFO]  HTTP GET /api/v1/telemetry/stats 200 0s
+2026/05/18 17:52:18.394981 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:52:18.394981 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:52:18.394981 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 733.3µs
+2026/05/18 17:52:23.394777 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:52:23.394777 [INFO]  Entering getTelemetryStats
+2026/05/18 17:52:23.394777 [INFO]  Entering getPCAPFiles
+2026/05/18 17:52:23.395283 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:52:23.395283 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:52:23.395283 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:52:23.395283 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:52:23.395283 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:52:23.395283 [INFO]  HTTP GET /api/v1/telemetry/stats 200 506.1µs
+2026/05/18 17:52:23.395283 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:52:23.395806 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:52:23.395806 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 523.7µs
+2026/05/18 17:52:28.407314 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:52:28.407314 [INFO]  Entering getTelemetryStats
+2026/05/18 17:52:28.407314 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:52:28.407314 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:52:28.407314 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:52:28.407314 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:52:28.407314 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 0s
+2026/05/18 17:52:28.407995 [INFO]  Entering getPCAPFiles
+2026/05/18 17:52:28.407995 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:52:28.407995 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:52:28.407995 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:52:28.407995 [INFO]  HTTP GET /api/v1/telemetry/stats 200 681.3µs
+2026/05/18 17:52:33.407277 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:52:33.407782 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:52:33.407782 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:52:33.407782 [INFO]  Entering getTelemetryStats
+2026/05/18 17:52:33.407782 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:52:33.407782 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:52:33.407782 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 504.9µs
+2026/05/18 17:52:33.408318 [INFO]  Entering getPCAPFiles
+2026/05/18 17:52:33.408318 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:52:33.408318 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:52:33.408318 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:52:33.408318 [INFO]  HTTP GET /api/v1/telemetry/stats 200 535.6µs
+2026/05/18 17:52:38.404299 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:52:38.404299 [INFO]  Entering getTelemetryStats
+2026/05/18 17:52:38.404299 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:52:38.404299 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:52:38.404878 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:52:38.404878 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:52:38.404878 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 579.4µs
+2026/05/18 17:52:38.405542 [INFO]  Entering getPCAPFiles
+2026/05/18 17:52:38.406059 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:52:38.406059 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:52:38.406059 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:52:38.406059 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.7603ms
+2026/05/18 17:52:43.412522 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:52:43.412522 [INFO]  Entering getTelemetryStats
+2026/05/18 17:52:43.412522 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:52:43.412522 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:52:43.413153 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:52:43.413962 [INFO]  Entering getPCAPFiles
+2026/05/18 17:52:43.413962 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:52:43.413962 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.4396ms
+2026/05/18 17:52:43.413962 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:52:43.413962 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:52:43.413962 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:52:43.413962 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.4396ms
+2026/05/18 17:52:48.408766 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:52:48.408766 [INFO]  Entering getTelemetryStats
+2026/05/18 17:52:48.409521 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:52:48.409521 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:52:48.409521 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:52:48.409521 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:52:48.409521 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 0s
+2026/05/18 17:52:48.409521 [INFO]  Entering getPCAPFiles
+2026/05/18 17:52:48.410191 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:52:48.410191 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:52:48.410191 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:52:48.410191 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.4249ms
+2026/05/18 17:52:53.407337 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:52:53.407337 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:52:53.407849 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:52:53.407849 [INFO]  Entering getTelemetryStats
+2026/05/18 17:52:53.407849 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:52:53.409221 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:52:53.409221 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.884ms
+2026/05/18 17:52:53.409841 [INFO]  Entering getPCAPFiles
+2026/05/18 17:52:53.410415 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:52:53.410415 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:52:53.410415 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:52:53.410415 [INFO]  HTTP GET /api/v1/telemetry/stats 200 2.5662ms
+2026/05/18 17:52:58.406114 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:52:58.406114 [INFO]  Entering getTelemetryStats
+2026/05/18 17:52:58.406114 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:52:58.406705 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:52:58.407497 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:52:58.407497 [INFO]  Entering getPCAPFiles
+2026/05/18 17:52:58.407497 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:52:58.407497 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.3828ms
+2026/05/18 17:52:58.408298 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:52:58.408298 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:52:58.408298 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:52:58.408298 [INFO]  HTTP GET /api/v1/telemetry/stats 200 2.1833ms
+2026/05/18 17:53:03.402789 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:53:03.402789 [INFO]  Entering getTelemetryStats
+2026/05/18 17:53:03.402789 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:53:03.402789 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:53:03.403330 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:53:03.403959 [INFO]  Entering getPCAPFiles
+2026/05/18 17:53:03.403959 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:53:03.403959 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.1698ms
+2026/05/18 17:53:03.403959 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:53:03.403959 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:53:03.403959 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:53:03.403959 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.1698ms
+2026/05/18 17:53:08.400187 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:53:08.400187 [INFO]  Entering getTelemetryStats
+2026/05/18 17:53:08.400187 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:53:08.400187 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:53:08.400693 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:53:08.401244 [INFO]  Entering getPCAPFiles
+2026/05/18 17:53:08.401244 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:53:08.401244 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:53:08.401244 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:53:08.401244 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.0562ms
+2026/05/18 17:53:08.401244 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:53:08.401244 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.0562ms
+2026/05/18 17:53:13.803731 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:53:13.803731 [INFO]  Entering getTelemetryStats
+2026/05/18 17:53:13.803731 [INFO]  Entering getPCAPFiles
+2026/05/18 17:53:13.804367 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:53:13.804367 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:53:13.804367 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:53:13.804367 [INFO]  HTTP GET /api/v1/telemetry/stats 200 635.4µs
+2026/05/18 17:53:13.811870 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:53:13.811870 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:53:13.813106 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:53:13.813106 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:53:13.813106 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.2366ms
+2026/05/18 17:53:18.804801 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:53:18.805307 [INFO]  Entering getTelemetryStats
+2026/05/18 17:53:18.805307 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:53:18.805307 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:53:18.805307 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:53:18.805857 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:53:18.805857 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 550.3µs
+2026/05/18 17:53:18.805857 [INFO]  Entering getPCAPFiles
+2026/05/18 17:53:18.806397 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:53:18.806397 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:53:18.806397 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:53:18.806397 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.5966ms
+2026/05/18 17:53:23.398228 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:53:23.398228 [INFO]  Entering getTelemetryStats
+2026/05/18 17:53:23.398997 [INFO]  Entering getPCAPFiles
+2026/05/18 17:53:23.399609 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:53:23.399609 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:53:23.399609 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:53:23.399609 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.3814ms
+2026/05/18 17:53:23.399609 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:53:23.399609 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:53:23.400944 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:53:23.400944 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:53:23.400944 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.9476ms
+2026/05/18 17:53:28.395017 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:53:28.395017 [INFO]  Entering getTelemetryStats
+2026/05/18 17:53:28.395017 [INFO]  Entering getPCAPFiles
+2026/05/18 17:53:28.395017 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:53:28.395017 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:53:28.395017 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:53:28.395017 [INFO]  HTTP GET /api/v1/telemetry/stats 200 0s
+2026/05/18 17:53:28.397023 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:53:28.397023 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:53:28.397347 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:53:28.397347 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:53:28.397852 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 828.6µs
+2026/05/18 17:53:33.391626 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:53:33.391626 [INFO]  Entering getTelemetryStats
+2026/05/18 17:53:33.391626 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:53:33.391626 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:53:33.391626 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:53:33.391626 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:53:33.391626 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 0s
+2026/05/18 17:53:33.392155 [INFO]  Entering getPCAPFiles
+2026/05/18 17:53:33.392155 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:53:33.392155 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:53:33.392155 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:53:33.392155 [INFO]  HTTP GET /api/v1/telemetry/stats 200 529.7µs
+2026/05/18 17:53:38.394145 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:53:38.394145 [INFO]  Entering getTelemetryStats
+2026/05/18 17:53:38.394145 [INFO]  Entering getPCAPFiles
+2026/05/18 17:53:38.394696 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:53:38.394696 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:53:38.394696 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:53:38.394696 [INFO]  HTTP GET /api/v1/telemetry/stats 200 551µs
+2026/05/18 17:53:38.394696 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:53:38.394696 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:53:38.394696 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:53:38.395370 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:53:38.395370 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 673.6µs
+2026/05/18 17:53:43.409909 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:53:43.409909 [INFO]  Entering getTelemetryStats
+2026/05/18 17:53:43.410419 [INFO]  Entering getPCAPFiles
+2026/05/18 17:53:43.410419 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:53:43.410419 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:53:43.410419 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:53:43.410419 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:53:43.410419 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:53:43.410419 [INFO]  HTTP GET /api/v1/telemetry/stats 200 510.1µs
+2026/05/18 17:53:43.410955 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:53:43.410955 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:53:43.411489 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.0697ms
+2026/05/18 17:53:48.410257 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:53:48.410257 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:53:48.410257 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:53:48.410257 [INFO]  Entering getTelemetryStats
+2026/05/18 17:53:48.411136 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:53:48.411921 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:53:48.411921 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.6643ms
+2026/05/18 17:53:48.411921 [INFO]  Entering getPCAPFiles
+2026/05/18 17:53:48.411921 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:53:48.411921 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:53:48.411921 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:53:48.411921 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.6643ms
+2026/05/18 17:53:53.412736 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:53:53.412736 [INFO]  Entering getTelemetryStats
+2026/05/18 17:53:53.412736 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:53:53.413321 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:53:53.414049 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:53:53.414049 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:53:53.414049 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.3137ms
+2026/05/18 17:53:53.414049 [INFO]  Entering getPCAPFiles
+2026/05/18 17:53:53.414767 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:53:53.414767 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:53:53.414767 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:53:53.414767 [INFO]  HTTP GET /api/v1/telemetry/stats 200 2.0317ms
+2026/05/18 17:53:58.405115 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:53:58.405115 [INFO]  Entering getTelemetryStats
+2026/05/18 17:53:58.405115 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:53:58.405115 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:53:58.405778 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:53:58.405778 [INFO]  Entering getPCAPFiles
+2026/05/18 17:53:58.406312 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:53:58.406312 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.1965ms
+2026/05/18 17:53:58.406880 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:53:58.407423 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:53:58.407423 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:53:58.407423 [INFO]  HTTP GET /api/v1/telemetry/stats 200 2.3072ms
+2026/05/18 17:54:03.411611 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:54:03.411611 [INFO]  Entering getTelemetryStats
+2026/05/18 17:54:03.412214 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:54:03.412214 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:54:03.412783 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:54:03.412783 [INFO]  Entering getPCAPFiles
+2026/05/18 17:54:03.412783 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:54:03.412783 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.1724ms
+2026/05/18 17:54:03.413421 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:54:03.413421 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:54:03.413421 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:54:03.413421 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.8107ms
+2026/05/18 17:54:08.407817 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:54:08.407817 [INFO]  Entering getTelemetryStats
+2026/05/18 17:54:08.407817 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:54:08.407817 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:54:08.407817 [INFO]  Entering getPCAPFiles
+2026/05/18 17:54:08.408472 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:54:08.408472 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:54:08.408472 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:54:08.408472 [INFO]  HTTP GET /api/v1/telemetry/stats 200 655.2µs
+2026/05/18 17:54:08.409269 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:54:08.409269 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:54:08.409269 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.4522ms
+2026/05/18 17:54:13.406351 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:54:13.406351 [INFO]  Entering getTelemetryStats
+2026/05/18 17:54:13.406351 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:54:13.406351 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:54:13.406943 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:54:13.406943 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:54:13.406943 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 591.4µs
+2026/05/18 17:54:13.406943 [INFO]  Entering getPCAPFiles
+2026/05/18 17:54:13.407493 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:54:13.407493 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:54:13.407493 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:54:13.407493 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.1416ms
+2026/05/18 17:54:18.401353 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 17:54:18.401353 [INFO]  Entering getTelemetryStats
+2026/05/18 17:54:18.401353 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 17:54:18.401353 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 17:54:18.402490 [INFO]  Return from getRecentSyslogMessages count=21
+2026/05/18 17:54:18.402490 [INFO]  Entering getPCAPFiles
+2026/05/18 17:54:18.402490 [INFO]  Return from handleGetSyslogTelemetry count=21
+2026/05/18 17:54:18.403031 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.6785ms
+2026/05/18 17:54:18.403031 [INFO]  Return from getPCAPFiles count=0
+2026/05/18 17:54:18.403031 [INFO]  Return from getTelemetryStats syslog=21 flows=25 pcap=0
+2026/05/18 17:54:18.403031 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 17:54:18.403031 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.6785ms
+2026/05/18 17:54:23.363477 [INFO]  Entering handleListScoring
+2026/05/18 17:54:23.363477 [INFO]  Entering getAllScoringResultsDB
+2026/05/18 17:54:23.364017 [INFO]  Return from getAllScoringResultsDB count=6
+2026/05/18 17:54:23.364017 [INFO]  Return from handleListScoring count=6
+2026/05/18 17:54:23.364017 [INFO]  HTTP GET /api/v1/scoring 200 539.9µs
+2026/05/18 17:54:30.065553 [INFO]  Entering handleGetMitreCoverage
+2026/05/18 17:54:30.065553 [INFO]  Entering getMitreCoverage
+2026/05/18 17:54:30.065553 [INFO]  Return from getMitreCoverage tactics=8
+2026/05/18 17:54:30.065553 [INFO]  Return from handleGetMitreCoverage tactics=8
+2026/05/18 17:54:30.065553 [INFO]  HTTP GET /api/v1/mitre/coverage 200 0s
+2026/05/18 17:57:31.261589 [INFO]  Entering handleListScenarios
+2026/05/18 17:57:31.261589 [INFO]  Entering loadAllScenariosDB
+2026/05/18 17:57:31.262094 [INFO]  Return from loadAllScenariosDB count=6
+2026/05/18 17:57:31.262094 [INFO]  Return from handleListScenarios count=6
+2026/05/18 17:57:31.262094 [INFO]  HTTP GET /api/v1/scenarios 200 505.4µs
+2026/05/18 17:57:37.856407 [INFO]  Entering handleListAttacks
+2026/05/18 17:57:37.856947 [INFO]  Return from handleListAttacks count=34
+2026/05/18 17:57:37.856947 [INFO]  HTTP GET /api/v1/attacks 200 539.6µs
+2026/05/18 18:05:05.993659 [INFO]  Entering handleExecuteAttack
+2026/05/18 18:05:05.994164 [INFO]  Entering executeAttack attackID=wireless-deauth runID= attacker=198.51.100.100
+2026/05/18 18:05:05.994164 [INFO]  Entering sendSyslog device=ap-floor1 msg=Deauthentication flood: 285 deauth frames from 198.51.100.100 targeting client a
+2026/05/18 18:05:06.001196 [TRACE] sendSyslog format=rfc3164 raw=<186>May 18 18:05:05 apfloor1 %CISCO-6-SYSLOG: 779958: %SYS-2-MSG: Deauthentication flood: 285 deauth frames from 198.51
+2026/05/18 18:05:06.001737 [INFO]  Return from sendSyslog device=ap-floor1
+2026/05/18 18:05:06.006715 [INFO]  Entering sendSyslog device=ap-floor1 msg=Deauthentication flood: 404 deauth frames from 198.51.100.100 targeting client a
+2026/05/18 18:05:06.013308 [TRACE] sendSyslog format=rfc3164 raw=<186>May 18 18:05:06 apfloor1 %CISCO-6-SYSLOG: 349472: %SYS-2-MSG: Deauthentication flood: 404 deauth frames from 198.51
+2026/05/18 18:05:06.013308 [INFO]  Return from sendSyslog device=ap-floor1
+2026/05/18 18:05:06.018096 [INFO]  Entering sendSyslog device=ap-floor1 msg=Deauthentication flood: 171 deauth frames from 198.51.100.100 targeting client a
+2026/05/18 18:05:06.025574 [TRACE] sendSyslog format=rfc3164 raw=<186>May 18 18:05:06 apfloor1 %CISCO-6-SYSLOG: 559094: %SYS-2-MSG: Deauthentication flood: 171 deauth frames from 198.51
+2026/05/18 18:05:06.025574 [INFO]  Return from sendSyslog device=ap-floor1
+2026/05/18 18:05:06.030371 [INFO]  Entering sendSyslog device=ap-floor1 msg=Deauthentication flood: 488 deauth frames from 198.51.100.100 targeting client a
+2026/05/18 18:05:06.033945 [TRACE] sendSyslog format=rfc3164 raw=<186>May 18 18:05:06 apfloor1 %CISCO-6-SYSLOG: 619486: %SYS-2-MSG: Deauthentication flood: 488 deauth frames from 198.51
+2026/05/18 18:05:06.033945 [INFO]  Return from sendSyslog device=ap-floor1
+2026/05/18 18:05:06.045773 [INFO]  Entering sendSyslog device=ap-floor1 msg=Deauthentication flood: 186 deauth frames from 198.51.100.100 targeting client a
+2026/05/18 18:05:06.051770 [TRACE] sendSyslog format=rfc3164 raw=<186>May 18 18:05:06 apfloor1 %CISCO-6-SYSLOG: 040228: %SYS-2-MSG: Deauthentication flood: 186 deauth frames from 198.51
+2026/05/18 18:05:06.051770 [INFO]  Return from sendSyslog device=ap-floor1
+2026/05/18 18:05:06.057819 [INFO]  Entering sendSyslog device=ap-floor1 msg=Deauthentication flood: 387 deauth frames from 198.51.100.100 targeting client a
+2026/05/18 18:05:06.064758 [TRACE] sendSyslog format=rfc3164 raw=<186>May 18 18:05:06 apfloor1 %CISCO-6-SYSLOG: 749945: %SYS-2-MSG: Deauthentication flood: 387 deauth frames from 198.51
+2026/05/18 18:05:06.065300 [INFO]  Return from sendSyslog device=ap-floor1
+2026/05/18 18:05:06.070665 [INFO]  Entering sendSyslog device=ap-floor1 msg=Deauthentication flood: 139 deauth frames from 198.51.100.100 targeting client a
+2026/05/18 18:05:06.077776 [TRACE] sendSyslog format=rfc3164 raw=<186>May 18 18:05:06 apfloor1 %CISCO-6-SYSLOG: 757413: %SYS-2-MSG: Deauthentication flood: 139 deauth frames from 198.51
+2026/05/18 18:05:06.077776 [INFO]  Return from sendSyslog device=ap-floor1
+2026/05/18 18:05:06.083759 [INFO]  Entering sendSyslog device=ap-floor1 msg=Deauthentication flood: 271 deauth frames from 198.51.100.100 targeting client a
+2026/05/18 18:05:06.088595 [TRACE] sendSyslog format=rfc3164 raw=<186>May 18 18:05:06 apfloor1 %CISCO-6-SYSLOG: 960347: %SYS-2-MSG: Deauthentication flood: 271 deauth frames from 198.51
+2026/05/18 18:05:06.088595 [INFO]  Return from sendSyslog device=ap-floor1
+2026/05/18 18:05:06.093581 [INFO]  Entering sendSyslog device=ap-floor1 msg=Deauthentication flood: 139 deauth frames from 198.51.100.100 targeting client a
+2026/05/18 18:05:06.096986 [TRACE] sendSyslog format=rfc3164 raw=<186>May 18 18:05:06 apfloor1 %CISCO-6-SYSLOG: 838046: %SYS-2-MSG: Deauthentication flood: 139 deauth frames from 198.51
+2026/05/18 18:05:06.096986 [INFO]  Return from sendSyslog device=ap-floor1
+2026/05/18 18:05:06.113330 [INFO]  Entering sendSyslog device=ap-floor1 msg=Deauthentication flood: 423 deauth frames from 198.51.100.100 targeting client a
+2026/05/18 18:05:06.123501 [TRACE] sendSyslog format=rfc3164 raw=<186>May 18 18:05:06 apfloor1 %CISCO-6-SYSLOG: 281456: %SYS-2-MSG: Deauthentication flood: 423 deauth frames from 198.51
+2026/05/18 18:05:06.123501 [INFO]  Return from sendSyslog device=ap-floor1
+2026/05/18 18:05:06.142654 [INFO]  Return from executeAttack attackID=wireless-deauth syslogs=10 flows=0 pcap=0
+2026/05/18 18:05:06.142654 [INFO]  Return from handleExecuteAttack attackID=wireless-deauth
+2026/05/18 18:05:06.142654 [INFO]  HTTP POST /api/v1/attacks/execute 200 148.9953ms
+2026/05/18 18:05:12.207520 [INFO]  Entering handleTopologyGraph
+2026/05/18 18:05:12.208091 [INFO]  Return from handleTopologyGraph nodes=24 edges=21
+2026/05/18 18:05:12.208091 [INFO]  HTTP GET /api/v1/topology/graph 200 570.8µs
+2026/05/18 18:05:12.212170 [INFO]  Entering handleTopologySummary
+2026/05/18 18:05:12.212170 [INFO]  Return from handleTopologySummary
+2026/05/18 18:05:12.212170 [INFO]  HTTP GET /api/v1/topology/summary 200 0s
+2026/05/18 18:05:19.663763 [INFO]  Entering handleGetDashboard
+2026/05/18 18:05:19.665411 [INFO]  Return from handleGetDashboard
+2026/05/18 18:05:19.665411 [INFO]  HTTP GET /api/v1/dashboard 200 1.6487ms
+2026/05/18 18:05:19.669952 [INFO]  Entering handleListRuns
+2026/05/18 18:05:19.669952 [INFO]  Entering getTestRunsDB filter=
+2026/05/18 18:05:19.670631 [INFO]  Return from getTestRunsDB count=6
+2026/05/18 18:05:19.670631 [INFO]  Return from handleListRuns count=6
+2026/05/18 18:05:19.670631 [INFO]  HTTP GET /api/v1/runs 200 678.9µs
+2026/05/18 18:05:19.674337 [INFO]  Entering handleTopologySummary
+2026/05/18 18:05:19.674337 [INFO]  Return from handleTopologySummary
+2026/05/18 18:05:19.674337 [INFO]  HTTP GET /api/v1/topology/summary 200 0s
+2026/05/18 18:05:20.634151 [INFO]  Entering handleTopologyGraph
+2026/05/18 18:05:20.634720 [INFO]  Return from handleTopologyGraph nodes=24 edges=21
+2026/05/18 18:05:20.634720 [INFO]  HTTP GET /api/v1/topology/graph 200 569µs
+2026/05/18 18:05:20.638780 [INFO]  Entering handleTopologySummary
+2026/05/18 18:05:20.638780 [INFO]  Return from handleTopologySummary
+2026/05/18 18:05:20.638780 [INFO]  HTTP GET /api/v1/topology/summary 200 0s
+2026/05/18 18:05:42.255785 [INFO]  Entering handleListAttacks
+2026/05/18 18:05:42.255785 [INFO]  Return from handleListAttacks count=34
+2026/05/18 18:05:42.255785 [INFO]  HTTP GET /api/v1/attacks 200 0s
+2026/05/18 18:07:35.559332 [INFO]  Entering handleTopologyGraph
+2026/05/18 18:07:35.559839 [INFO]  Return from handleTopologyGraph nodes=24 edges=21
+2026/05/18 18:07:35.559839 [INFO]  HTTP GET /api/v1/topology/graph 200 507.2µs
+2026/05/18 18:07:35.563139 [INFO]  Entering handleTopologySummary
+2026/05/18 18:07:35.563139 [INFO]  Return from handleTopologySummary
+2026/05/18 18:07:35.563139 [INFO]  HTTP GET /api/v1/topology/summary 200 0s
+2026/05/18 18:09:30.359292 [INFO]  Entering handleListAttacks
+2026/05/18 18:09:30.359800 [INFO]  Return from handleListAttacks count=34
+2026/05/18 18:09:30.359800 [INFO]  HTTP GET /api/v1/attacks 200 507.4µs
+2026/05/18 18:09:37.848060 [INFO]  Entering handleExecuteAttack
+2026/05/18 18:09:37.848060 [INFO]  Entering executeAttack attackID=dos-icmp-flood runID= attacker=198.51.100.100
+2026/05/18 18:09:37.848060 [INFO]  Entering runICMPFlood attacker=198.51.100.100 targets=[10.0.2.10]
+2026/05/18 18:09:37.848060 [INFO]  Entering sendSyslog device=fw-perimeter msg=Smurf attack: ICMP echo request flood src=198.51.100.100 dst=10.0.2.10 — rate=
+2026/05/18 18:09:37.855824 [TRACE] sendSyslog format=cef raw=<185>May 18 18:09:37 fw-perimeter CEF:0|Fortinet|FortiGate|7.4.0|traffic|Smurf attack: ICMP echo request flood src=198.5
+2026/05/18 18:09:37.855824 [INFO]  Return from sendSyslog device=fw-perimeter
+2026/05/18 18:09:37.863592 [INFO]  Entering ExportNetflowV9 exporter=10.0.0.1 flows=1
+2026/05/18 18:09:37.870379 [INFO]  Return from ExportNetflowV9 bytes=114
+2026/05/18 18:09:37.877456 [INFO]  Return from runICMPFlood syslogs=1 flows=1
+2026/05/18 18:09:37.883982 [INFO]  Return from executeAttack attackID=dos-icmp-flood syslogs=1 flows=1 pcap=0
+2026/05/18 18:09:37.884493 [INFO]  Return from handleExecuteAttack attackID=dos-icmp-flood
+2026/05/18 18:09:37.884493 [INFO]  HTTP POST /api/v1/attacks/execute 200 36.4334ms
+2026/05/18 18:10:00.468099 [INFO]  Entering handleTopologyGraph
+2026/05/18 18:10:00.468099 [INFO]  Entering handleTopologySummary
+2026/05/18 18:10:00.468099 [INFO]  Return from handleTopologySummary
+2026/05/18 18:10:00.468099 [INFO]  HTTP GET /api/v1/topology/summary 200 0s
+2026/05/18 18:10:00.468099 [INFO]  Return from handleTopologyGraph nodes=24 edges=21
+2026/05/18 18:10:00.468099 [INFO]  HTTP GET /api/v1/topology/graph 200 0s
+2026/05/18 18:10:52.453379 [INFO]  Entering handleListAttacks
+2026/05/18 18:10:52.453889 [INFO]  Return from handleListAttacks count=34
+2026/05/18 18:10:52.453889 [INFO]  HTTP GET /api/v1/attacks 200 510.8µs
+2026/05/18 18:10:54.214689 [INFO]  Entering handleListScenarios
+2026/05/18 18:10:54.215197 [INFO]  Entering loadAllScenariosDB
+2026/05/18 18:10:54.216186 [INFO]  Return from loadAllScenariosDB count=6
+2026/05/18 18:10:54.217535 [INFO]  Return from handleListScenarios count=6
+2026/05/18 18:10:54.217535 [INFO]  HTTP GET /api/v1/scenarios 200 2.8463ms
+2026/05/18 18:10:55.441854 [INFO]  Entering handleListRuns
+2026/05/18 18:10:55.441854 [INFO]  Entering getTestRunsDB filter=
+2026/05/18 18:10:55.442362 [INFO]  Return from getTestRunsDB count=6
+2026/05/18 18:10:55.442362 [INFO]  Return from handleListRuns count=6
+2026/05/18 18:10:55.442362 [INFO]  HTTP GET /api/v1/runs 200 507.9µs
+2026/05/18 18:10:56.792889 [INFO]  Entering handleListScenarios
+2026/05/18 18:10:56.792889 [INFO]  Entering loadAllScenariosDB
+2026/05/18 18:10:56.795043 [INFO]  Return from loadAllScenariosDB count=6
+2026/05/18 18:10:56.795043 [INFO]  Return from handleListScenarios count=6
+2026/05/18 18:10:56.795043 [INFO]  HTTP GET /api/v1/scenarios 200 2.1542ms
+2026/05/18 18:11:02.680491 [INFO]  Entering handleListAttacks
+2026/05/18 18:11:02.681001 [INFO]  Return from handleListAttacks count=34
+2026/05/18 18:11:02.681001 [INFO]  HTTP GET /api/v1/attacks 200 510µs
+2026/05/18 18:16:50.102852 [INFO]  HTTP GET /ws 200 0s
+2026/05/18 18:16:50.103900 [INFO]  Entering handleListAttacks
+2026/05/18 18:16:50.103900 [INFO]  Return from handleListAttacks count=34
+2026/05/18 18:16:50.103900 [INFO]  HTTP GET /api/v1/attacks 200 0s
+2026/05/18 18:16:51.443768 [INFO]  HTTP GET /ws 200 0s
+2026/05/18 18:16:51.449540 [INFO]  Entering handleListAttacks
+2026/05/18 18:16:51.450049 [INFO]  Return from handleListAttacks count=34
+2026/05/18 18:16:51.450049 [INFO]  HTTP GET /api/v1/attacks 200 508.3µs
+2026/05/18 18:16:55.159698 [INFO]  Entering handleListAttacks
+2026/05/18 18:16:55.159698 [INFO]  HTTP GET /ws 200 460.5µs
+2026/05/18 18:16:55.159698 [INFO]  Return from handleListAttacks count=34
+2026/05/18 18:16:55.160231 [INFO]  HTTP GET /api/v1/attacks 200 993.1µs
+2026/05/18 18:17:01.514941 [INFO]  Entering handleListAttacks
+2026/05/18 18:17:01.514941 [INFO]  Return from handleListAttacks count=34
+2026/05/18 18:17:01.514941 [INFO]  HTTP GET /api/v1/attacks 200 0s
+2026/05/18 18:17:15.650972 [INFO]  Entering handleListRuns
+2026/05/18 18:17:15.650972 [INFO]  Entering getTestRunsDB filter=
+2026/05/18 18:17:15.651533 [INFO]  Return from getTestRunsDB count=6
+2026/05/18 18:17:15.652021 [INFO]  Return from handleListRuns count=6
+2026/05/18 18:17:15.652021 [INFO]  HTTP GET /api/v1/runs 200 1.0499ms
+2026/05/18 18:17:17.575446 [INFO]  Entering handleGetRunEvents id=e779174c-2318-4c6a-bb3b-d475fe83704a
+2026/05/18 18:17:17.575446 [INFO]  Entering getRunEventsDB runID=e779174c-2318-4c6a-bb3b-d475fe83704a
+2026/05/18 18:17:17.576526 [INFO]  Return from getRunEventsDB count=13
+2026/05/18 18:17:17.577086 [INFO]  Return from handleGetRunEvents count=13
+2026/05/18 18:17:17.577086 [INFO]  HTTP GET /api/v1/runs/e779174c-2318-4c6a-bb3b-d475fe83704a/events 200 1.6392ms
+2026/05/18 18:17:25.552350 [INFO]  Entering handleGetRunEvents id=e779174c-2318-4c6a-bb3b-d475fe83704a
+2026/05/18 18:17:25.552350 [INFO]  Entering getRunEventsDB runID=e779174c-2318-4c6a-bb3b-d475fe83704a
+2026/05/18 18:17:25.552857 [INFO]  Return from getRunEventsDB count=13
+2026/05/18 18:17:25.553440 [INFO]  Return from handleGetRunEvents count=13
+2026/05/18 18:17:25.553440 [INFO]  HTTP GET /api/v1/runs/e779174c-2318-4c6a-bb3b-d475fe83704a/events 200 1.0897ms
+2026/05/18 18:20:19.352548 [INFO]  Entering handleListRuns
+2026/05/18 18:20:19.353055 [INFO]  Entering getTestRunsDB filter=
+2026/05/18 18:20:19.353055 [INFO]  HTTP GET /ws 200 506.7µs
+2026/05/18 18:20:19.353055 [INFO]  Return from getTestRunsDB count=6
+2026/05/18 18:20:19.353580 [INFO]  Return from handleListRuns count=6
+2026/05/18 18:20:19.353580 [INFO]  HTTP GET /api/v1/runs 200 1.032ms
+2026/05/18 18:20:49.321035 [INFO]  Entering handleListAttacks
+2026/05/18 18:20:49.322194 [INFO]  Return from handleListAttacks count=34
+2026/05/18 18:20:49.322194 [INFO]  HTTP GET /api/v1/attacks 200 1.1585ms
+2026/05/18 18:20:59.832932 [INFO]  Entering handleExecuteAttack
+2026/05/18 18:20:59.832932 [INFO]  Entering executeAttack attackID=recon-portscan runID= attacker=198.51.100.100
+2026/05/18 18:20:59.832932 [INFO]  Entering runPortScan attacker=198.51.100.100 targets=[10.0.2.10]
+2026/05/18 18:20:59.832932 [INFO]  Entering SyslogPortScan attacker=198.51.100.100 target=10.0.2.10
+2026/05/18 18:20:59.864039 [INFO]  Return from SyslogPortScan events=6
+2026/05/18 18:20:59.891898 [INFO]  Entering FlowScan attacker=198.51.100.100 target=10.0.2.10 ports=20
+2026/05/18 18:20:59.891898 [INFO]  Return from FlowScan flows=20
+2026/05/18 18:20:59.891898 [INFO]  Entering ExportNetflowV9 exporter=10.0.0.1 flows=20
+2026/05/18 18:20:59.988376 [INFO]  Return from ExportNetflowV9 bytes=684
+2026/05/18 18:20:59.993087 [INFO]  Entering PCAPPortScan attacker=198.51.100.100 target=10.0.2.10 ports=20
+2026/05/18 18:20:59.993087 [INFO]  Entering writePCAPFile runID=scan attack=portscan packets=40
+2026/05/18 18:20:59.995000 PANIC recovered at main.writePCAPFile (C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/pcap_writer.go:56): runtime error: slice bounds out of range [:8] with length 4
+goroutine 649 [running]:
+runtime/debug.Stack()
+	C:/Users/aakur/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.windows-amd64/src/runtime/debug/stack.go:26 +0x5e
+main.panicHandler({0xc000083490, 0x6e}, 0x0)
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/utils.go:72 +0x58
+panic({0x7ff6a4b88880?, 0xc000290c30?})
+	C:/Users/aakur/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.windows-amd64/src/runtime/panic.go:783 +0x132
+main.writePCAPFile({0x7ff6a4bc19fb, 0x4}, {0x7ff6a4bcbdfc, 0x8}, {0xc0003be708, 0x28, 0x14?})
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/pcap_writer.go:59 +0x985
+main.PCAPPortScan(0xc0001b2750, 0xc000033a00, {0xc0004bd390, 0x14, 0x7ff6a4af4800?})
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/pcap_writer.go:229 +0x6fa
+main.runPortScan({{0xc0002762e0, 0xe}, {0xc00040a240, 0x24}, {0xc0002762f0, 0xe}, {0xc000036a90, 0x1, 0x1}, 0xc0004a9050})
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/attack_recon.go:50 +0x551
+main.executeAttack({{0xc0002762e0, 0xe}, {0xc00040a240, 0x24}, {0xc0002762f0, 0xe}, {0xc000036a90, 0x1, 0x1}, 0xc0004a9050})
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/attack_engine.go:93 +0x93b
+main.handleExecuteAttack(0xc000426100)
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/api_handlers.go:149 +0x37e
+github.com/gin-gonic/gin.(*Context).Next(0xc000426100)
+	C:/Users/aakur/go/pkg/mod/github.com/gin-gonic/gin@v1.10.0/context.go:185 +0x2b
+main.startAPIServer.corsMiddleware.func5(0xc000426100)
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/api_server.go:235 +0xb7
+github.com/gin-gonic/gin.(*Context).Next(0xc000426100)
+	C:/Users/aakur/go/pkg/mod/github.com/gin-gonic/gin@v1.10.0/context.go:185 +0x2b
+main.startAPIServer.ginRecovery.func4(0xc0003798d0?)
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/api_server.go:221 +0x3f
+github.com/gin-gonic/gin.(*Context).Next(0xc000426100)
+	C:/Users/aakur/go/pkg/mod/github.com/gin-gonic/gin@v1.10.0/context.go:185 +0x2b
+main.startAPIServer.ginLogger.func3(0xc000426100)
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/api_server.go:207 +0x46
+github.com/gin-gonic/gin.(*Context).Next(...)
+	C:/Users/aakur/go/pkg/mod/github.com/gin-gonic/gin@v1.10.0/context.go:185
+github.com/gin-gonic/gin.(*Engine).handleHTTPRequest(0xc0003ca000, 0xc000426100)
+	C:/Users/aakur/go/pkg/mod/github.com/gin-gonic/gin@v1.10.0/gin.go:633 +0x94b
+github.com/gin-gonic/gin.(*Engine).ServeHTTP(0xc0003ca000, {0x7ff6a4cceb50, 0xc0001ca4b0}, 0xc00011c3c0)
+	C:/Users/aakur/go/pkg/mod/github.com/gin-gonic/gin@v1.10.0/gin.go:589 +0x1ad
+net/http.serverHandler.ServeHTTP({0x7ff6a4ccd0c8?}, {0x7ff6a4cceb50?, 0xc0001ca4b0?}, 0x6?)
+	C:/Users/aakur/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.windows-amd64/src/net/http/server.go:3340 +0x8e
+net/http.(*conn).serve(0xc0001b85a0, {0x7ff6a4ccf4f8, 0xc0002b9290})
+	C:/Users/aakur/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.windows-amd64/src/net/http/server.go:2109 +0x665
+created by net/http.(*Server).Serve in goroutine 1
+	C:/Users/aakur/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.windows-amd64/src/net/http/server.go:3493 +0x485
+2026/05/18 18:20:59.995000 [INFO]  Return from PCAPPortScan frames=40 path=
+2026/05/18 18:20:59.995000 [INFO]  Return from runPortScan syslogs=6 flows=20
+2026/05/18 18:21:00.000202 [INFO]  Return from executeAttack attackID=recon-portscan syslogs=6 flows=20 pcap=1
+2026/05/18 18:21:00.000202 [INFO]  Return from handleExecuteAttack attackID=recon-portscan
+2026/05/18 18:21:00.000202 [INFO]  HTTP POST /api/v1/attacks/execute 200 167.2699ms
+2026/05/18 18:21:05.656082 [INFO]  Entering handleExecuteAttack
+2026/05/18 18:21:05.656082 [INFO]  Entering executeAttack attackID=recon-portscan runID= attacker=198.51.100.100
+2026/05/18 18:21:05.656082 [INFO]  Entering runPortScan attacker=198.51.100.100 targets=[10.0.2.10]
+2026/05/18 18:21:05.656082 [INFO]  Entering SyslogPortScan attacker=198.51.100.100 target=10.0.2.10
+2026/05/18 18:21:05.688507 [INFO]  Return from SyslogPortScan events=6
+2026/05/18 18:21:05.718433 [INFO]  Entering FlowScan attacker=198.51.100.100 target=10.0.2.10 ports=20
+2026/05/18 18:21:05.718433 [INFO]  Return from FlowScan flows=20
+2026/05/18 18:21:05.718433 [INFO]  Entering ExportNetflowV9 exporter=10.0.0.1 flows=20
+2026/05/18 18:21:05.820372 [INFO]  Return from ExportNetflowV9 bytes=684
+2026/05/18 18:21:05.826260 [INFO]  Entering PCAPPortScan attacker=198.51.100.100 target=10.0.2.10 ports=20
+2026/05/18 18:21:05.826260 [INFO]  Entering writePCAPFile runID=scan attack=portscan packets=40
+2026/05/18 18:21:05.826260 PANIC recovered at main.writePCAPFile (C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/pcap_writer.go:56): runtime error: slice bounds out of range [:8] with length 4
+goroutine 662 [running]:
+runtime/debug.Stack()
+	C:/Users/aakur/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.windows-amd64/src/runtime/debug/stack.go:26 +0x5e
+main.panicHandler({0xc000082380, 0x6e}, 0x0)
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/utils.go:72 +0x58
+panic({0x7ff6a4b88880?, 0xc000290cc0?})
+	C:/Users/aakur/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.windows-amd64/src/runtime/panic.go:783 +0x132
+main.writePCAPFile({0x7ff6a4bc19fb, 0x4}, {0x7ff6a4bcbdfc, 0x8}, {0xc0003c0a08, 0x28, 0x14?})
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/pcap_writer.go:59 +0x985
+main.PCAPPortScan(0xc0001b2750, 0xc000033a00, {0xc0004bd390, 0x14, 0x7ff6a4af4800?})
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/pcap_writer.go:229 +0x6fa
+main.runPortScan({{0xc0002286f0, 0xe}, {0xc0003b60c0, 0x24}, {0xc000228700, 0xe}, {0xc00027c110, 0x1, 0x1}, 0xc000390a80})
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/attack_recon.go:50 +0x551
+main.executeAttack({{0xc0002286f0, 0xe}, {0xc0003b60c0, 0x24}, {0xc000228700, 0xe}, {0xc00027c110, 0x1, 0x1}, 0xc000390a80})
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/attack_engine.go:93 +0x93b
+main.handleExecuteAttack(0xc0003ba100)
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/api_handlers.go:149 +0x37e
+github.com/gin-gonic/gin.(*Context).Next(0xc0003ba100)
+	C:/Users/aakur/go/pkg/mod/github.com/gin-gonic/gin@v1.10.0/context.go:185 +0x2b
+main.startAPIServer.corsMiddleware.func5(0xc0003ba100)
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/api_server.go:235 +0xb7
+github.com/gin-gonic/gin.(*Context).Next(0xc0003ba100)
+	C:/Users/aakur/go/pkg/mod/github.com/gin-gonic/gin@v1.10.0/context.go:185 +0x2b
+main.startAPIServer.ginRecovery.func4(0xc0004ab8d0?)
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/api_server.go:221 +0x3f
+github.com/gin-gonic/gin.(*Context).Next(0xc0003ba100)
+	C:/Users/aakur/go/pkg/mod/github.com/gin-gonic/gin@v1.10.0/context.go:185 +0x2b
+main.startAPIServer.ginLogger.func3(0xc0003ba100)
+	C:/Users/aakur/work/CyberSecurity/NDR Testing Simulartor/netsim-ndr/src/api_server.go:207 +0x46
+github.com/gin-gonic/gin.(*Context).Next(...)
+	C:/Users/aakur/go/pkg/mod/github.com/gin-gonic/gin@v1.10.0/context.go:185
+github.com/gin-gonic/gin.(*Engine).handleHTTPRequest(0xc0003ca000, 0xc0003ba100)
+	C:/Users/aakur/go/pkg/mod/github.com/gin-gonic/gin@v1.10.0/gin.go:633 +0x94b
+github.com/gin-gonic/gin.(*Engine).ServeHTTP(0xc0003ca000, {0x7ff6a4cceb50, 0xc0003c6000}, 0xc00030a000)
+	C:/Users/aakur/go/pkg/mod/github.com/gin-gonic/gin@v1.10.0/gin.go:589 +0x1ad
+net/http.serverHandler.ServeHTTP({0x7ff6a4ccd0c8?}, {0x7ff6a4cceb50?, 0xc0003c6000?}, 0x6?)
+	C:/Users/aakur/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.windows-amd64/src/net/http/server.go:3340 +0x8e
+net/http.(*conn).serve(0xc000382000, {0x7ff6a4ccf4f8, 0xc0002b9290})
+	C:/Users/aakur/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.windows-amd64/src/net/http/server.go:2109 +0x665
+created by net/http.(*Server).Serve in goroutine 1
+	C:/Users/aakur/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.windows-amd64/src/net/http/server.go:3493 +0x485
+2026/05/18 18:21:05.826260 [INFO]  Return from PCAPPortScan frames=40 path=
+2026/05/18 18:21:05.826260 [INFO]  Return from runPortScan syslogs=6 flows=20
+2026/05/18 18:21:05.831684 [INFO]  Return from executeAttack attackID=recon-portscan syslogs=6 flows=20 pcap=1
+2026/05/18 18:21:05.832209 [INFO]  Return from handleExecuteAttack attackID=recon-portscan
+2026/05/18 18:21:05.832209 [INFO]  HTTP POST /api/v1/attacks/execute 200 176.1274ms
+2026/05/18 18:21:59.679416 [INFO]  Entering handleExecuteAttack
+2026/05/18 18:21:59.679416 [INFO]  Entering executeAttack attackID=recon-os-fingerprint runID= attacker=198.51.100.100
+2026/05/18 18:21:59.679416 [INFO]  Entering runOSFingerprint attacker=198.51.100.100 targets=[10.0.2.10]
+2026/05/18 18:21:59.679416 [INFO]  Entering sendSyslog device=fw-perimeter msg=PROBE detected src=198.51.100.100 dst=10.0.2.10: TCP FIN+URG+PSH flags (OS finge
+2026/05/18 18:21:59.685996 [TRACE] sendSyslog format=cef raw=<189>May 18 18:21:59 fw-perimeter CEF:0|Fortinet|FortiGate|7.4.0|traffic|PROBE detected src=198.51.100.100 dst=10.0.2.10
+2026/05/18 18:21:59.685996 [INFO]  Return from sendSyslog device=fw-perimeter
+2026/05/18 18:21:59.691433 [INFO]  Entering ExportNetflowV9 exporter=10.0.0.1 flows=2
+2026/05/18 18:21:59.702676 [INFO]  Return from ExportNetflowV9 bytes=144
+2026/05/18 18:21:59.709690 [INFO]  Entering writePCAPFile runID=09db61d7-1aef-4b5e-a754-097e915e8913 attack=os_fingerprint packets=1
+2026/05/18 18:21:59.710781 [INFO]  Return from writePCAPFile path=output\pcap\09db61d7_os_fingerprint_20260518_182159.pcap
+2026/05/18 18:21:59.710781 [INFO]  Return from runOSFingerprint syslogs=1 flows=2
+2026/05/18 18:21:59.714699 [INFO]  Return from executeAttack attackID=recon-os-fingerprint syslogs=1 flows=2 pcap=1
+2026/05/18 18:21:59.714699 [INFO]  Return from handleExecuteAttack attackID=recon-os-fingerprint
+2026/05/18 18:21:59.714699 [INFO]  HTTP POST /api/v1/attacks/execute 200 35.2837ms
+2026/05/18 18:22:08.195647 [INFO]  Entering handleListRuns
+2026/05/18 18:22:08.195647 [INFO]  Entering getTestRunsDB filter=
+2026/05/18 18:22:08.195647 [INFO]  Return from getTestRunsDB count=6
+2026/05/18 18:22:08.195647 [INFO]  Return from handleListRuns count=6
+2026/05/18 18:22:08.195647 [INFO]  HTTP GET /api/v1/runs 200 0s
+2026/05/18 18:22:12.105064 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 18:22:12.105064 [INFO]  Entering getTelemetryStats
+2026/05/18 18:22:12.106056 [INFO]  Entering getPCAPFiles
+2026/05/18 18:22:12.106614 [INFO]  Return from getPCAPFiles count=1
+2026/05/18 18:22:12.106614 [INFO]  Return from getTelemetryStats syslog=45 flows=68 pcap=1
+2026/05/18 18:22:12.106614 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 18:22:12.106614 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.5496ms
+2026/05/18 18:22:12.108781 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 18:22:12.108781 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 18:22:12.110497 [INFO]  Return from getRecentSyslogMessages count=45
+2026/05/18 18:22:12.111101 [INFO]  Return from handleGetSyslogTelemetry count=45
+2026/05/18 18:22:12.111101 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 2.3196ms
+2026/05/18 18:22:17.109589 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 18:22:17.109589 [INFO]  Entering getTelemetryStats
+2026/05/18 18:22:17.110243 [INFO]  Entering getPCAPFiles
+2026/05/18 18:22:17.110243 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 18:22:17.110243 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 18:22:17.110243 [INFO]  Return from getPCAPFiles count=1
+2026/05/18 18:22:17.110243 [INFO]  Return from getTelemetryStats syslog=45 flows=68 pcap=1
+2026/05/18 18:22:17.110243 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 18:22:17.110243 [INFO]  HTTP GET /api/v1/telemetry/stats 200 653.3µs
+2026/05/18 18:22:17.110243 [INFO]  Return from getRecentSyslogMessages count=45
+2026/05/18 18:22:17.110916 [INFO]  Return from handleGetSyslogTelemetry count=45
+2026/05/18 18:22:17.110916 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 673.4µs
+2026/05/18 18:22:22.108139 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 18:22:22.108139 [INFO]  Entering getTelemetryStats
+2026/05/18 18:22:22.108139 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 18:22:22.108139 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 18:22:22.108969 [INFO]  Return from getRecentSyslogMessages count=45
+2026/05/18 18:22:22.108969 [INFO]  Return from handleGetSyslogTelemetry count=45
+2026/05/18 18:22:22.108969 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 829.7µs
+2026/05/18 18:22:22.108969 [INFO]  Entering getPCAPFiles
+2026/05/18 18:22:22.108969 [INFO]  Return from getPCAPFiles count=1
+2026/05/18 18:22:22.108969 [INFO]  Return from getTelemetryStats syslog=45 flows=68 pcap=1
+2026/05/18 18:22:22.108969 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 18:22:22.108969 [INFO]  HTTP GET /api/v1/telemetry/stats 200 829.7µs
+2026/05/18 18:22:27.106541 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 18:22:27.106541 [INFO]  Entering getTelemetryStats
+2026/05/18 18:22:27.106541 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 18:22:27.106541 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 18:22:27.107229 [INFO]  Return from getRecentSyslogMessages count=45
+2026/05/18 18:22:27.107229 [INFO]  Entering getPCAPFiles
+2026/05/18 18:22:27.107229 [INFO]  Return from handleGetSyslogTelemetry count=45
+2026/05/18 18:22:27.107229 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 687.6µs
+2026/05/18 18:22:27.107229 [INFO]  Return from getPCAPFiles count=1
+2026/05/18 18:22:27.107229 [INFO]  Return from getTelemetryStats syslog=45 flows=68 pcap=1
+2026/05/18 18:22:27.107229 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 18:22:27.107229 [INFO]  HTTP GET /api/v1/telemetry/stats 200 687.6µs
+2026/05/18 18:22:32.109682 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 18:22:32.109682 [INFO]  Entering getTelemetryStats
+2026/05/18 18:22:32.109682 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 18:22:32.109682 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 18:22:32.110289 [INFO]  Return from getRecentSyslogMessages count=45
+2026/05/18 18:22:32.110289 [INFO]  Return from handleGetSyslogTelemetry count=45
+2026/05/18 18:22:32.111004 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.322ms
+2026/05/18 18:22:32.111004 [INFO]  Entering getPCAPFiles
+2026/05/18 18:22:32.111004 [INFO]  Return from getPCAPFiles count=1
+2026/05/18 18:22:32.111004 [INFO]  Return from getTelemetryStats syslog=45 flows=68 pcap=1
+2026/05/18 18:22:32.111004 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 18:22:32.111004 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.322ms
+2026/05/18 18:22:33.280736 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 18:22:33.281363 [INFO]  Entering getTelemetryStats
+2026/05/18 18:22:33.281363 [INFO]  Entering handleGetFlowTelemetry
+2026/05/18 18:22:33.281363 [INFO]  Entering getRecentFlowRecords limit=200
+2026/05/18 18:22:33.281363 [INFO]  Entering getPCAPFiles
+2026/05/18 18:22:33.281887 [INFO]  Return from getPCAPFiles count=1
+2026/05/18 18:22:33.281887 [INFO]  Return from getTelemetryStats syslog=45 flows=68 pcap=1
+2026/05/18 18:22:33.281887 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 18:22:33.281887 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.1513ms
+2026/05/18 18:22:33.282468 [INFO]  Return from getRecentFlowRecords count=68
+2026/05/18 18:22:33.282468 [INFO]  Return from handleGetFlowTelemetry count=68
+2026/05/18 18:22:33.282468 [INFO]  HTTP GET /api/v1/telemetry/flows 200 1.1057ms
+2026/05/18 18:22:34.202432 [INFO]  Entering handleGetPCAPFiles
+2026/05/18 18:22:34.202432 [INFO]  Entering getPCAPFiles
+2026/05/18 18:22:34.202432 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 18:22:34.202432 [INFO]  Entering getTelemetryStats
+2026/05/18 18:22:34.202432 [INFO]  Return from getPCAPFiles count=1
+2026/05/18 18:22:34.202432 [INFO]  Return from handleGetPCAPFiles count=1
+2026/05/18 18:22:34.202432 [INFO]  HTTP GET /api/v1/telemetry/pcap 200 0s
+2026/05/18 18:22:34.203022 [INFO]  Entering getPCAPFiles
+2026/05/18 18:22:34.203022 [INFO]  Return from getPCAPFiles count=1
+2026/05/18 18:22:34.203022 [INFO]  Return from getTelemetryStats syslog=45 flows=68 pcap=1
+2026/05/18 18:22:34.203022 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 18:22:34.203022 [INFO]  HTTP GET /api/v1/telemetry/stats 200 590.3µs
+2026/05/18 18:22:35.523056 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 18:22:35.523056 [INFO]  Entering handleGetSyslogTelemetry
+2026/05/18 18:22:35.523056 [INFO]  Entering getTelemetryStats
+2026/05/18 18:22:35.523056 [INFO]  Entering getRecentSyslogMessages limit=200 device= format=
+2026/05/18 18:22:35.524137 [INFO]  Return from getRecentSyslogMessages count=45
+2026/05/18 18:22:35.524137 [INFO]  Return from handleGetSyslogTelemetry count=45
+2026/05/18 18:22:35.524137 [INFO]  HTTP GET /api/v1/telemetry/syslog 200 1.0815ms
+2026/05/18 18:22:35.524746 [INFO]  Entering getPCAPFiles
+2026/05/18 18:22:35.524746 [INFO]  Return from getPCAPFiles count=1
+2026/05/18 18:22:35.524746 [INFO]  Return from getTelemetryStats syslog=45 flows=68 pcap=1
+2026/05/18 18:22:35.524746 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 18:22:35.524746 [INFO]  HTTP GET /api/v1/telemetry/stats 200 2.223ms
+2026/05/18 18:22:36.481169 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 18:22:36.481169 [INFO]  Entering getTelemetryStats
+2026/05/18 18:22:36.481169 [INFO]  Entering handleGetFlowTelemetry
+2026/05/18 18:22:36.481169 [INFO]  Entering getRecentFlowRecords limit=200
+2026/05/18 18:22:36.481689 [INFO]  Return from getRecentFlowRecords count=68
+2026/05/18 18:22:36.482239 [INFO]  Entering getPCAPFiles
+2026/05/18 18:22:36.482239 [INFO]  Return from handleGetFlowTelemetry count=68
+2026/05/18 18:22:36.482239 [INFO]  HTTP GET /api/v1/telemetry/flows 200 1.0707ms
+2026/05/18 18:22:36.482239 [INFO]  Return from getPCAPFiles count=1
+2026/05/18 18:22:36.482239 [INFO]  Return from getTelemetryStats syslog=45 flows=68 pcap=1
+2026/05/18 18:22:36.482239 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 18:22:36.482239 [INFO]  HTTP GET /api/v1/telemetry/stats 200 1.0707ms
+2026/05/18 18:22:37.106289 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 18:22:37.106289 [INFO]  Entering getTelemetryStats
+2026/05/18 18:22:37.106289 [INFO]  Entering handleGetFlowTelemetry
+2026/05/18 18:22:37.106289 [INFO]  Entering getRecentFlowRecords limit=200
+2026/05/18 18:22:37.107558 [INFO]  Return from getRecentFlowRecords count=68
+2026/05/18 18:22:37.107558 [INFO]  Entering getPCAPFiles
+2026/05/18 18:22:37.107558 [INFO]  Return from handleGetFlowTelemetry count=68
+2026/05/18 18:22:37.107558 [INFO]  HTTP GET /api/v1/telemetry/flows 200 1.2691ms
+2026/05/18 18:22:37.108311 [INFO]  Return from getPCAPFiles count=1
+2026/05/18 18:22:37.108311 [INFO]  Return from getTelemetryStats syslog=45 flows=68 pcap=1
+2026/05/18 18:22:37.108311 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 18:22:37.108311 [INFO]  HTTP GET /api/v1/telemetry/stats 200 2.022ms
+2026/05/18 18:22:37.168345 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 18:22:37.168345 [INFO]  Entering getTelemetryStats
+2026/05/18 18:22:37.168980 [INFO]  Entering handleGetPCAPFiles
+2026/05/18 18:22:37.168980 [INFO]  Entering getPCAPFiles
+2026/05/18 18:22:37.168980 [INFO]  Return from getPCAPFiles count=1
+2026/05/18 18:22:37.168980 [INFO]  Entering getPCAPFiles
+2026/05/18 18:22:37.168980 [INFO]  Return from handleGetPCAPFiles count=1
+2026/05/18 18:22:37.168980 [INFO]  HTTP GET /api/v1/telemetry/pcap 200 0s
+2026/05/18 18:22:37.168980 [INFO]  Return from getPCAPFiles count=1
+2026/05/18 18:22:37.168980 [INFO]  Return from getTelemetryStats syslog=45 flows=68 pcap=1
+2026/05/18 18:22:37.168980 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 18:22:37.168980 [INFO]  HTTP GET /api/v1/telemetry/stats 200 634.4µs
+2026/05/18 18:22:42.104629 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 18:22:42.104629 [INFO]  Entering getTelemetryStats
+2026/05/18 18:22:42.104629 [INFO]  Entering handleGetPCAPFiles
+2026/05/18 18:22:42.104629 [INFO]  Entering getPCAPFiles
+2026/05/18 18:22:42.105250 [INFO]  Return from getPCAPFiles count=1
+2026/05/18 18:22:42.105250 [INFO]  Return from handleGetPCAPFiles count=1
+2026/05/18 18:22:42.105250 [INFO]  HTTP GET /api/v1/telemetry/pcap 200 621.1µs
+2026/05/18 18:22:42.105250 [INFO]  Entering getPCAPFiles
+2026/05/18 18:22:42.105250 [INFO]  Return from getPCAPFiles count=1
+2026/05/18 18:22:42.105250 [INFO]  Return from getTelemetryStats syslog=45 flows=68 pcap=1
+2026/05/18 18:22:42.105250 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 18:22:42.105250 [INFO]  HTTP GET /api/v1/telemetry/stats 200 621.1µs
+2026/05/18 18:22:47.102546 [INFO]  Entering handleGetPCAPFiles
+2026/05/18 18:22:47.102546 [INFO]  Entering getPCAPFiles
+2026/05/18 18:22:47.102546 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 18:22:47.102546 [INFO]  Entering getTelemetryStats
+2026/05/18 18:22:47.102546 [INFO]  Return from getPCAPFiles count=1
+2026/05/18 18:22:47.102546 [INFO]  Return from handleGetPCAPFiles count=1
+2026/05/18 18:22:47.102546 [INFO]  HTTP GET /api/v1/telemetry/pcap 200 0s
+2026/05/18 18:22:47.102546 [INFO]  Entering getPCAPFiles
+2026/05/18 18:22:47.103255 [INFO]  Return from getPCAPFiles count=1
+2026/05/18 18:22:47.103255 [INFO]  Return from getTelemetryStats syslog=45 flows=68 pcap=1
+2026/05/18 18:22:47.103255 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 18:22:47.103255 [INFO]  HTTP GET /api/v1/telemetry/stats 200 708.6µs
+2026/05/18 18:22:52.104404 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 18:22:52.104404 [INFO]  Entering getTelemetryStats
+2026/05/18 18:22:52.104404 [INFO]  Entering handleGetPCAPFiles
+2026/05/18 18:22:52.104404 [INFO]  Entering getPCAPFiles
+2026/05/18 18:22:52.105140 [INFO]  Entering getPCAPFiles
+2026/05/18 18:22:52.105140 [INFO]  Return from getPCAPFiles count=1
+2026/05/18 18:22:52.105140 [INFO]  Return from getPCAPFiles count=1
+2026/05/18 18:22:52.105140 [INFO]  Return from getTelemetryStats syslog=45 flows=68 pcap=1
+2026/05/18 18:22:52.105140 [INFO]  Return from handleGetPCAPFiles count=1
+2026/05/18 18:22:52.105140 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 18:22:52.105140 [INFO]  HTTP GET /api/v1/telemetry/pcap 200 736.3µs
+2026/05/18 18:22:52.105140 [INFO]  HTTP GET /api/v1/telemetry/stats 200 736.3µs
+2026/05/18 18:22:57.100324 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 18:22:57.100324 [INFO]  Entering getTelemetryStats
+2026/05/18 18:22:57.100324 [INFO]  Entering handleGetPCAPFiles
+2026/05/18 18:22:57.100324 [INFO]  Entering getPCAPFiles
+2026/05/18 18:22:57.100324 [INFO]  Return from getPCAPFiles count=1
+2026/05/18 18:22:57.100324 [INFO]  Return from handleGetPCAPFiles count=1
+2026/05/18 18:22:57.100324 [INFO]  HTTP GET /api/v1/telemetry/pcap 200 0s
+2026/05/18 18:22:57.100324 [INFO]  Entering getPCAPFiles
+2026/05/18 18:22:57.101085 [INFO]  Return from getPCAPFiles count=1
+2026/05/18 18:22:57.101085 [INFO]  Return from getTelemetryStats syslog=45 flows=68 pcap=1
+2026/05/18 18:22:57.101085 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 18:22:57.101085 [INFO]  HTTP GET /api/v1/telemetry/stats 200 761.3µs
+2026/05/18 18:23:02.106584 [INFO]  Entering handleGetTelemetryStats
+2026/05/18 18:23:02.106584 [INFO]  Entering getTelemetryStats
+2026/05/18 18:23:02.106584 [INFO]  Entering getPCAPFiles
+2026/05/18 18:23:02.106584 [INFO]  Return from getPCAPFiles count=1
+2026/05/18 18:23:02.106584 [INFO]  Return from getTelemetryStats syslog=45 flows=68 pcap=1
+2026/05/18 18:23:02.106584 [INFO]  Return from handleGetTelemetryStats
+2026/05/18 18:23:02.106584 [INFO]  HTTP GET /api/v1/telemetry/stats 200 0s
+2026/05/18 18:23:02.106584 [INFO]  Entering handleGetPCAPFiles
+2026/05/18 18:23:02.106584 [INFO]  Entering getPCAPFiles
+2026/05/18 18:23:02.106584 [INFO]  Return from getPCAPFiles count=1
+2026/05/18 18:23:02.106584 [INFO]  Return from handleGetPCAPFiles count=1
+2026/05/18 18:23:02.106584 [INFO]  HTTP GET /api/v1/telemetry/pcap 200 0s
+2026/05/18 18:23:04.984038 [INFO]  Entering handleListAttacks
+2026/05/18 18:23:04.984549 [INFO]  Return from handleListAttacks count=34
+2026/05/18 18:23:04.984549 [INFO]  HTTP GET /api/v1/attacks 200 511.3µs
+2026/05/18 18:41:42.171486 [INFO]  Entering handleListAttacks
+2026/05/18 18:41:42.172833 [INFO]  HTTP GET /ws 200 7.1698ms
+2026/05/18 18:41:42.175924 [INFO]  Return from handleListAttacks count=34
+2026/05/18 18:41:42.175924 [INFO]  HTTP GET /api/v1/attacks 200 10.2612ms
