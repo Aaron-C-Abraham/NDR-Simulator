@@ -15,6 +15,9 @@ func runIPFragmentation(req AttackRequest) (*AttackResult, error) {
 	logInfo("Entering runIPFragmentation attacker=%s", req.AttackerIP)
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	fragSize := getAttackParamInt(req.Params, "frag_size", 8)
+	if fragSize < 1 {
+		fragSize = 1
+	}
 	for _, targetIP := range req.TargetIPs {
 		targetDev, _ := getDeviceByIP(targetIP)
 		devName := targetIP
@@ -42,8 +45,10 @@ func runIPFragmentation(req AttackRequest) (*AttackResult, error) {
 		ExportNetflowV9(fw.IPAddress, flows)
 	}
 	result.FlowCount += len(flows)
-	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, req.TargetIPs[0], "TCP", flows)
-	result.EventIDs = append(result.EventIDs, flowID)
+	if len(req.TargetIPs) > 0 {
+		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, req.TargetIPs[0], "TCP", flows)
+		result.EventIDs = append(result.EventIDs, flowID)
+	}
 	logInfo("Return from runIPFragmentation syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -122,8 +127,10 @@ func runLowSlowScan(req AttackRequest) (*AttackResult, error) {
 		ExportNetflowV9(fw.IPAddress, flows)
 	}
 	result.FlowCount += len(flows)
-	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, req.TargetIPs[0], "TCP", flows)
-	result.EventIDs = append(result.EventIDs, flowID)
+	if len(req.TargetIPs) > 0 {
+		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, req.TargetIPs[0], "TCP", flows)
+		result.EventIDs = append(result.EventIDs, flowID)
+	}
 	logInfo("Return from runLowSlowScan syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -132,7 +139,7 @@ func runDecoyScan(req AttackRequest) (*AttackResult, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering runDecoyScan attacker=%s", req.AttackerIP)
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
-	numDecoys := getAttackParamInt(req.Params, "num_decoys", 5)
+	numDecoys := getAttackParamInt(req.Params, "num_decoys", 10)
 	decoyIPs := make([]string, numDecoys)
 	for idx := range decoyIPs {
 		decoyIPs[idx] = fmt.Sprintf("10.%d.%d.%d", rand.Intn(256), rand.Intn(256), 1+rand.Intn(254))
@@ -167,8 +174,10 @@ func runDecoyScan(req AttackRequest) (*AttackResult, error) {
 		ExportNetflowV9(fw.IPAddress, flows)
 	}
 	result.FlowCount += len(flows)
-	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, req.TargetIPs[0], "TCP", flows)
-	result.EventIDs = append(result.EventIDs, flowID)
+	if len(req.TargetIPs) > 0 {
+		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, req.TargetIPs[0], "TCP", flows)
+		result.EventIDs = append(result.EventIDs, flowID)
+	}
 	logInfo("Return from runDecoyScan syslogs=%d", result.SyslogCount)
 	return result, nil
 }
