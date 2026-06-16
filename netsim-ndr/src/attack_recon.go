@@ -417,6 +417,14 @@ func encodable_domain(domain string) [][]byte {
 	return results
 }
 
+// prefixDNSTCPLength prepends the 2-byte big-endian length DNS-over-TCP
+// requires before the message. Without this, tcpdump/Wireshark misreads
+// the first 2 bytes of the DNS message itself (the transaction ID) as the
+// length field, producing "[prefix length(...) != length(...)] (invalid)".
+func prefixDNSTCPLength(msg []byte) []byte {
+	length := uint16(len(msg))
+	return append([]byte{byte(length >> 8), byte(length)}, msg...)
+}
 func buildAXFRRequestPayload(domain string) []byte {
 
 	payload := []byte{
@@ -446,7 +454,7 @@ func buildAXFRRequestPayload(domain string) []byte {
 	for _, bytecode := range rest_of_payload {
 		payload = append(payload, bytecode)
 	}
-	return payload
+	return prefixDNSTCPLength(payload)
 }
 
 func buildAXFRResponsePayload(domain string) []byte {
@@ -491,7 +499,7 @@ func buildAXFRResponsePayload(domain string) []byte {
 	for _, bytecode := range rest_of_payload {
 		payload = append(payload, bytecode)
 	}
-	return payload
+	return prefixDNSTCPLength(payload)
 }
 
 // runDNSRecon simulates DNS zone transfer and enumeration.
@@ -547,23 +555,42 @@ func runDNSRecon(req AttackRequest) (*AttackResult, error) {
 		dstMAC := parseMACAddress(dnsDev.MACAddress)
 		seq := rand.Uint32()
 		// TCP Handshake
-		frames = append(frames, create_TCP_frame(src_port, 53, 0x02, seq, 0, req.AttackerIP, dnsDev.IPAddress, srcMAC, dstMAC, nil))
-		frames = append(frames, create_TCP_frame(53, src_port, 0x12, 0, seq+1, req.AttackerIP, dnsDev.IPAddress, dstMAC, srcMAC, nil))
-		frames = append(frames, create_TCP_frame(src_port, 53, 0x10, seq+1, 1, req.AttackerIP, dnsDev.IPAddress, srcMAC, dstMAC, nil))
-		// AXFR protocol begins and end of connection
+		clientSeq := seq
+		serverSeq := uint32(0)
+		frames = append(frames, create_TCP_frame(src_port, 53, 0x02, clientSeq, 0, req.AttackerIP, dnsDev.IPAddress, srcMAC, dstMAC, nil))
+		clientSeq++
+		frames = append(frames, create_TCP_frame(53, src_port, 0x12, serverSeq, clientSeq, req.AttackerIP, dnsDev.IPAddress, dstMAC, srcMAC, nil))
+		serverSeq++
+		frames = append(frames, create_TCP_frame(src_port, 53, 0x10, clientSeq, serverSeq, req.AttackerIP, dnsDev.IPAddress, srcMAC, dstMAC, nil))
+
+		// AXFR request
 		axfr := buildAXFRRequestPayload(domain)
-		frames = append(frames, create_TCP_frame(src_port, 53, 0x02, seq+1, 2, req.AttackerIP, dnsDev.IPAddress, srcMAC, dstMAC, axfr))
+		frames = append(frames, create_TCP_frame(src_port, 53, 0x18, clientSeq, serverSeq, req.AttackerIP, dnsDev.IPAddress, srcMAC, dstMAC, axfr))
+		clientSeq += uint32(len(axfr))
+		frames = append(frames, create_TCP_frame(53, src_port, 0x10, serverSeq, clientSeq, req.AttackerIP, dnsDev.IPAddress, dstMAC, srcMAC, nil))
+
+		// AXFR response
 		response := buildAXFRResponsePayload(domain)
-		frames = append(frames, create_TCP_frame(53, src_port, 0x12, 2, seq+2, req.AttackerIP, dnsDev.IPAddress, dstMAC, srcMAC, response))
-		frames = append(frames, create_TCP_frame(src_port, 53, 0x10, seq+2, 3, req.AttackerIP, dnsDev.IPAddress, srcMAC, dstMAC, nil))
-		frames = append(frames, create_TCP_frame(53, src_port, 0x12, 3, seq+3, req.AttackerIP, dnsDev.IPAddress, dstMAC, srcMAC, AXFRTCPResponse2))
-		frames = append(frames, create_TCP_frame(src_port, 53, 0x10, seq+3, 4, req.AttackerIP, dnsDev.IPAddress, srcMAC, dstMAC, nil))
-		frames = append(frames, create_TCP_frame(53, src_port, 0x12, 4, seq+4, req.AttackerIP, dnsDev.IPAddress, dstMAC, srcMAC, AXFRTCPResponse3))
-		frames = append(frames, create_TCP_frame(src_port, 53, 0x10, seq+4, 5, req.AttackerIP, dnsDev.IPAddress, srcMAC, dstMAC, nil))
-		frames = append(frames, create_TCP_frame(src_port, 53, 0x01, seq+4, 6, req.AttackerIP, dnsDev.IPAddress, srcMAC, dstMAC, nil))
-		frames = append(frames, create_TCP_frame(53, src_port, 0x10, 6, seq+5, req.AttackerIP, dnsDev.IPAddress, dstMAC, srcMAC, nil))
-		frames = append(frames, create_TCP_frame(53, src_port, 0x01, 6, seq+6, req.AttackerIP, dnsDev.IPAddress, dstMAC, srcMAC, nil))
-		frames = append(frames, create_TCP_frame(src_port, 53, 0x10, seq+6, 7, req.AttackerIP, dnsDev.IPAddress, srcMAC, dstMAC, nil))
+		frames = append(frames, create_TCP_frame(53, src_port, 0x18, serverSeq, clientSeq, req.AttackerIP, dnsDev.IPAddress, dstMAC, srcMAC, response))
+		serverSeq += uint32(len(response))
+		frames = append(frames, create_TCP_frame(src_port, 53, 0x10, clientSeq, serverSeq, req.AttackerIP, dnsDev.IPAddress, srcMAC, dstMAC, nil))
+
+		// Additional AXFR response segments
+		frames = append(frames, create_TCP_frame(53, src_port, 0x18, serverSeq, clientSeq, req.AttackerIP, dnsDev.IPAddress, dstMAC, srcMAC, AXFRTCPResponse2))
+		serverSeq += uint32(len(AXFRTCPResponse2))
+		frames = append(frames, create_TCP_frame(src_port, 53, 0x10, clientSeq, serverSeq, req.AttackerIP, dnsDev.IPAddress, srcMAC, dstMAC, nil))
+
+		frames = append(frames, create_TCP_frame(53, src_port, 0x18, serverSeq, clientSeq, req.AttackerIP, dnsDev.IPAddress, dstMAC, srcMAC, AXFRTCPResponse3))
+		serverSeq += uint32(len(AXFRTCPResponse3))
+		frames = append(frames, create_TCP_frame(src_port, 53, 0x10, clientSeq, serverSeq, req.AttackerIP, dnsDev.IPAddress, srcMAC, dstMAC, nil))
+
+		// Connection teardown
+		frames = append(frames, create_TCP_frame(src_port, 53, 0x01, clientSeq, serverSeq, req.AttackerIP, dnsDev.IPAddress, srcMAC, dstMAC, nil))
+		clientSeq++
+		frames = append(frames, create_TCP_frame(53, src_port, 0x10, serverSeq, clientSeq, req.AttackerIP, dnsDev.IPAddress, dstMAC, srcMAC, nil))
+		frames = append(frames, create_TCP_frame(53, src_port, 0x01, serverSeq, clientSeq, req.AttackerIP, dnsDev.IPAddress, dstMAC, srcMAC, nil))
+		serverSeq++
+		frames = append(frames, create_TCP_frame(src_port, 53, 0x10, clientSeq, serverSeq, req.AttackerIP, dnsDev.IPAddress, srcMAC, dstMAC, nil))
 		for i, query := range queries {
 			udp := buildUDPDatagram(queryPorts[i], 53, query)
 			ip := buildIPv4Packet(req.AttackerIP, dnsDev.IPAddress, 17, udp)
@@ -797,33 +824,67 @@ func runSMTPUserEnum(req AttackRequest) (*AttackResult, error) {
 		var frames [][]byte
 
 		attackerdomain := fmt.Sprintf("mail.%s", domain)
-		seq := rand.Uint32()
 		srcMAC := parseMACAddress(attackerDev.MACAddress)
 		dstMAC := parseMACAddress(targetDev.MACAddress)
 		src_port := randomPort()
 		dst_port := uint16(587)
+
+		clientSeq := rand.Uint32()
+		serverSeq := uint32(0)
+
 		// SYN
-		frames = append(frames, create_TCP_frame(src_port, dst_port, 0x02, seq, 0, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
+		frames = append(frames, create_TCP_frame(src_port, dst_port, 0x02, clientSeq, 0, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
+		clientSeq++
 		// SYN-ACK
-		frames = append(frames, create_TCP_frame(dst_port, src_port, 0x12, 0, seq+1, targetIP, req.AttackerIP, dstMAC, srcMAC, nil))
+		frames = append(frames, create_TCP_frame(dst_port, src_port, 0x12, serverSeq, clientSeq, targetIP, req.AttackerIP, dstMAC, srcMAC, nil))
+		serverSeq++
 		// ACK
-		frames = append(frames, create_TCP_frame(src_port, dst_port, 0x02, seq+1, 1, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
+		frames = append(frames, create_TCP_frame(src_port, dst_port, 0x10, clientSeq, serverSeq, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
+
 		// 1. SMTP Server Banner
-		frames = append(frames, create_TCP_frame(dst_port, src_port, 0x12, 1, seq+2, targetIP, req.AttackerIP, dstMAC, srcMAC, serverBanner(attackerdomain)))
+		banner := serverBanner(attackerdomain)
+		frames = append(frames, create_TCP_frame(dst_port, src_port, 0x18, serverSeq, clientSeq, targetIP, req.AttackerIP, dstMAC, srcMAC, banner))
+		serverSeq += uint32(len(banner))
+		frames = append(frames, create_TCP_frame(src_port, dst_port, 0x10, clientSeq, serverSeq, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
+
 		// 2. Client EHLO
-		frames = append(frames, create_TCP_frame(src_port, dst_port, 0x02, seq+2, 2, req.AttackerIP, targetIP, srcMAC, dstMAC, clientEhlo(fmt.Sprintf("attacker@%s", domain))))
+		ehlo := clientEhlo(fmt.Sprintf("attacker@%s", domain))
+		frames = append(frames, create_TCP_frame(src_port, dst_port, 0x18, clientSeq, serverSeq, req.AttackerIP, targetIP, srcMAC, dstMAC, ehlo))
+		clientSeq += uint32(len(ehlo))
+		frames = append(frames, create_TCP_frame(dst_port, src_port, 0x10, serverSeq, clientSeq, targetIP, req.AttackerIP, dstMAC, srcMAC, nil))
+
 		// 3. Server replies to EHLO
-		frames = append(frames, create_TCP_frame(dst_port, src_port, 0x12, 1, seq+2, targetIP, req.AttackerIP, dstMAC, srcMAC, serverEhloResponse(attackerdomain)))
+		ehloResp := serverEhloResponse(attackerdomain)
+		frames = append(frames, create_TCP_frame(dst_port, src_port, 0x18, serverSeq, clientSeq, targetIP, req.AttackerIP, dstMAC, srcMAC, ehloResp))
+		serverSeq += uint32(len(ehloResp))
+		frames = append(frames, create_TCP_frame(src_port, dst_port, 0x10, clientSeq, serverSeq, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
+
+		// 4. VRFY for each candidate user
 		for _, user := range users {
 			mail_id := fmt.Sprintf("%s@%s", user, domain)
-			// 4. VRFY for existing user
-			frames = append(frames, create_TCP_frame(src_port, dst_port, 0x02, seq+1, 1, req.AttackerIP, targetIP, srcMAC, dstMAC, clientVrfy(user)))
-			frames = append(frames, create_TCP_frame(dst_port, src_port, 0x12, 1, seq+2, targetIP, req.AttackerIP, dstMAC, srcMAC, serverEhloResponse(mail_id)))
-			// Reset
-			frames = append(frames, create_TCP_frame(src_port, dst_port, 0x02, seq+1, 1, req.AttackerIP, targetIP, srcMAC, dstMAC, clientVrfy(user)))
-			frames = append(frames, create_TCP_frame(dst_port, src_port, 0x12, 1, seq+2, targetIP, req.AttackerIP, dstMAC, srcMAC, serverEhloResponse(mail_id)))
+			vrfy := clientVrfy(user)
+			frames = append(frames, create_TCP_frame(src_port, dst_port, 0x18, clientSeq, serverSeq, req.AttackerIP, targetIP, srcMAC, dstMAC, vrfy))
+			clientSeq += uint32(len(vrfy))
+			frames = append(frames, create_TCP_frame(dst_port, src_port, 0x10, serverSeq, clientSeq, targetIP, req.AttackerIP, dstMAC, srcMAC, nil))
+
+			resp := serverEhloResponse(mail_id)
+			frames = append(frames, create_TCP_frame(dst_port, src_port, 0x18, serverSeq, clientSeq, targetIP, req.AttackerIP, dstMAC, srcMAC, resp))
+			serverSeq += uint32(len(resp))
+			frames = append(frames, create_TCP_frame(src_port, dst_port, 0x10, clientSeq, serverSeq, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
 		}
 
+		// Connection teardown
+		frames = append(frames, create_TCP_frame(src_port, dst_port, 0x01, clientSeq, serverSeq, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
+		clientSeq++
+		frames = append(frames, create_TCP_frame(dst_port, src_port, 0x10, serverSeq, clientSeq, targetIP, req.AttackerIP, dstMAC, srcMAC, nil))
+		frames = append(frames, create_TCP_frame(dst_port, src_port, 0x01, serverSeq, clientSeq, targetIP, req.AttackerIP, dstMAC, srcMAC, nil))
+		serverSeq++
+		frames = append(frames, create_TCP_frame(src_port, dst_port, 0x10, clientSeq, serverSeq, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
+
+		path, _ := writePCAPFile(req.RunID, "smtp_user_enum", frames, defaultDuration)
+		if path != "" {
+			result.PCAPFiles = append(result.PCAPFiles, path)
+		}
 	}
 	logInfo("Return from runSMTPUserEnum syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -872,6 +933,12 @@ func runWebDirBrute(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+		wdbPath, wdbErr := PCAPGenericTCPExchange(req.RunID, "web_dir_brute", req.AttackerIP, targetIP, uint16(targetPort),
+			[]byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: gobuster/3.1.0\r\n\r\n", paths[0].path, targetIP)),
+			[]byte(fmt.Sprintf("HTTP/1.1 %d OK\r\nContent-Length: 0\r\n\r\n", paths[0].status)))
+		if wdbErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, wdbPath)
+		}
 	}
 	logInfo("Return from runWebDirBrute syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -908,6 +975,11 @@ func runLDAPEnum(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+		ldapPath, ldapErr := PCAPGenericTCPExchange(req.RunID, "ldap_enum", req.AttackerIP, targetIP, 389,
+			[]byte(fmt.Sprintf("searchRequest base=%s filter=(objectClass=user)", baseDN)), nil)
+		if ldapErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, ldapPath)
+		}
 	}
 	logInfo("Return from runLDAPEnum syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -943,6 +1015,21 @@ func runNetBIOSEnum(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount += len(flows)
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "UDP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+		if attackerDev, ok := getDeviceByIP(req.AttackerIP); ok && attackerDev != nil {
+			if devMAC, ok2 := getDeviceByIP(targetIP); ok2 && devMAC != nil {
+				srcMAC := parseMACAddress(attackerDev.MACAddress)
+				dstMAC := parseMACAddress(devMAC.MACAddress)
+				srcPort := randomPort()
+				query := buildUDPDatagram(srcPort, 137, NBNS_Name_Query_Request)
+				queryFrame := buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 17, query))
+				response := buildUDPDatagram(137, srcPort, Get_NBNS_Response(targetIP))
+				responseFrame := buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 17, response))
+				nbPath, _ := writePCAPFile(req.RunID, "netbios_enum", [][]byte{queryFrame, responseFrame}, defaultDuration)
+				if nbPath != "" {
+					result.PCAPFiles = append(result.PCAPFiles, nbPath)
+				}
+			}
+		}
 	}
 	logInfo("Return from runNetBIOSEnum syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -977,6 +1064,10 @@ func runSSLScan(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+		sslScanPath, sslScanErr := PCAPGenericTCPExchange(req.RunID, "ssl_scan", req.AttackerIP, targetIP, uint16(targetPort), buildMinimalTLSClientHello(), nil)
+		if sslScanErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, sslScanPath)
+		}
 	}
 	logInfo("Return from runSSLScan syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -1010,6 +1101,12 @@ func runCloudMetaDiscovery(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, "169.254.169.254", "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+		ssrfPath, ssrfErr := PCAPGenericTCPExchange(req.RunID, "cloud_meta_discovery", req.AttackerIP, "169.254.169.254", 80,
+			[]byte("GET /latest/meta-data/iam/security-credentials/ HTTP/1.1\r\nHost: 169.254.169.254\r\n\r\n"),
+			[]byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"))
+		if ssrfErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, ssrfPath)
+		}
 	}
 	logInfo("Return from runCloudMetaDiscovery syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -1045,6 +1142,10 @@ func runSubdomainEnum(req AttackRequest) (*AttackResult, error) {
 	result.FlowCount++
 	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, dnsDev.IPAddress, "UDP", flows)
 	result.EventIDs = append(result.EventIDs, flowID)
+	dnsPath, dnsErr := PCAPDNSQueryResponse(req.RunID, "subdomain_enum", req.AttackerIP, dnsDev.IPAddress, fmt.Sprintf("%s.%s", subdomains[0], domain), true)
+	if dnsErr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, dnsPath)
+	}
 	logInfo("Return from runSubdomainEnum syslogs=%d", result.SyslogCount)
 	return result, nil
 }
