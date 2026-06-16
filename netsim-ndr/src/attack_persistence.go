@@ -49,6 +49,12 @@ func runIPFragmentation(req AttackRequest) (*AttackResult, error) {
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, req.TargetIPs[0], "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
 	}
+	for _, targetIP := range req.TargetIPs {
+		pcapPath, pcapErr := PCAPIPFragmentation(req.RunID, req.AttackerIP, targetIP, uint16(randomPort()), fragSize)
+		if pcapErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, pcapPath)
+		}
+	}
 	logInfo("Return from runIPFragmentation syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -87,6 +93,25 @@ func runProtocolTunnel(req AttackRequest) (*AttackResult, error) {
 	result.FlowCount++
 	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, c2IP, tunnelProto, flows)
 	result.EventIDs = append(result.EventIDs, flowID)
+	switch tunnelProto {
+	case "HTTP":
+		reqPayload := []byte(fmt.Sprintf("POST /api/sync HTTP/1.1\r\nHost: cdn.example.net\r\nContent-Length: 512\r\n\r\n%s", randomHexString(512)))
+		respPayload := []byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK")
+		pcapPath, pcapErr := PCAPGenericTCPExchange(req.RunID, "protocol_tunnel_http", req.AttackerIP, c2IP, dstPort, reqPayload, respPayload)
+		if pcapErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, pcapPath)
+		}
+	case "ICMP":
+		pcapPath, pcapErr := writeICMPTunnelPCAP(req.RunID, req.AttackerIP, c2IP)
+		if pcapErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, pcapPath)
+		}
+	default:
+		pcapPath, pcapErr := PCAPDNSQueryResponse(req.RunID, "protocol_tunnel_dns", req.AttackerIP, c2IP, randomHexString(40)+".tunnel.example.net", true)
+		if pcapErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, pcapPath)
+		}
+	}
 	logInfo("Return from runProtocolTunnel syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -130,6 +155,14 @@ func runLowSlowScan(req AttackRequest) (*AttackResult, error) {
 	if len(req.TargetIPs) > 0 {
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, req.TargetIPs[0], "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+	}
+	for _, targetIP := range req.TargetIPs {
+		for _, port := range ports {
+			pcapPath, pcapErr := PCAPGenericTCPExchange(req.RunID, "low_slow_scan", req.AttackerIP, targetIP, port, nil, nil)
+			if pcapErr == nil {
+				result.PCAPFiles = append(result.PCAPFiles, pcapPath)
+			}
+		}
 	}
 	logInfo("Return from runLowSlowScan syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -177,6 +210,14 @@ func runDecoyScan(req AttackRequest) (*AttackResult, error) {
 	if len(req.TargetIPs) > 0 {
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, req.TargetIPs[0], "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+	}
+	for _, srcIP := range allSources {
+		for _, targetIP := range req.TargetIPs {
+			pcapPath, pcapErr := PCAPGenericTCPExchange(req.RunID, "decoy_scan", srcIP, targetIP, uint16(randomPort()), nil, nil)
+			if pcapErr == nil {
+				result.PCAPFiles = append(result.PCAPFiles, pcapPath)
+			}
+		}
 	}
 	logInfo("Return from runDecoyScan syslogs=%d", result.SyslogCount)
 	return result, nil

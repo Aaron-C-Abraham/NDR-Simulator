@@ -231,12 +231,13 @@ func runOSFingerprint(req AttackRequest) (*AttackResult, error) {
 				frames = append(frames, frame)
 				// Sending expected responses with corresponding TCP flags
 				tcpResponse := buildTCPSegment(80, src_port, response[i], 1, seq+1, nil)
-				ipPktres := buildIPv4Packet(targetIP, req.AttackerIP, 17, tcpResponse)
+				ipPktres := buildIPv4Packet(targetIP, req.AttackerIP, 6, tcpResponse)
 				frameres := buildEthernetFrame(srcMAC, dstMAC, ipPktres)
 				frames = append(frames, frameres)
 			}
 			src_port := randomPort()
-			udp_datagram := buildUDPDatagram(src_port, 60, frames[0])
+			payload := []byte{0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07}
+			udp_datagram := buildUDPDatagram(src_port, 60, payload)
 			ipPkt := buildIPv4Packet(req.AttackerIP, targetIP, 17, udp_datagram)
 			frame := buildEthernetFrame(srcMAC, dstMAC, ipPkt)
 			frames = append(frames, frame)
@@ -515,12 +516,15 @@ func runDNSRecon(req AttackRequest) (*AttackResult, error) {
 
 	// DNS brute-force subdomains
 	var queries [][]byte
+	var queryPorts []uint16
 	subdomains := []string{"mail", "vpn", "dc", "admin", "dev", "stage", "prod", "backup"}
 	for _, sub := range subdomains {
+		queryPort := randomPort()
 		qMsg := fmt.Sprintf("client %s#%d: query: %s.%s IN A + (%s)",
-			req.AttackerIP, src_port, sub, domain, dnsDev.IPAddress)
+			req.AttackerIP, queryPort, sub, domain, dnsDev.IPAddress)
 		ev := sendSyslog(dnsDev, qMsg, 6)
 		queries = append(queries, buildDNSQuery(fmt.Sprintf("%s.%s", domain, sub)))
+		queryPorts = append(queryPorts, queryPort)
 		result.SyslogCount++
 		eventID, _ := recordRunEvent(req.RunID, "syslog", dnsDev.Name, req.AttackerIP, dnsDev.IPAddress, "UDP", ev)
 		result.EventIDs = append(result.EventIDs, eventID)
@@ -560,8 +564,8 @@ func runDNSRecon(req AttackRequest) (*AttackResult, error) {
 		frames = append(frames, create_TCP_frame(53, src_port, 0x10, 6, seq+5, req.AttackerIP, dnsDev.IPAddress, dstMAC, srcMAC, nil))
 		frames = append(frames, create_TCP_frame(53, src_port, 0x01, 6, seq+6, req.AttackerIP, dnsDev.IPAddress, dstMAC, srcMAC, nil))
 		frames = append(frames, create_TCP_frame(src_port, 53, 0x10, seq+6, 7, req.AttackerIP, dnsDev.IPAddress, srcMAC, dstMAC, nil))
-		for _, query := range queries {
-			udp := buildUDPDatagram(src_port, 53, query)
+		for i, query := range queries {
+			udp := buildUDPDatagram(queryPorts[i], 53, query)
 			ip := buildIPv4Packet(req.AttackerIP, dnsDev.IPAddress, 17, udp)
 			frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, ip))
 		}

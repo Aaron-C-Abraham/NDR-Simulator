@@ -69,7 +69,7 @@ func writePCAPFileLinkType(runID, attackName string, packets [][]byte, duration 
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering writePCAPFileLinkType runID=%s attack=%s packets=%d linkType=%d", runID, attackName, len(packets), linkType)
 
-	filename := fmt.Sprintf("%s_%s_%s.pcap", runID, attackName, time.Now().Format("20060102_150405"))
+	filename := fmt.Sprintf("%s_%s_%s_%06d.pcap", runID, attackName, time.Now().Format("20060102_150405"), time.Now().Nanosecond()/1000)
 	path := filepath.Join(GlobalPCAPDir, filename)
 
 	GlobalPCAPWriteLock.Lock()
@@ -820,4 +820,178 @@ func build80211Deauth(apMAC, clientMAC [6]byte) []byte {
 
 	reasonCode := []byte{0x07, 0x00} // Reason: Class 3 frame received from nonassociated station
 	return append(hdr, reasonCode...)
+}
+
+// buildIPv4PacketFragment builds an IPv4 packet with explicit fragmentation
+// fields, for attacks that need real fragment semantics (MF flag, fragment
+// offset, shared IP ID across fragments) rather than buildIPv4Packet's
+// always-unfragmented defaults.
+func buildIPv4PacketFragment(srcIP, dstIP string, protocol uint8, id uint16, moreFragments bool, fragOffsetBytes int, payload []byte) []byte {
+	totalLen := 20 + len(payload)
+	pkt := make([]byte, totalLen)
+	pkt[0] = 0x45
+	pkt[1] = 0x00
+	binary.BigEndian.PutUint16(pkt[2:], uint16(totalLen))
+	binary.BigEndian.PutUint16(pkt[4:], id)
+	flagsAndOffset := uint16(fragOffsetBytes / 8)
+	if moreFragments {
+		flagsAndOffset |= 0x2000 // MF bit
+	}
+	binary.BigEndian.PutUint16(pkt[6:], flagsAndOffset)
+	pkt[8] = 64
+	pkt[9] = protocol
+	binary.BigEndian.PutUint32(pkt[12:], ipToUint32(srcIP))
+	binary.BigEndian.PutUint32(pkt[16:], ipToUint32(dstIP))
+	copy(pkt[20:], payload)
+	checksum := ipChecksum(pkt[:20])
+	binary.BigEndian.PutUint16(pkt[10:], checksum)
+	return pkt
+}
+
+// PCAPIPFragmentation generates a fragmented IP packet stream: a single
+// upper-layer payload (a TCP segment with data) split across multiple IP
+// fragments per fragSize, only the first fragment carrying the TCP header.
+func PCAPIPFragmentation(runID, attackerIP, targetIP string, targetPort uint16, fragSize int) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPIPFragmentation attacker=%s target=%s fragSize=%d", attackerIP, targetIP, fragSize)
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	srcPort := randomPort()
+
+	tcpPayload := []byte("GET /scan-probe-evasion-payload HTTP/1.1\r\nHost: target\r\nX-Pad: " +
+		strings.Repeat("A", 40) + "\r\n\r\n")
+	fullSegment := buildTCPSegment(srcPort, targetPort, 0x18, rand.Uint32(), 0, tcpPayload)
+
+	id := uint16(rand.Intn(65535))
+	var frames [][]byte
+	for offset := 0; offset < len(fullSegment); offset += fragSize {
+		end := offset + fragSize
+		more := true
+		if end >= len(fullSegment) {
+			end = len(fullSegment)
+			more = false
+		}
+		chunk := fullSegment[offset:end]
+		ipFrag := buildIPv4PacketFragment(attackerIP, targetIP, 6, id, more, offset, chunk)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, ipFrag))
+	}
+
+	path, err := writePCAPFile(runID, "ip_fragmentation", frames, defaultDuration)
+	logInfo("Return from PCAPIPFragmentation frames=%d path=%s", len(frames), path)
+	return path, err
+}
+
+// writeICMPTunnelPCAP generates an ICMP echo request/reply pair carrying an
+// oversized payload, representing ICMP-based C2 tunneling.
+func writeICMPTunnelPCAP(runID, attackerIP, c2IP string) (string, error) {
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	payload := make([]byte, 256)
+	rand.Read(payload)
+	identifier := uint16(rand.Intn(65535))
+
+	echoReq := buildICMPSegment(8, 0, 0, identifier, 1, payload)
+	reqFrame := buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, c2IP, 1, echoReq))
+
+	echoReply := buildICMPSegment(0, 0, 0, identifier, 1, payload)
+	replyFrame := buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(c2IP, attackerIP, 1, echoReply))
+
+	return writePCAPFile(runID, "protocol_tunnel_icmp", [][]byte{reqFrame, replyFrame}, defaultDuration)
+}
+
+// PCAPICMPFlood generates a burst of ICMP echo requests representing a Smurf/ICMP flood.
+func PCAPICMPFlood(runID, attackerIP, targetIP string, count int) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPICMPFlood attacker=%s target=%s count=%d", attackerIP, targetIP, count)
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	var frames [][]byte
+	for idx := 0; idx < count; idx++ {
+		identifier := uint16(rand.Intn(65535))
+		echo := buildICMPSegment(8, 0, 0, identifier, uint16(idx), nil)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 1, echo)))
+	}
+	path, err := writePCAPFile(runID, "icmp_flood", frames, defaultDuration)
+	logInfo("Return from PCAPICMPFlood frames=%d path=%s", len(frames), path)
+	return path, err
+}
+
+// PCAPUDPAmplification generates a single large UDP response packet from a reflector to a spoofed victim.
+func PCAPUDPAmplification(runID, srcIP, dstIP string, srcPort uint16, payloadSize int) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPUDPAmplification src=%s dst=%s", srcIP, dstIP)
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	payload := make([]byte, payloadSize)
+	rand.Read(payload)
+	udp := buildUDPDatagram(srcPort, randomPort(), payload)
+	frame := buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(srcIP, dstIP, 17, udp))
+	path, err := writePCAPFile(runID, "amplification", [][]byte{frame}, defaultDuration)
+	logInfo("Return from PCAPUDPAmplification path=%s", path)
+	return path, err
+}
+
+// PCAPACKFlood generates bare ACK packets (no preceding handshake) from spoofed sources.
+func PCAPACKFlood(runID, targetIP string, targetPort uint16, sourceIPs []string) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPACKFlood target=%s port=%d sources=%d", targetIP, targetPort, len(sourceIPs))
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	var frames [][]byte
+	for _, srcIP := range sourceIPs {
+		srcMAC := [6]byte{0x00, byte(rand.Intn(255)), byte(rand.Intn(255)), byte(rand.Intn(255)), byte(rand.Intn(255)), byte(rand.Intn(255))}
+		ack := buildTCPSegment(randomPort(), targetPort, 0x10, rand.Uint32(), rand.Uint32(), nil)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(srcIP, targetIP, 6, ack)))
+	}
+	path, err := writePCAPFile(runID, "ack_flood", frames, defaultDuration)
+	logInfo("Return from PCAPACKFlood frames=%d path=%s", len(frames), path)
+	return path, err
+}
+
+// PCAPRSTFlood generates forged TCP RST packets targeting an established-looking session.
+func PCAPRSTFlood(runID, attackerIP, targetIP string, targetPort uint16, count int) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPRSTFlood attacker=%s target=%s port=%d count=%d", attackerIP, targetIP, targetPort, count)
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	var frames [][]byte
+	for idx := 0; idx < count; idx++ {
+		rst := buildTCPSegment(randomPort(), targetPort, 0x04, rand.Uint32(), 0, nil)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, rst)))
+	}
+	path, err := writePCAPFile(runID, "rst_flood", frames, defaultDuration)
+	logInfo("Return from PCAPRSTFlood frames=%d path=%s", len(frames), path)
+	return path, err
+}
+
+// buildMinimalTLSClientHello builds a structurally valid (if minimal) TLS
+// ClientHello: record header, handshake header, client version, 32-byte
+// random, zero-length session ID, one cipher suite, no compression,
+// no extensions. Enough for Wireshark's TLS dissector to parse without
+// throwing a malformed-packet error, unlike a truncated stub.
+func buildMinimalTLSClientHello() []byte {
+	random := make([]byte, 32)
+	rand.Read(random)
+
+	body := make([]byte, 0, 40)
+	body = append(body, 0x03, 0x03) // client_version: TLS 1.2
+	body = append(body, random...)  // 32-byte random
+	body = append(body, 0x00)       // session_id length: 0
+	body = append(body, 0x00, 0x02) // cipher_suites length: 2 bytes
+	body = append(body, 0x13, 0x01) // TLS_AES_128_GCM_SHA256
+	body = append(body, 0x01)       // compression_methods length: 1
+	body = append(body, 0x00)       // compression method: null
+	body = append(body, 0x00, 0x00) // extensions length: 0
+
+	handshake := make([]byte, 0, len(body)+4)
+	handshake = append(handshake, 0x01)                                                     // ClientHello
+	handshake = append(handshake, byte(len(body)>>16), byte(len(body)>>8), byte(len(body))) // 3-byte length
+	handshake = append(handshake, body...)
+
+	record := make([]byte, 0, len(handshake)+5)
+	record = append(record, 0x16, 0x03, 0x01) // Handshake, TLS 1.0 record version
+	record = append(record, byte(len(handshake)>>8), byte(len(handshake)))
+	record = append(record, handshake...)
+	return record
 }
