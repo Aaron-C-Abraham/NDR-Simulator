@@ -19,7 +19,7 @@ func runARPSpoofing(req AttackRequest) (*AttackResult, error) {
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	victimIP := getAttackParam(req.Params, "victim_ip", "10.0.1.10")
 	attackerDev := getAttackerDevice()
-	switches := getRouters()
+	switches := getSwitches()
 
 	for _, swDev := range switches {
 		if swDev.DeviceType != "switch" {

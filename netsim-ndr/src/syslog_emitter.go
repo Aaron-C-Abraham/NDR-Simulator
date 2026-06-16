@@ -59,6 +59,9 @@ func sendSyslog(dev *Device, message string, severity int) *SyslogEvent {
 }
 
 // buildSyslogEvent selects the correct syslog format for the device vendor.
+// Cisco is special-cased further by OSType/DeviceType: IOS routers/switches
+// and AireOS wireless controllers emit genuinely different message styles in
+// the real world even though both ship under the same vendor name.
 func buildSyslogEvent(dev *Device, message string, severity int) *SyslogEvent {
 	event := &SyslogEvent{
 		DeviceIP:   dev.IPAddress,
@@ -74,8 +77,13 @@ func buildSyslogEvent(dev *Device, message string, severity int) *SyslogEvent {
 		event.Format = "cef"
 		event.Raw = buildFortinetCEF(dev, message, severity)
 	case "cisco":
-		event.Format = "rfc3164"
-		event.Raw = buildCiscoRFC3164(dev, message, severity)
+		if dev.DeviceType == "wireless_ap" || strings.Contains(strings.ToLower(dev.OSType), "aireos") {
+			event.Format = "rfc3164"
+			event.Raw = buildCiscoAireOS(dev, message, severity)
+		} else {
+			event.Format = "rfc3164"
+			event.Raw = buildCiscoRFC3164(dev, message, severity)
+		}
 	case "arista":
 		event.Format = "rfc5424"
 		event.Raw = buildAristaRFC5424(dev, message, severity)
@@ -88,6 +96,9 @@ func buildSyslogEvent(dev *Device, message string, severity int) *SyslogEvent {
 	case "apple":
 		event.Format = "rfc5424"
 		event.Raw = buildMacOSRFC5424(dev, message, severity)
+	case "hikvision", "honeywell":
+		event.Format = "rfc3164"
+		event.Raw = buildIoTMinimal(dev, message, severity)
 	default:
 		event.Format = "rfc3164"
 		event.Raw = buildGenericRFC3164(dev, message, severity)
@@ -116,30 +127,99 @@ func transmitSyslog(event *SyslogEvent) {
 	}
 }
 
+// rfc3164Timestamp formats the current time per RFC 3164 §4.1.2: "Mmm dd hh:mm:ss".
+// The day-of-month MUST be space-padded (not zero-padded) for single digits —
+// Go's "_2" layout verb does exactly that, where plain "02" would zero-pad.
+func rfc3164Timestamp() string {
+	return time.Now().Format("Jan _2 15:04:05")
+}
+
+// rfc5424Timestamp formats the current time per RFC 5424 §6.2.3. TIME-SECFRAC
+// is capped at 6 digits by the spec, so we use a fixed 6-digit (microsecond)
+// fraction rather than time.RFC3339Nano, which can emit up to 9 and produce
+// an invalid timestamp.
+func rfc5424Timestamp() string {
+	return time.Now().Format("2006-01-02T15:04:05.000000Z07:00")
+}
+
 // buildFortinetCEF creates a Fortinet FortiOS CEF-format syslog message.
 func buildFortinetCEF(dev *Device, message string, severity int) string {
 	pri := dev.DeviceFacility()*8 + severity
-	ts := time.Now().Format("Jan 02 15:04:05")
+	ts := rfc3164Timestamp()
 	hostname := dev.Name
+	sigID := fortinetSignatureID(message)
 	devSev := mapSeverityCEF(severity)
-	return fmt.Sprintf("<%d>%s %s CEF:0|Fortinet|FortiGate|7.4.0|traffic|%s|%d|src=%s dst=%s msg=%s",
-		pri, ts, hostname, message, devSev, dev.IPAddress, randomExternalIP(), message)
+	return fmt.Sprintf("<%d>%s %s CEF:0|Fortinet|FortiGate|7.4.0|%s|%s|%d|src=%s dst=%s msg=%s",
+		pri, ts, hostname, sigID, message, devSev, dev.IPAddress, randomExternalIP(), message)
+}
+
+// fortinetSignatureID derives a stable per-event-type CEF Signature ID from
+// the message text. Real FortiGate logs key each log line to a fixed
+// subtype/logid so a SIEM can group event types; reusing the dynamic message
+// text as the ID (the previous behavior) would give every single log line
+// its own unique "type", which defeats that grouping.
+func fortinetSignatureID(message string) string {
+	msg := strings.ToLower(message)
+	switch {
+	case strings.Contains(msg, "syn") || strings.Contains(msg, "scan"):
+		return "0419" // recon / port-scan
+	case strings.Contains(msg, "denied"):
+		return "0421" // policy deny
+	case strings.Contains(msg, "outbound") || strings.Contains(msg, "bytes="):
+		return "0431" // traffic / volume
+	default:
+		return "traffic"
+	}
 }
 
 // buildCiscoRFC3164 creates a Cisco IOS/NX-OS RFC 3164 syslog message.
 func buildCiscoRFC3164(dev *Device, message string, severity int) string {
 	pri := dev.DeviceFacility()*8 + severity
-	ts := time.Now().Format("Jan 02 15:04:05")
+	ts := rfc3164Timestamp()
 	hostname := strings.ReplaceAll(dev.Name, "-", "")
 	seqNo := rand.Intn(999999)
 	return fmt.Sprintf("<%d>%s %s %%CISCO-6-SYSLOG: %06d: %%SYS-%d-MSG: %s",
 		pri, ts, hostname, seqNo, severity, message)
 }
 
+// buildCiscoAireOS creates a Cisco WLC (AireOS) syslog message. AireOS gear
+// is a different real-world product family from IOS — its log lines are
+// prefixed with an internal task name instead of a hostname, carry
+// millisecond-precision timestamps, and use wireless-specific mnemonics
+// (DOT11/CAPWAP/APF) rather than IOS's %SYS family.
+func buildCiscoAireOS(dev *Device, message string, severity int) string {
+	pri := dev.DeviceFacility()*8 + severity
+	ts := time.Now().Format("Jan _2 15:04:05.000")
+	task := aireOSTask()
+	mnemonic := aireOSMnemonic(message)
+	return fmt.Sprintf("<%d>*%s: %s: %%%s: %s", pri, task, ts, mnemonic, message)
+}
+
+// aireOSTask returns a plausible internal AireOS task name.
+func aireOSTask() string {
+	tasks := []string{"spamApTask1", "spamApTask2", "spamApTask3", "spamApTask4", "dot1xMsgTask", "apf_rogue.c"}
+	return tasks[rand.Intn(len(tasks))]
+}
+
+// aireOSMnemonic maps a message to a realistic AireOS facility-mnemonic.
+func aireOSMnemonic(message string) string {
+	msg := strings.ToLower(message)
+	switch {
+	case strings.Contains(msg, "rogue"):
+		return "APF-1-ROGUE_AP_DETECTED"
+	case strings.Contains(msg, "deauth") || strings.Contains(msg, "assoc"):
+		return "DOT11-4-ASSOC_FAILED"
+	case strings.Contains(msg, "capwap") || strings.Contains(msg, "tunnel"):
+		return "CAPWAP-3-ERRORLOG"
+	default:
+		return "DOT11-4-CLIENT_LINK_REACHED_MAX_RETRIES"
+	}
+}
+
 // buildAristaRFC5424 creates an Arista EOS RFC 5424 syslog message.
 func buildAristaRFC5424(dev *Device, message string, severity int) string {
 	pri := dev.DeviceFacility()*8 + severity
-	ts := time.Now().Format(time.RFC3339Nano)
+	ts := rfc5424Timestamp()
 	hostname := dev.Name
 	msgID := fmt.Sprintf("ID%04d", rand.Intn(9999))
 	return fmt.Sprintf("<%d>1 %s %s Arista - %s - %s",
@@ -149,7 +229,7 @@ func buildAristaRFC5424(dev *Device, message string, severity int) string {
 // buildWindowsLEEF creates a Windows/AD LEEF-format syslog message.
 func buildWindowsLEEF(dev *Device, message string, severity int) string {
 	pri := dev.DeviceFacility()*8 + severity
-	ts := time.Now().Format("Jan 02 15:04:05")
+	ts := rfc3164Timestamp()
 	hostname := dev.Name
 	eventID := windowsEventID(message)
 	return fmt.Sprintf("<%d>%s %s LEEF:2.0|Microsoft|Windows|2022|%d|devTime=%s\tsrc=%s\tmsg=%s",
@@ -159,7 +239,7 @@ func buildWindowsLEEF(dev *Device, message string, severity int) string {
 // buildLinuxRFC5424 creates a Linux syslog (journald/syslog) RFC 5424 message.
 func buildLinuxRFC5424(dev *Device, message string, severity int) string {
 	pri := dev.DeviceFacility()*8 + severity
-	ts := time.Now().Format(time.RFC3339)
+	ts := rfc5424Timestamp()
 	hostname := dev.Name
 	appName := linuxAppName(message)
 	pid := rand.Intn(65535)
@@ -170,15 +250,25 @@ func buildLinuxRFC5424(dev *Device, message string, severity int) string {
 // buildMacOSRFC5424 creates a macOS unified log RFC 5424 message.
 func buildMacOSRFC5424(dev *Device, message string, severity int) string {
 	pri := dev.DeviceFacility()*8 + severity
-	ts := time.Now().Format(time.RFC3339)
+	ts := rfc5424Timestamp()
 	return fmt.Sprintf("<%d>1 %s %s com.apple.securityd - - - %s",
 		pri, ts, dev.Name, message)
+}
+
+// buildIoTMinimal creates a terse, minimally-structured syslog message
+// typical of cheap embedded/IoT devices (camera DVRs, HVAC controllers),
+// which generally implement just enough syslog to be functional and rarely
+// bother with RFC 5424 structure.
+func buildIoTMinimal(dev *Device, message string, severity int) string {
+	pri := dev.DeviceFacility()*8 + severity
+	ts := rfc3164Timestamp()
+	return fmt.Sprintf("<%d>%s %s: %s", pri, ts, dev.Name, message)
 }
 
 // buildGenericRFC3164 creates a generic RFC 3164 syslog message.
 func buildGenericRFC3164(dev *Device, message string, severity int) string {
 	pri := 23*8 + severity
-	ts := time.Now().Format("Jan 02 15:04:05")
+	ts := rfc3164Timestamp()
 	return fmt.Sprintf("<%d>%s %s syslog: %s", pri, ts, dev.Name, message)
 }
 
@@ -191,6 +281,8 @@ func (dev *Device) DeviceFacility() int {
 		return 22 // local6
 	case "server", "workstation":
 		return 1 // user
+	case "iot":
+		return 16 // local0 — typical dumping ground for embedded gear
 	default:
 		return 23
 	}
@@ -278,7 +370,7 @@ func SyslogPortScan(attacker, target string, ports []uint16, port_mapping map[ui
 
 	var messages []string
 	for _, port := range ports {
-	switch port_mapping[port] {
+		switch port_mapping[port] {
 		case "Open":
 			msg := fmt.Sprintf("connection from %s to %s port %d TCP SYN ACCEPTED", attacker, target, port)
 			messages = append(messages, msg)
@@ -287,12 +379,12 @@ func SyslogPortScan(attacker, target string, ports []uint16, port_mapping map[ui
 			messages = append(messages, msg)
 		}
 	}
-	
+
 	var events []SyslogEvent
 	for _, msg := range messages {
-		if duration >0 {
-		sleepTime := time.Second / time.Duration(duration)
-		time.Sleep(sleepTime) // simulate scan duration
+		if duration > 0 {
+			sleepTime := time.Second / time.Duration(duration)
+			time.Sleep(sleepTime) // simulate scan duration
 		}
 		ev := buildSyslogEvent(fw, msg, 4)
 		transmitSyslog(ev)
