@@ -59,8 +59,15 @@ func initPCAPWriter() error {
 
 // writePCAPFile creates a new PCAP file containing the given raw ethernet frames.
 func writePCAPFile(runID, attackName string, packets [][]byte, duration uint64) (string, error) {
+	return writePCAPFileLinkType(runID, attackName, packets, duration, 1) // 1 = LINKTYPE_ETHERNET
+}
+
+// writePCAPFileLinkType is writePCAPFile with an explicit libpcap LINKTYPE_*
+// value, for frame types other than Ethernet (e.g. 105 = LINKTYPE_IEEE802_11
+// for raw 802.11 management frames used by wireless attacks).
+func writePCAPFileLinkType(runID, attackName string, packets [][]byte, duration uint64, linkType uint32) (string, error) {
 	defer panicHandler(traceFunc(), nil)
-	logInfo("Entering writePCAPFile runID=%s attack=%s packets=%d", runID, attackName, len(packets))
+	logInfo("Entering writePCAPFileLinkType runID=%s attack=%s packets=%d linkType=%d", runID, attackName, len(packets), linkType)
 
 	filename := fmt.Sprintf("%s_%s_%s.pcap", runID, attackName, time.Now().Format("20060102_150405"))
 	path := filepath.Join(GlobalPCAPDir, filename)
@@ -70,12 +77,11 @@ func writePCAPFile(runID, attackName string, packets [][]byte, duration uint64) 
 
 	file, err := os.Create(path)
 	if err != nil {
-		logError("writePCAPFile create %s: %v", path, err)
+		logError("writePCAPFileLinkType create %s: %v", path, err)
 		return "", err
 	}
 	defer file.Close()
 
-	// Write global header
 	ghdr := PCAPGlobalHeader{
 		MagicNumber:  0xa1b2c3d4,
 		VersionMajor: 2,
@@ -83,16 +89,14 @@ func writePCAPFile(runID, attackName string, packets [][]byte, duration uint64) 
 		ThisZone:     0,
 		SigFigs:      0,
 		SnapLen:      65535,
-		Network:      1,
+		Network:      linkType,
 	}
 	if err = binary.Write(file, binary.LittleEndian, ghdr); err != nil {
-		logError("writePCAPFile global header: %v", err)
+		logError("writePCAPFileLinkType global header: %v", err)
 		return "", err
 	}
 
-	// Write packet records
 	for _, pkt := range packets {
-		// ts := now.Add(time.Duration(idx) * 100 * time.Millisecond)
 		ts := time.Now()
 		if duration > 0 {
 			sleepTime := time.Second / time.Duration(duration)
@@ -105,16 +109,16 @@ func writePCAPFile(runID, attackName string, packets [][]byte, duration uint64) 
 			OrigLen: uint32(len(pkt)),
 		}
 		if err = binary.Write(file, binary.LittleEndian, rhdr); err != nil {
-			logError("writePCAPFile record header: %v", err)
+			logError("writePCAPFileLinkType record header: %v", err)
 			return "", err
 		}
 		if _, err = file.Write(pkt); err != nil {
-			logError("writePCAPFile packet data: %v", err)
+			logError("writePCAPFileLinkType packet data: %v", err)
 			return "", err
 		}
 	}
 
-	logInfo("Return from writePCAPFile path=%s", path)
+	logInfo("Return from writePCAPFileLinkType path=%s", path)
 	return path, nil
 }
 
@@ -332,8 +336,16 @@ func PCAPDNSTunnel(infectedDev, dnsDev *Device, domain string, count int) ([]byt
 	return nil, path, err
 }
 
-// buildDNSQuery builds a minimal DNS query packet for a given domain.
+// buildDNSQuery builds a minimal DNS query packet for a given domain,
+// defaulting to QTYPE=TXT (used by DNS tunneling/exfil callers).
 func buildDNSQuery(domain string) []byte {
+	return buildDNSQueryType(domain, 0x0010) // TXT
+}
+
+// buildDNSQueryType is buildDNSQuery with an explicit QTYPE (e.g. 0x0001
+// for A records), for callers that need a realistic query type rather
+// than the TXT default (DNS spoofing/poisoning should query A, not TXT).
+func buildDNSQueryType(domain string, qtype uint16) []byte {
 	buf := make([]byte, 0, 50)
 	// Transaction ID
 	buf = append(buf, 0xAB, 0xCD)
@@ -349,8 +361,8 @@ func buildDNSQuery(domain string) []byte {
 		buf = append(buf, byte(len(part)))
 		buf = append(buf, []byte(part)...)
 	}
-	buf = append(buf, 0x00)       // null terminator
-	buf = append(buf, 0x00, 0x10) // QTYPE = TXT
+	buf = append(buf, 0x00) // null terminator
+	buf = append(buf, byte(qtype>>8), byte(qtype&0xFF))
 	buf = append(buf, 0x00, 0x01) // QCLASS = IN
 	return buf
 }
@@ -659,4 +671,153 @@ func splitDomain(domain string) []string {
 		parts = append(parts, current)
 	}
 	return parts
+}
+
+// ─── Additional PCAP generators (gap-fill pass) ──────────────────────────────
+
+// PCAPGenericTCPExchange generates a minimal SYN → request → response PCAP
+// for attacks that have a real but simple request/response shape (SQLi,
+// command injection, XSS, LDAP injection, credential stuffing, Kerberoasting,
+// pass-the-hash) where we don't have a protocol-specific byte-level builder.
+// The payloads are plain text approximations of the actual wire format, not
+// byte-accurate protocol implementations — good enough to show a request/
+// response pair on the right port, not a parseable protocol capture.
+func PCAPGenericTCPExchange(runID, attackName, attackerIP, targetIP string, targetPort uint16, requestPayload, responsePayload []byte) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPGenericTCPExchange attack=%s attacker=%s target=%s port=%d", attackName, attackerIP, targetIP, targetPort)
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	srcPort := randomPort()
+	seq := rand.Uint32()
+
+	var frames [][]byte
+	syn := buildTCPSegment(srcPort, targetPort, 0x02, seq, 0, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
+
+	synAck := buildTCPSegment(targetPort, srcPort, 0x12, 0, seq+1, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck)))
+
+	ack := buildTCPSegment(srcPort, targetPort, 0x10, seq+1, 1, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
+
+	if len(requestPayload) > 0 {
+		req := buildTCPSegment(srcPort, targetPort, 0x18, seq+1, 1, requestPayload)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, req)))
+	}
+	if len(responsePayload) > 0 {
+		resp := buildTCPSegment(targetPort, srcPort, 0x18, 1, seq+uint32(1+len(requestPayload)), responsePayload)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, resp)))
+	}
+
+	path, err := writePCAPFile(runID, attackName, frames, defaultDuration)
+	logInfo("Return from PCAPGenericTCPExchange frames=%d path=%s", len(frames), path)
+	return path, err
+}
+
+// PCAPDNSQueryResponse generates a single DNS query/response pair, used for
+// DGA lookups (NXDOMAIN) and DNS cache poisoning (forged answer).
+func PCAPDNSQueryResponse(runID, attackName, clientIP, dnsIP string, domain string, nxdomain bool) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPDNSQueryResponse attack=%s client=%s dns=%s domain=%s", attackName, clientIP, dnsIP, domain)
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	srcPort := randomPort()
+
+	qtype := uint16(0x0010) // TXT, for DGA NXDOMAIN lookups
+	if !nxdomain {
+		qtype = 0x0001 // A record, for DNS spoofing/poisoning
+	}
+	query := buildDNSQueryType(domain, qtype)
+	queryFrame := buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(clientIP, dnsIP, 17, buildUDPDatagram(srcPort, 53, query)))
+
+	// Minimal response: same header bytes as the query but with the QR bit
+	// set and (for nxdomain) RCODE=3; this is not a byte-accurate DNS
+	// response, just enough to show a reply on the wire.
+	response := make([]byte, len(query))
+	copy(response, query)
+	response[2] = 0x81 // QR=1, response
+	if nxdomain {
+		response[3] = 0x83 // RCODE=3 NXDOMAIN
+	} else {
+		response[3] = 0x80 // RCODE=0 (forged success answer for poisoning case)
+	}
+	responseFrame := buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(dnsIP, clientIP, 17, buildUDPDatagram(53, srcPort, response)))
+
+	frames := [][]byte{queryFrame, responseFrame}
+	path, err := writePCAPFile(runID, attackName, frames, defaultDuration)
+	logInfo("Return from PCAPDNSQueryResponse frames=%d path=%s", len(frames), path)
+	return path, err
+}
+
+// PCAP80211Beacon generates a minimal raw 802.11 Beacon management frame
+// (used for rogue AP detection). Uses LINKTYPE_IEEE802_11 (105), not
+// Ethernet — this is genuinely a different link layer, so it must go
+// through writePCAPFileLinkType rather than writePCAPFile.
+func PCAP80211Beacon(runID string, apMAC [6]byte, ssid string) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAP80211Beacon ssid=%s", ssid)
+
+	broadcastMAC := [6]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
+	frame := build80211Beacon(apMAC, broadcastMAC, ssid)
+	path, err := writePCAPFileLinkType(runID, "rogue_ap_beacon", [][]byte{frame}, defaultDuration, 105)
+	logInfo("Return from PCAP80211Beacon path=%s", path)
+	return path, err
+}
+
+// PCAP80211Deauth generates a minimal raw 802.11 Deauthentication management
+// frame (used for deauth flood attacks). Same LINKTYPE_IEEE802_11 caveat
+// as PCAP80211Beacon.
+func PCAP80211Deauth(runID string, apMAC, clientMAC [6]byte, count int) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAP80211Deauth count=%d", count)
+
+	var frames [][]byte
+	for idx := 0; idx < count; idx++ {
+		frames = append(frames, build80211Deauth(apMAC, clientMAC))
+	}
+	path, err := writePCAPFileLinkType(runID, "deauth_flood", frames, defaultDuration, 105)
+	logInfo("Return from PCAP80211Deauth frames=%d path=%s", len(frames), path)
+	return path, err
+}
+
+// build80211Beacon builds a minimal 802.11 Beacon frame: 24-byte MAC header
+// (frame control, duration, addr1/2/3, seq) followed by a fixed-length
+// timestamp/interval/capability block and an SSID information element.
+// This is a simplified, non-RFC-exhaustive beacon — enough to identify as
+// a Beacon frame type/subtype with the right SSID in a packet analyzer, not
+// a full 802.11 standard-compliant frame (no rate sets, no other IEs).
+func build80211Beacon(apMAC, dstMAC [6]byte, ssid string) []byte {
+	hdr := make([]byte, 24)
+	hdr[0] = 0x80 // Type/Subtype: Management/Beacon
+	hdr[1] = 0x00
+	copy(hdr[4:10], dstMAC[:])
+	copy(hdr[10:16], apMAC[:])
+	copy(hdr[16:22], apMAC[:]) // BSSID = AP MAC
+
+	fixed := make([]byte, 12)
+	binary.LittleEndian.PutUint64(fixed[0:8], uint64(time.Now().UnixMicro()))
+	binary.LittleEndian.PutUint16(fixed[8:10], 100)     // beacon interval
+	binary.LittleEndian.PutUint16(fixed[10:12], 0x0411) // capability info: ESS + privacy
+
+	ssidIE := append([]byte{0x00, byte(len(ssid))}, []byte(ssid)...)
+
+	frame := append(hdr, fixed...)
+	frame = append(frame, ssidIE...)
+	return frame
+}
+
+// build80211Deauth builds a minimal 802.11 Deauthentication frame: 24-byte
+// MAC header plus a 2-byte reason code.
+func build80211Deauth(apMAC, clientMAC [6]byte) []byte {
+	hdr := make([]byte, 24)
+	hdr[0] = 0xC0 // Type/Subtype: Management/Deauthentication
+	hdr[1] = 0x00
+	copy(hdr[4:10], clientMAC[:])
+	copy(hdr[10:16], apMAC[:])
+	copy(hdr[16:22], apMAC[:])
+
+	reasonCode := []byte{0x07, 0x00} // Reason: Class 3 frame received from nonassociated station
+	return append(hdr, reasonCode...)
 }

