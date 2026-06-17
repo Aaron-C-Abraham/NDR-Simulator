@@ -644,89 +644,79 @@ func EncodeSNMPCommunity(community string) []byte {
 	// Append the actual community string bytes
 	return append(encoded, content...)
 }
+
 func SNMPQuery(community string) []byte {
-	var payload = []byte{
-		0x30, 0x29, // -- SEQUENCE (Total Length 41 bytes)
-		0x02, 0x01, 0x01, //-- INTEGER: Version 1 (SNMPv2c)
-	}
-	community_encoded := EncodeSNMPCommunity(community)
-	var rest_of_payload = []byte{
-		0x04, 0x06, 0x70, 0x75, 0x62, 0x6c, 0x69, 0x63, //-- OCTET STRING: "public" (Community)
-		0xa0, 0x1c, //-- CONTEXT SPECIFIC 0 (GetRequest PDU, Length 28)
-		0x02, 0x04, 0x00, 0x00, 0x00, 0x01, //-- INTEGER: Request ID (1)
-		0x02, 0x01, 0x00, //-- INTEGER: Error Status (0 = noError)
-		0x02, 0x01, 0x00, //-- INTEGER: Error Index (0)
-		0x30, 0x0e, //-- SEQUENCE: VarBindList
-		0x30, 0x0c, //-- SEQUENCE: VarBind (1 entry)
-		0x06, 0x08, //-- OID Header (Length 8)
-		0x2b, 0x06, 0x01, 0x02, 0x01, //-- OID Root: 1.3.6.1.2.1
-		0x01, 0x01, 0x01, 0x00, //-- OID Leaf: 1.1.0 (sysDescr.0)
-		0x05, 0x00, //-- NULL: Value (Empty in request)
-	}
-	payload = append(payload, community_encoded...)
-	return append(payload, rest_of_payload...)
+	version := berTLV(0x02, []byte{0x01})
+	communityTLV := EncodeSNMPCommunity(community)
+	oid := berTLV(0x06, []byte{0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x01, 0x01, 0x00}) // 1.3.6.1.2.1.1.1.0 (sysDescr.0)
+	nullVal := berTLV(0x05, nil)
+	varbind := berTLV(0x30, append(append([]byte{}, oid...), nullVal...))
+	varbindList := berTLV(0x30, varbind)
+	requestID := berTLV(0x02, []byte{0x00, 0x00, 0x00, 0x01})
+	errStatus := berTLV(0x02, []byte{0x00})
+	errIndex := berTLV(0x02, []byte{0x00})
+	pduBody := append(append(append([]byte{}, requestID...), errStatus...), errIndex...)
+	pduBody = append(pduBody, varbindList...)
+	pdu := berTLV(0xa0, pduBody) // GetRequest PDU
+
+	msgBody := append(append([]byte{}, version...), communityTLV...)
+	msgBody = append(msgBody, pdu...)
+	return berTLV(0x30, msgBody)
 }
 
 func SNMPresponse(community string) []byte {
-	var payload = []byte{
-		0x30, 0x3f, //-- SEQUENCE (Total Length 63 bytes)
-		0x02, 0x01, 0x01, //-- INTEGER: Version 1
-	}
-	encoded_community := EncodeSNMPCommunity(community)
-	var rest_of_payload = []byte{
-		0xa2, 0x32, //-- CONTEXT SPECIFIC 2 (GetResponse PDU, Length 50)
-		0x02, 0x04, 0x00, 0x00, 0x00, 0x01, //-- INTEGER: Request ID (1, matches request)
-		0x02, 0x01, 0x00, //-- INTEGER: Error Status (0)
-		0x02, 0x01, 0x00, //-- INTEGER: Error Index (0)
-		0x30, 0x24, //-- SEQUENCE: VarBindList
-		0x30, 0x22, //-- SEQUENCE: VarBind
-		0x06, 0x08, //-- OID Header
-		0x2b, 0x06, 0x01, 0x02, 0x01, //-- OID Root
-		0x01, 0x01, 0x01, 0x00, //-- OID Leaf: sysDescr.0
-		0x04, 0x16, //-- OCTET STRING: Value (Length 22)
-		0x43, 0x69, 0x73, 0x63, 0x6f, 0x20, 0x49, 0x4f, 0x53, //... -- "Cisco IOS..." (ASCII)
-	}
-	return append(append(payload, encoded_community...), rest_of_payload...)
+	version := berTLV(0x02, []byte{0x01})
+	communityTLV := EncodeSNMPCommunity(community)
+	oid := berTLV(0x06, []byte{0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x01, 0x01, 0x00}) // sysDescr.0
+	value := berTLV(0x04, []byte("Cisco IOS"))
+	varbind := berTLV(0x30, append(append([]byte{}, oid...), value...))
+	varbindList := berTLV(0x30, varbind)
+	requestID := berTLV(0x02, []byte{0x00, 0x00, 0x00, 0x01})
+	errStatus := berTLV(0x02, []byte{0x00})
+	errIndex := berTLV(0x02, []byte{0x00})
+	pduBody := append(append(append([]byte{}, requestID...), errStatus...), errIndex...)
+	pduBody = append(pduBody, varbindList...)
+	pdu := berTLV(0xa2, pduBody) // GetResponse PDU
+
+	msgBody := append(append([]byte{}, version...), communityTLV...)
+	msgBody = append(msgBody, pdu...)
+	return berTLV(0x30, msgBody)
 }
 
 func SNMPGetNextResponse(community string) []byte {
-	var payload = []byte{
-		0x30, 0x29, //-- SEQUENCE
-		0x02, 0x01, 0x01, //-- Version 1
-	}
-	encoded_community := EncodeSNMPCommunity(community)
-	var rest_of_payload = []byte{
-		0x02, 0x04, 0x00, 0x00, 0x00, 0x02, //-- Request ID (2)
-		0x02, 0x01, 0x00, //-- Error Status (0)
-		0x02, 0x01, 0x00, //-- Error Index (0)
-		0x30, 0x0e, //-- VarBindList
-		0x30, 0x0c, //-- VarBind
-		0x06, 0x08, //-- OID Header
-		0x2b, 0x06, 0x01, 0x02, 0x01, //-- 1.3.6.1.2.1
-		0x02, 0x00, 0x00, 0x00, //-- 2.0.0.0 (ifTable root - note the trailing zeros)
-		0x05, 0x00, //-- NULL
-	}
-	return append(append(payload, encoded_community...), rest_of_payload...)
+	version := berTLV(0x02, []byte{0x01})
+	communityTLV := EncodeSNMPCommunity(community)
+	oid := berTLV(0x06, []byte{0x2b, 0x06, 0x01, 0x02, 0x01, 0x02, 0x00, 0x00, 0x00}) // ifTable root
+	nullVal := berTLV(0x05, nil)
+	varbind := berTLV(0x30, append(append([]byte{}, oid...), nullVal...))
+	varbindList := berTLV(0x30, varbind)
+	requestID := berTLV(0x02, []byte{0x00, 0x00, 0x00, 0x02})
+	errStatus := berTLV(0x02, []byte{0x00})
+	errIndex := berTLV(0x02, []byte{0x00})
+	pduBody := append(append(append([]byte{}, requestID...), errStatus...), errIndex...)
+	pduBody = append(pduBody, varbindList...)
+	pdu := berTLV(0xa1, pduBody) // GetNextRequest PDU
+
+	msgBody := append(append([]byte{}, version...), communityTLV...)
+	msgBody = append(msgBody, pdu...)
+	return berTLV(0x30, msgBody)
 }
 
 func SNMPReplyNextResponse(community string) []byte {
-	var payload = []byte{
-		0x30, 0x3f, //-- SEQUENCE (Total SNMP Msg Length: 63 bytes)
-		0x02, 0x01, 0x01, //-- INTEGER: Version (1 = SNMPv2c)
-	}
-	encoded_community := EncodeSNMPCommunity(community)
-	var rest_of_payload = []byte{
-		0xa2, 0x32, //-- CONTEXT SPECIFIC 2 (GetResponse PDU, Length 50)
-		0x02, 0x04, 0x00, 0x00, 0x00, 0x02, //-- INTEGER: Request ID (2) [Matches the Walk iteration]
-		0x02, 0x01, 0x00, //-- INTEGER: Error Status (0 = noError)
-		0x02, 0x01, 0x00, //-- INTEGER: Error Index (0)
+	version := berTLV(0x02, []byte{0x01})
+	communityTLV := EncodeSNMPCommunity(community)
+	oid := berTLV(0x06, []byte{0x2b, 0x06, 0x01, 0x02, 0x01, 0x02, 0x01, 0x00, 0x00}) // ifNumber.0
+	value := berTLV(0x02, []byte{0x0c})
+	varbind := berTLV(0x30, append(append([]byte{}, oid...), value...))
+	varbindList := berTLV(0x30, varbind)
+	requestID := berTLV(0x02, []byte{0x00, 0x00, 0x00, 0x02})
+	errStatus := berTLV(0x02, []byte{0x00})
+	errIndex := berTLV(0x02, []byte{0x00})
+	pduBody := append(append(append([]byte{}, requestID...), errStatus...), errIndex...)
+	pduBody = append(pduBody, varbindList...)
+	pdu := berTLV(0xa2, pduBody) // GetResponse PDU
 
-		0x30, 0x24, //-- SEQUENCE: VarBindList (Length 36)
-		0x30, 0x22, //-- SEQUENCE: VarBind (Length 34)
-		0x06, 0x08, //-- OID Header (Length 8)
-		0x2b, 0x06, 0x01, 0x02, 0x01, //-- OID: 1.3.6.1.2.1
-		0x02, 0x01, 0x00, 0x00, //-- OID: 2.1.0.0 (ifNumber.0)
-		0x02, 0x01, 0x0c, //-- INTEGER: Value 12 (0x0c = 12 interfaces)
-	}
-	return append(append(payload, encoded_community...), rest_of_payload...)
+	msgBody := append(append([]byte{}, version...), communityTLV...)
+	msgBody = append(msgBody, pdu...)
+	return berTLV(0x30, msgBody)
 }

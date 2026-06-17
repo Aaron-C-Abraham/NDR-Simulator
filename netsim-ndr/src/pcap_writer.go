@@ -463,41 +463,152 @@ func PCAPSlowloris(runID, attackerIP, targetIP string, connections int) (string,
 	return path, err
 }
 
+// bruteForceExchange describes one protocol's wire-level shape for
+// PCAPBruteForce: a request the client sends after the handshake (given
+// the attempt index and the username list, so payloads can rotate through
+// real per-attempt usernames matching what the calling attack's syslog
+// messages claim was tried), and the server's rejection response carried
+// in the data segment immediately before the RST.
+type bruteForceExchange struct {
+	clientPayload func(attempt int, usernames []string) []byte
+	serverPayload func(attempt int, usernames []string) []byte
+}
+
+// bruteForceUsername returns usernames[attempt % len(usernames)], or a
+// generic fallback if usernames is empty (callers that don't have a
+// per-attempt username list, e.g. ssh/rdp/smb).
+func bruteForceUsername(attempt int, usernames []string) string {
+	if len(usernames) == 0 {
+		return "admin"
+	}
+	return usernames[attempt%len(usernames)]
+}
+
+func bruteForceExchangeFor(protocol string) bruteForceExchange {
+	switch protocol {
+	case "ssh":
+		return bruteForceExchange{
+			clientPayload: func(int, []string) []byte { return []byte("SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.6\r\n") },
+			serverPayload: func(int, []string) []byte { return []byte("SSH-2.0-OpenSSH_8.4p1 Debian-5+deb11u3\r\n") },
+		}
+	case "rdp":
+		return bruteForceExchange{
+			clientPayload: func(int, []string) []byte { return rdpClientPDU[:] },
+			serverPayload: func(int, []string) []byte { return []byte{0x03, 0x00, 0x00, 0x07, 0x02, 0xF0, 0x80, 0x02} },
+		}
+	case "smb":
+		return bruteForceExchange{
+			clientPayload: func(int, []string) []byte { return smbNegotiatePDU[:] },
+			serverPayload: func(int, []string) []byte { return SMB2_Negotiate_Response },
+		}
+	case "ftp":
+		return bruteForceExchange{
+			clientPayload: func(attempt int, usernames []string) []byte {
+				return []byte(fmt.Sprintf("USER %s\r\n", bruteForceUsername(attempt, usernames)))
+			},
+			serverPayload: func(int, []string) []byte { return []byte("530 Login incorrect.\r\n") },
+		}
+	case "telnet":
+		return bruteForceExchange{
+			clientPayload: func(attempt int, usernames []string) []byte {
+				return []byte(bruteForceUsername(attempt, usernames) + "\r\n")
+			},
+			serverPayload: func(int, []string) []byte { return []byte("Login incorrect\r\n\r\nUsername: ") },
+		}
+	case "smtp":
+		return bruteForceExchange{
+			clientPayload: func(attempt int, usernames []string) []byte {
+				// AUTH LOGIN exchanges base64 the username/password separately
+				// in real SMTP; this is a simplified single-line stand-in
+				// carrying the attempted username for traceability.
+				return []byte(fmt.Sprintf("AUTH LOGIN\r\n%s\r\n", bruteForceUsername(attempt, usernames)))
+			},
+			serverPayload: func(int, []string) []byte { return []byte("535 5.7.8 Authentication failed\r\n") },
+		}
+	case "winrm":
+		return bruteForceExchange{
+			clientPayload: func(attempt int, usernames []string) []byte {
+				return []byte(fmt.Sprintf("POST /wsman HTTP/1.1\r\nAuthorization: Basic %s\r\n\r\n", bruteForceUsername(attempt, usernames)))
+			},
+			serverPayload: func(int, []string) []byte {
+				return []byte("HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic\r\n\r\n")
+			},
+		}
+	case "vnc":
+		return bruteForceExchange{
+			clientPayload: func(int, []string) []byte { return []byte{0x03, 0x00, 0x8a, 0x9c, 0xf1, 0x02, 0x44, 0x91} },
+			serverPayload: func(int, []string) []byte { return []byte{0x00, 0x00, 0x00, 0x01} },
+		}
+	default:
+		return bruteForceExchange{
+			clientPayload: func(attempt int, usernames []string) []byte {
+				return []byte(fmt.Sprintf("USER %s\r\nPASS %s\r\n", bruteForceUsername(attempt, usernames), randomHexString(8)))
+			},
+			serverPayload: func(int, []string) []byte { return nil },
+		}
+	}
+}
+
 // PCAPBruteForce generates PCAP frames for a login brute-force attack.
-// protocol: "ssh", "rdp", or "smb"
-func PCAPBruteForce(runID, attackerIP, targetIP string, targetPort uint16, protocol string, attempts int) (string, error) {
+// protocol: "ssh", "rdp", "smb", "ftp", "telnet", "smtp", "winrm", or "vnc".
+// usernames, if non-empty, is rotated through per attempt (attempt %
+// len(usernames)) so the PCAP payload matches the same username sequence
+// the calling attack's syslog messages report attempting; pass nil for
+// protocols without a meaningful per-attempt username (ssh/rdp/smb).
+// Each attempt gets its own complete three-way handshake (SYN, SYN/ACK,
+// ACK — previously the ACK was missing), then a protocol-appropriate client
+// payload, a server rejection payload, and a final RST/ACK that correctly
+// acks the data sent so far rather than a bare zeroed RST.
+func PCAPBruteForce(runID, attackerIP, targetIP string, targetPort uint16, protocol string, attempts int, usernames []string) (string, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAPBruteForce attacker=%s target=%s proto=%s attempts=%d", attackerIP, targetIP, protocol, attempts)
 
 	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, 0x66}
 	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	exchange := bruteForceExchangeFor(protocol)
 	var frames [][]byte
 
 	for idx := 0; idx < attempts; idx++ {
 		srcPort := randomPort()
-		seq := rand.Uint32()
+		clientSeq := rand.Uint32()
+		serverSeq := rand.Uint32()
 
 		// SYN
-		syn := buildTCPSegment(srcPort, targetPort, 0x02, seq, 0, nil)
+		syn := buildTCPSegment(srcPort, targetPort, 0x02, clientSeq, 0, nil)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
+		clientSeq++
 
-		// Protocol-specific banner/handshake
-		var handshake []byte
-		switch protocol {
-		case "ssh":
-			handshake = []byte("SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.6\r\n")
-		case "rdp":
-			handshake = rdpClientPDU[:]
-		case "smb":
-			handshake = smbNegotiatePDU[:]
-		default:
-			handshake = []byte(fmt.Sprintf("USER admin\r\nPASS %s\r\n", randomHexString(8)))
+		// SYN-ACK
+		synAck := buildTCPSegment(targetPort, srcPort, 0x12, serverSeq, clientSeq, nil)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck)))
+		serverSeq++
+
+		// ACK — completes the handshake (this was missing before)
+		ack := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
+
+		// Client payload (credentials / auth attempt)
+		clientPayload := exchange.clientPayload(idx, usernames)
+		if len(clientPayload) > 0 {
+			data := buildTCPSegment(srcPort, targetPort, 0x18, clientSeq, serverSeq, clientPayload)
+			frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, data)))
+			clientSeq += uint32(len(clientPayload))
+
+			// ACK the client payload
+			dataAck := buildTCPSegment(targetPort, srcPort, 0x10, serverSeq, clientSeq, nil)
+			frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, dataAck)))
 		}
-		data := buildTCPSegment(srcPort, targetPort, 0x18, seq+1, 1, handshake)
-		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, data)))
 
-		// RST (auth failure)
-		rst := buildTCPSegment(targetPort, srcPort, 0x04, 0, 0, nil)
+		// Server rejection payload (auth failure message)
+		serverPayload := exchange.serverPayload(idx, usernames)
+		if len(serverPayload) > 0 {
+			resp := buildTCPSegment(targetPort, srcPort, 0x18, serverSeq, clientSeq, serverPayload)
+			frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, resp)))
+			serverSeq += uint32(len(serverPayload))
+		}
+
+		// RST/ACK (auth failure → connection torn down)
+		rst := buildTCPSegment(targetPort, srcPort, 0x14, serverSeq, clientSeq, nil)
 		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, rst)))
 	}
 
@@ -1333,4 +1444,519 @@ func buildU1Probe(srcIP, dstIP string, srcPort, closedPort uint16, srcMAC, dstMA
 	response = buildEthernetFrame(dstMAC, srcMAC, respIP)
 
 	return probe, response
+}
+
+// ─── DCERPC bind PDUs for WMI/DCOM lateral movement ──────────────────────────
+//
+// dcerpcUUID encodes a UUID into DCE/RPC wire format: Data1 (4 bytes) and
+// Data2/Data3 (2 bytes each) are little-endian, but Data4 (the trailing 8
+// bytes) is kept in the order given — this mixed-endian encoding is how
+// every UUID appears in a DCERPC PDU (bind, bind_ack, interface/transfer
+// syntax fields), per DCE 1.1 (C706) and confirmed against real captures
+// of DCOM/WMI traffic (e.g. Wireshark's own UUID field display order).
+// data1/data2/data3 are given in the conventional hex-string grouping
+// (e.g. for F309AD18-D86A-11d0-A075-00C04FB68820: data1=0xF309AD18,
+// data2=0xD86A, data3=0x11D0, data4={0xA0,0x75,0x00,0xC0,0x4F,0xB6,0x88,0x20}).
+func dcerpcUUID(data1 uint32, data2, data3 uint16, data4 [8]byte) []byte {
+	buf := make([]byte, 16)
+	binary.LittleEndian.PutUint32(buf[0:4], data1)
+	binary.LittleEndian.PutUint16(buf[4:6], data2)
+	binary.LittleEndian.PutUint16(buf[6:8], data3)
+	copy(buf[8:16], data4[:])
+	return buf
+}
+
+// Real, spec-verified DCERPC interface/transfer-syntax UUIDs used by WMI and
+// DCOM lateral movement. Sources: [MS-WMI] §1.9 / [MS-DCOM] (Microsoft Learn,
+// openspecs), cross-checked against Impacket's dcom/wmi.py and dcomrt.py and
+// the go-msrpc library, which independently agree on all three values below.
+var (
+	// IWbemLevel1Login: the interface WMI clients bind to first (NTLMLogin),
+	// per [MS-WMI] §1.9 Standards Assignments and the WMI initialization
+	// sequence in [MS-WMI] §3.1.4.1.
+	uuidIWbemLevel1Login = dcerpcUUID(0xF309AD18, 0xD86A, 0x11D0, [8]byte{0xA0, 0x75, 0x00, 0xC0, 0x4F, 0xB6, 0x88, 0x20})
+
+	// IRemoteSCMActivator: the DCOM activation interface whose
+	// RemoteCreateInstance (opnum 4) method instantiates a remote COM
+	// object — the mechanism DCOM lateral movement (e.g. MMC20.Application)
+	// relies on. Per [MS-DCOM] §3.1.2.5.2.2 / dcom package UUID tables.
+	uuidIRemoteSCMActivator = dcerpcUUID(0x000001A0, 0x0000, 0x0000, [8]byte{0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46})
+
+	// NDR (Network Data Representation) transfer syntax, version 2.0 — the
+	// standard DCE/RPC wire encoding negotiated in virtually every bind,
+	// independent of which interface is being bound to.
+	uuidNDRTransferSyntax = dcerpcUUID(0x8A885D04, 0x1CEB, 0x11C9, [8]byte{0x9F, 0xE8, 0x08, 0x00, 0x2B, 0x10, 0x48, 0x60})
+)
+
+// buildDCERPCBind builds a DCERPC bind PDU (PTYPE=11) requesting a single
+// presentation context: the given interface UUID/version, with the
+// standard NDR transfer syntax (version 2.0). callID is the RPC call
+// identifier (arbitrary per-conversation counter, starts at 1 in practice).
+func buildDCERPCBind(callID uint32, ifaceUUID []byte, ifaceVersionMajor, ifaceVersionMinor uint16) []byte {
+	// Presentation context: p_cont_id(2) + n_transfer_syn(1) + reserved(1)
+	// + abstract_syntax{uuid(16)+verMajor(2)+verMinor(2)} + one
+	// transfer_syntax{uuid(16)+version(4)}
+	contCtx := make([]byte, 2, 4+20+20)
+	binary.LittleEndian.PutUint16(contCtx, 0) // p_cont_id = 0 (first/only context in this bind)
+	contCtx = append(contCtx, 0x01, 0x00)     // n_transfer_syn=1, reserved=0
+	contCtx = append(contCtx, ifaceUUID...)
+	verBuf := make([]byte, 4)
+	binary.LittleEndian.PutUint16(verBuf[0:2], ifaceVersionMajor)
+	binary.LittleEndian.PutUint16(verBuf[2:4], ifaceVersionMinor)
+	contCtx = append(contCtx, verBuf...)
+	contCtx = append(contCtx, uuidNDRTransferSyntax...)
+	tsVerBuf := make([]byte, 4)
+	binary.LittleEndian.PutUint32(tsVerBuf, 2) // NDR transfer syntax version 2.0 (major=2, minor=0, packed as one uint32)
+	contCtx = append(contCtx, tsVerBuf...)
+
+	body := make([]byte, 0, 12+len(contCtx))
+	maxFrag := make([]byte, 2)
+	binary.LittleEndian.PutUint16(maxFrag, 4280) // max_xmit_frag — common real-world default
+	body = append(body, maxFrag...)
+	body = append(body, maxFrag...)             // max_recv_frag, same value
+	body = append(body, 0x00, 0x00, 0x00, 0x00) // assoc_group_id = 0 (new association)
+	body = append(body, 0x01)                   // n_context_elem = 1
+	body = append(body, 0x00, 0x00, 0x00)       // reserved + 2-byte pad
+	body = append(body, contCtx...)
+
+	return wrapDCERPCCommonHeader(11, callID, body) // PTYPE 11 = bind
+}
+
+// buildDCERPCBindAck builds the corresponding bind_ack (PTYPE=12), accepting
+// the single presentation context offered, echoing the same NDR transfer
+// syntax back (acceptance, per DCE 1.1 §12.6.3.3).
+func buildDCERPCBindAck(callID uint32) []byte {
+	secAddr := []byte("\\PIPE\\wbem\x00") // typical secondary address for WMI/DCOM-over-SMB-named-pipe transport; padded below
+	secAddrLen := make([]byte, 2)
+	binary.LittleEndian.PutUint16(secAddrLen, uint16(len(secAddr)))
+
+	body := make([]byte, 0, 64)
+	maxFrag := make([]byte, 2)
+	binary.LittleEndian.PutUint16(maxFrag, 4280)
+	body = append(body, maxFrag...)
+	body = append(body, maxFrag...)
+	body = append(body, 0x00, 0x00, 0x00, 0x00) // assoc_group_id
+	body = append(body, secAddrLen...)
+	body = append(body, secAddr...)
+	for len(body)%4 != 0 {
+		body = append(body, 0x00) // pad secondary address to 4-byte boundary
+	}
+	body = append(body, 0x01)             // n_results = 1
+	body = append(body, 0x00, 0x00, 0x00) // reserved + pad
+	body = append(body, 0x00, 0x00)       // result = 0 (acceptance)
+	body = append(body, 0x00, 0x00)       // reason = 0
+	body = append(body, uuidNDRTransferSyntax...)
+	tsVerBuf := make([]byte, 4)
+	binary.LittleEndian.PutUint32(tsVerBuf, 2)
+	body = append(body, tsVerBuf...)
+
+	return wrapDCERPCCommonHeader(12, callID, body) // PTYPE 12 = bind_ack
+}
+
+// wrapDCERPCCommonHeader prepends the 16-byte DCERPC common header (rpc_vers,
+// rpc_vers_minor, PTYPE, pfc_flags, packed_drep, frag_length, auth_length,
+// call_id) per DCE 1.1 §12.6.3, to the given PDU-type-specific body.
+func wrapDCERPCCommonHeader(ptype byte, callID uint32, body []byte) []byte {
+	totalLen := 16 + len(body)
+	hdr := make([]byte, 16)
+	hdr[0] = 5 // rpc_vers
+	hdr[1] = 0 // rpc_vers_minor
+	hdr[2] = ptype
+	hdr[3] = 0x03 // pfc_flags: PFC_FIRST_FRAG | PFC_LAST_FRAG (single-fragment PDU)
+	hdr[4] = 0x10 // packed_drep: little-endian integer + IEEE float (standard on-wire default)
+	hdr[5] = 0x00
+	hdr[6] = 0x00
+	hdr[7] = 0x00
+	binary.LittleEndian.PutUint16(hdr[8:10], uint16(totalLen))
+	binary.LittleEndian.PutUint16(hdr[10:12], 0) // auth_length = 0, no auth verifier
+	binary.LittleEndian.PutUint32(hdr[12:16], callID)
+	return append(hdr, body...)
+}
+
+// buildDCERPCRequestStub builds a minimal DCERPC request PDU (PTYPE=0)
+// carrying an approximated call body. Unlike the bind/bind_ack frames
+// above, the actual NDR-marshaled argument structure for a real
+// WMI NTLMLogin or DCOM RemoteCreateInstance call (ORPCTHIS, marshaled
+// CLSID/IID arrays, etc.) is not reproduced here — that structure is
+// considerably deeper than the bind layer and isn't verified byte-accurate,
+// so this carries a labeled text approximation as the stub data instead of
+// fabricated NDR bytes. The header (PTYPE, call_id, opnum) is real.
+func buildDCERPCRequestStub(callID uint32, opnum uint16, approxPayload []byte) []byte {
+	body := make([]byte, 0, 8+len(approxPayload))
+	body = append(body, 0x00, 0x00, 0x00, 0x00) // alloc_hint = 0 (unspecified)
+	body = append(body, 0x00, 0x00)             // p_cont_id = 0 (matches bind's context)
+	opnumBuf := make([]byte, 2)
+	binary.LittleEndian.PutUint16(opnumBuf, opnum)
+	body = append(body, opnumBuf...)
+	body = append(body, approxPayload...)
+	return wrapDCERPCCommonHeader(0, callID, body) // PTYPE 0 = request
+}
+
+// buildDCERPCResponseStub mirrors buildDCERPCRequestStub for the response
+// side (PTYPE=2), same approximation caveat applies to the payload.
+func buildDCERPCResponseStub(callID uint32, approxPayload []byte) []byte {
+	body := make([]byte, 0, 8+len(approxPayload))
+	body = append(body, 0x00, 0x00, 0x00, 0x00) // alloc_hint
+	body = append(body, 0x00, 0x00)             // p_cont_id
+	body = append(body, 0x00, 0x00)             // cancel_count + reserved
+	body = append(body, approxPayload...)
+	return wrapDCERPCCommonHeader(2, callID, body) // PTYPE 2 = response
+}
+
+// PCAPLateralWMI generates PCAP frames for WMI lateral movement: a real
+// DCERPC bind/bind_ack to IWbemLevel1Login on port 135 (the genuine
+// activation/login interface real WMI tooling binds to first), followed
+// by an approximated Win32_Process.Create call on the dynamic high port
+// the activation negotiates — matching the two-leg shape runWMILateral's
+// syslog/flow telemetry already represents (one flow to 135, one to a
+// dynamic highPort).
+func PCAPLateralWMI(runID, attackerIP, targetIP string, highPort uint16) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPLateralWMI attacker=%s target=%s highPort=%d", attackerIP, targetIP, highPort)
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	var frames [][]byte
+
+	// Leg 1: port 135, DCERPC bind/bind_ack to IWbemLevel1Login
+	srcPort1 := randomPort()
+	clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
+
+	syn := buildTCPSegment(srcPort1, 135, 0x02, clientSeq, 0, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
+	clientSeq++
+	synAck := buildTCPSegment(135, srcPort1, 0x12, serverSeq, clientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck)))
+	serverSeq++
+	ack := buildTCPSegment(srcPort1, 135, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
+
+	bind := buildDCERPCBind(1, uuidIWbemLevel1Login, 0, 0)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort1, 135, 0x18, clientSeq, serverSeq, bind))))
+	clientSeq += uint32(len(bind))
+	bindAck := buildDCERPCBindAck(1)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(135, srcPort1, 0x18, serverSeq, clientSeq, bindAck))))
+	serverSeq += uint32(len(bindAck))
+	finalAck := buildTCPSegment(srcPort1, 135, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, finalAck)))
+
+	// Leg 2: dynamic high port, approximated Win32_Process.Create exploitation
+	srcPort2 := randomPort()
+	clientSeq2, serverSeq2 := rand.Uint32(), rand.Uint32()
+
+	syn2 := buildTCPSegment(srcPort2, highPort, 0x02, clientSeq2, 0, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn2)))
+	clientSeq2++
+	synAck2 := buildTCPSegment(highPort, srcPort2, 0x12, serverSeq2, clientSeq2, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck2)))
+	serverSeq2++
+	ack2 := buildTCPSegment(srcPort2, highPort, 0x10, clientSeq2, serverSeq2, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack2)))
+
+	createReq := buildDCERPCRequestStub(1, 24, []byte("Win32_Process.Create(CommandLine='cmd.exe /c whoami')"))
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort2, highPort, 0x18, clientSeq2, serverSeq2, createReq))))
+	clientSeq2 += uint32(len(createReq))
+	createResp := buildDCERPCResponseStub(1, []byte("ReturnValue=0 ProcessId=4821"))
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(highPort, srcPort2, 0x18, serverSeq2, clientSeq2, createResp))))
+	serverSeq2 += uint32(len(createResp))
+	finalAck2 := buildTCPSegment(srcPort2, highPort, 0x10, clientSeq2, serverSeq2, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, finalAck2)))
+
+	path, err := writePCAPFile(runID, "lateral_wmi", frames, defaultDuration)
+	logInfo("Return from PCAPLateralWMI frames=%d path=%s", len(frames), path)
+	return path, err
+}
+
+// PCAPLateralDCOM generates PCAP frames for DCOM lateral movement (e.g.
+// MMC20.Application abuse): a single TCP conversation on port 135 with a
+// real DCERPC bind/bind_ack to IRemoteSCMActivator, followed by an
+// approximated RemoteCreateInstance (opnum 4) call/response — matching
+// runDCOMLateral's existing single-flow (port 135 only) telemetry shape.
+func PCAPLateralDCOM(runID, attackerIP, targetIP string) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPLateralDCOM attacker=%s target=%s", attackerIP, targetIP)
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	srcPort := randomPort()
+	clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
+	var frames [][]byte
+
+	syn := buildTCPSegment(srcPort, 135, 0x02, clientSeq, 0, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
+	clientSeq++
+	synAck := buildTCPSegment(135, srcPort, 0x12, serverSeq, clientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck)))
+	serverSeq++
+	ack := buildTCPSegment(srcPort, 135, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
+
+	bind := buildDCERPCBind(1, uuidIRemoteSCMActivator, 0, 0)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 135, 0x18, clientSeq, serverSeq, bind))))
+	clientSeq += uint32(len(bind))
+	bindAck := buildDCERPCBindAck(1)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(135, srcPort, 0x18, serverSeq, clientSeq, bindAck))))
+	serverSeq += uint32(len(bindAck))
+	midAck := buildTCPSegment(srcPort, 135, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, midAck)))
+
+	createReq := buildDCERPCRequestStub(1, 4, []byte("RemoteCreateInstance(CLSID=MMC20.Application)"))
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 135, 0x18, clientSeq, serverSeq, createReq))))
+	clientSeq += uint32(len(createReq))
+	createResp := buildDCERPCResponseStub(1, []byte("ErrorCode=0"))
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(135, srcPort, 0x18, serverSeq, clientSeq, createResp))))
+	serverSeq += uint32(len(createResp))
+	finalAck := buildTCPSegment(srcPort, 135, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, finalAck)))
+
+	path, err := writePCAPFile(runID, "lateral_dcom", frames, defaultDuration)
+	logInfo("Return from PCAPLateralDCOM frames=%d path=%s", len(frames), path)
+	return path, err
+}
+
+// PCAPLateralRDPHijack generates PCAP frames for RDP session hijacking
+// (tscon.exe-style): a TCP handshake on port 3389 followed by the same
+// rdpClientPDU connection-request payload PCAPBruteForce's "rdp" case
+// uses (so this stays byte-consistent with the rest of the codebase's RDP
+// representation), then an approximated session-takeover exchange.
+func PCAPLateralRDPHijack(runID, attackerIP, targetIP string) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPLateralRDPHijack attacker=%s target=%s", attackerIP, targetIP)
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	srcPort := randomPort()
+	clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
+	var frames [][]byte
+
+	syn := buildTCPSegment(srcPort, 3389, 0x02, clientSeq, 0, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
+	clientSeq++
+	synAck := buildTCPSegment(3389, srcPort, 0x12, serverSeq, clientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck)))
+	serverSeq++
+	ack := buildTCPSegment(srcPort, 3389, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
+
+	connReq := rdpClientPDU[:]
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 3389, 0x18, clientSeq, serverSeq, connReq))))
+	clientSeq += uint32(len(connReq))
+	connConfirm := []byte{0x03, 0x00, 0x00, 0x0B, 0x06, 0xD0, 0x00, 0x00, 0x12, 0x34, 0x00} // minimal X.224 connection confirm
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(3389, srcPort, 0x18, serverSeq, clientSeq, connConfirm))))
+	serverSeq += uint32(len(connConfirm))
+	midAck := buildTCPSegment(srcPort, 3389, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, midAck)))
+
+	// Approximated session takeover (tscon.exe redirects an existing session
+	// without re-authenticating) — not a byte-accurate RDP PDU, same caveat
+	// as the DCERPC request/response stubs above.
+	hijackPayload := []byte("tscon 2 /dest:console")
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 3389, 0x18, clientSeq, serverSeq, hijackPayload))))
+	clientSeq += uint32(len(hijackPayload))
+	hijackAck := buildTCPSegment(3389, srcPort, 0x10, serverSeq, clientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, hijackAck)))
+
+	path, err := writePCAPFile(runID, "lateral_rdp_hijack", frames, defaultDuration)
+	logInfo("Return from PCAPLateralRDPHijack frames=%d path=%s", len(frames), path)
+	return path, err
+}
+
+// ── DHCP / BOOTP (RFC 2131) ───────────────────────────────────────────────────
+
+// buildDHCPOption builds a single DHCP option as a [code, length, ...data] TLV.
+func buildDHCPOption(code byte, data []byte) []byte {
+	opt := make([]byte, 2+len(data))
+	opt[0] = code
+	opt[1] = byte(len(data))
+	copy(opt[2:], data)
+	return opt
+}
+
+// buildDHCPPacket builds a full BOOTP/DHCP packet: 236-byte fixed header,
+// 4-byte magic cookie (0x63825363), then options, then the 0xff End option.
+// op: 1=BOOTREQUEST (client->server), 2=BOOTREPLY (server->client).
+func buildDHCPPacket(op byte, xid uint32, clientMAC [6]byte, ciaddr, yiaddr, siaddr, giaddr string, optionsBytes []byte) []byte {
+	pkt := make([]byte, 236)
+	pkt[0] = op
+	pkt[1] = 0x01 // htype: Ethernet
+	pkt[2] = 0x06 // hlen: 6
+	pkt[3] = 0x00 // hops
+	binary.BigEndian.PutUint32(pkt[4:], xid)
+	binary.BigEndian.PutUint16(pkt[8:], 0)  // secs
+	binary.BigEndian.PutUint16(pkt[10:], 0) // flags
+	copy(pkt[12:16], dhcpIPv4Bytes(ciaddr))
+	copy(pkt[16:20], dhcpIPv4Bytes(yiaddr))
+	copy(pkt[20:24], dhcpIPv4Bytes(siaddr))
+	copy(pkt[24:28], dhcpIPv4Bytes(giaddr))
+	copy(pkt[28:34], clientMAC[:]) // chaddr (16 bytes, first 6 used for Ethernet)
+	// sname (offset 44, 64 bytes) and file (offset 108, 128 bytes) left zero
+	magicCookie := []byte{0x63, 0x82, 0x53, 0x63}
+	full := append(append([]byte{}, pkt...), magicCookie...)
+	full = append(full, optionsBytes...)
+	full = append(full, 0xff) // End option
+	return full
+}
+
+// dhcpIPv4Bytes parses a dotted-quad string into 4 raw bytes; returns
+// 0.0.0.0 on parse failure rather than panicking, since DHCP fields are
+// often legitimately "0.0.0.0" (e.g. ciaddr before a lease is assigned).
+// Named distinctly from any existing ipToUint32-style helper since DHCP
+// needs raw bytes, not a packed uint32.
+func dhcpIPv4Bytes(ip string) []byte {
+	var a, b, c, d int
+	n, err := fmt.Sscanf(ip, "%d.%d.%d.%d", &a, &b, &c, &d)
+	if err != nil || n != 4 {
+		return []byte{0, 0, 0, 0}
+	}
+	return []byte{byte(a), byte(b), byte(c), byte(d)}
+}
+
+// ── PCAP generators ───────────────────────────────────────────────────────────
+
+// PCAPDHCPStarvation simulates a DHCP starvation attack: many DISCOVER
+// packets, each from a different spoofed MAC, broadcast to the DHCP server.
+// No OFFER/ACK responses are generated since the pool is exhausted — that's
+// the point of the attack (the server stops replying once leases run out).
+func PCAPDHCPStarvation(runID string, count int) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPDHCPStarvation count=%d", count)
+
+	broadcastMAC := parseMACAddress("FF:FF:FF:FF:FF:FF")
+	if count > 200 {
+		count = 200 // cap PCAP size; syslog/netflow already reflect the full 500-MAC count
+	}
+	var frames [][]byte
+	for i := 0; i < count; i++ {
+		clientMAC := [6]byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, byte(i % 256)}
+		opts := buildDHCPOption(53, []byte{1}) // DHCP Discover
+		opts = append(opts, buildDHCPOption(61, append([]byte{0x01}, clientMAC[:]...))...)
+		opts = append(opts, buildDHCPOption(55, []byte{1, 3, 6, 15})...)
+		dhcp := buildDHCPPacket(1, uint32(0x10000+i), clientMAC, "0.0.0.0", "0.0.0.0", "0.0.0.0", "0.0.0.0", opts)
+		udp := buildUDPDatagram(68, 67, dhcp)
+		ip := buildIPv4Packet("0.0.0.0", "255.255.255.255", 17, udp)
+		frames = append(frames, buildEthernetFrame(clientMAC, broadcastMAC, ip))
+	}
+	path, err := writePCAPFile(runID, "dhcp_starvation", frames, defaultDuration)
+	logInfo("Return from PCAPDHCPStarvation frames=%d path=%s", len(frames), path)
+	return path, err
+}
+
+// PCAPRogueDHCP simulates a rogue DHCP server: a victim's broadcast DISCOVER,
+// followed by the attacker's rogue OFFER advertising itself as the gateway —
+// racing the legitimate server's response.
+func PCAPRogueDHCP(runID, attackerIP, fakeGateway string) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPRogueDHCP attacker=%s fakeGateway=%s", attackerIP, fakeGateway)
+
+	attackerMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	broadcastMAC := parseMACAddress("FF:FF:FF:FF:FF:FF")
+	victimMAC := [6]byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x99}
+	xid := uint32(0x99887766)
+
+	// Victim's DISCOVER (broadcast)
+	discOpts := buildDHCPOption(53, []byte{1})
+	discOpts = append(discOpts, buildDHCPOption(61, append([]byte{0x01}, victimMAC[:]...))...)
+	disc := buildDHCPPacket(1, xid, victimMAC, "0.0.0.0", "0.0.0.0", "0.0.0.0", "0.0.0.0", discOpts)
+	discFrame := buildEthernetFrame(victimMAC, broadcastMAC, buildIPv4Packet("0.0.0.0", "255.255.255.255", 17, buildUDPDatagram(68, 67, disc)))
+
+	// Rogue OFFER from attacker, advertising fakeGateway as router (option 3)
+	offerOpts := buildDHCPOption(53, []byte{2}) // Offer
+	offerOpts = append(offerOpts, buildDHCPOption(54, dhcpIPv4Bytes(attackerIP))...)
+	offerOpts = append(offerOpts, buildDHCPOption(51, []byte{0x00, 0x01, 0x51, 0x80})...) // lease 86400s
+	offerOpts = append(offerOpts, buildDHCPOption(1, dhcpIPv4Bytes("255.255.255.0"))...)
+	offerOpts = append(offerOpts, buildDHCPOption(3, dhcpIPv4Bytes(fakeGateway))...) // rogue gateway
+	offer := buildDHCPPacket(2, xid, victimMAC, "0.0.0.0", "10.0.1.50", attackerIP, "0.0.0.0", offerOpts)
+	offerFrame := buildEthernetFrame(attackerMAC, broadcastMAC, buildIPv4Packet(attackerIP, "255.255.255.255", 17, buildUDPDatagram(67, 68, offer)))
+
+	frames := [][]byte{discFrame, offerFrame}
+	path, err := writePCAPFile(runID, "rogue_dhcp", frames, defaultDuration)
+	logInfo("Return from PCAPRogueDHCP frames=%d path=%s", len(frames), path)
+	return path, err
+}
+
+// PCAPDNSExfilMulti simulates DNS exfiltration as a sequence of TXT queries
+// to base32-looking subdomains of the exfil domain, each query carrying one
+// chunk of the encoded data. Named distinctly from PCAPDNSTunnel (which
+// already exists and sends a fixed-count loop of single random-hex
+// subdomains) since this needs the chunk count and domain driven by the
+// calling attack's actual parameters, and a believable base32-style alphabet
+// rather than full random hex per query.
+func PCAPDNSExfilMulti(runID, attackerIP, dnsTargetIP, domain string, chunkCount int) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPDNSExfilMulti attacker=%s dnsTarget=%s domain=%s chunks=%d", attackerIP, dnsTargetIP, domain, chunkCount)
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+
+	const chunkAlphabet = "abcdefghijklmnopqrstuvwxyz234567" // base32-ish charset for believable-looking encoded subdomains
+	if chunkCount > 200 {
+		chunkCount = 200 // cap PCAP size; syslog/netflow already reflect the full chunk count
+	}
+	var frames [][]byte
+	for i := 0; i < chunkCount; i++ {
+		chunk := make([]byte, 28)
+		for j := range chunk {
+			chunk[j] = chunkAlphabet[(i*7+j*13)%len(chunkAlphabet)] // deterministic pseudo-random-looking chunk per query
+		}
+		qname := string(chunk) + "." + domain
+		query := buildDNSQueryType(qname, 0x0010) // TXT
+		ip := buildIPv4Packet(attackerIP, dnsTargetIP, 17, buildUDPDatagram(uint16(50000+i%10000), 53, query))
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, ip))
+	}
+	path, err := writePCAPFile(runID, "dns_exfil", frames, defaultDuration)
+	logInfo("Return from PCAPDNSExfilMulti frames=%d path=%s", len(frames), path)
+	return path, err
+}
+
+// PCAPICMPTunnel simulates an ICMP tunnel: a sequence of ICMP echo requests
+// with anomalously large (1400-byte) payloads to the C2 IP, each answered by
+// an echo reply — a believable bidirectional covert channel shape. Checksum
+// is left at 0 in the ICMP header, matching this file's existing convention
+// for buildICMPSegment callers (writeICMPTunnelPCAP, PCAPICMPFlood) — recent
+// Wireshark releases don't validate ICMP/UDP/TCP checksums by default, so
+// this matches established precedent rather than introducing inconsistency.
+func PCAPICMPTunnel(runID, attackerIP, c2IP string, count int) (string, error) {
+	return buildICMPExchangePCAP(runID, "icmp_tunnel", attackerIP, c2IP, count, true)
+}
+
+// PCAPICMPExfil simulates one-way ICMP exfiltration: oversized echo requests
+// carrying encoded data outbound, with no replies (data is leaving, not a
+// two-way channel) — matching the one-way framing in runICMPExfil's syslog.
+func PCAPICMPExfil(runID, attackerIP, c2IP string, packetCount int) (string, error) {
+	return buildICMPExchangePCAP(runID, "icmp_exfil", attackerIP, c2IP, packetCount, false)
+}
+
+// buildICMPExchangePCAP is the shared builder behind PCAPICMPTunnel and
+// PCAPICMPExfil: both are "attacker sends oversized ICMP echo requests to an
+// external IP" attacks, differing only in whether replies are included
+// (tunnel = bidirectional C2, exfil = one-way data push).
+func buildICMPExchangePCAP(runID, attackName, attackerIP, c2IP string, count int, withReplies bool) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering %s attacker=%s c2=%s count=%d", attackName, attackerIP, c2IP, count)
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+
+	if count > 100 {
+		count = 100 // cap PCAP size; syslog/netflow already reflect the full count
+	}
+	identifier := uint16(rand.Intn(65535))
+	payload := make([]byte, 1400)
+	for i := range payload {
+		payload[i] = byte('A' + i%26) // arbitrary tunnel/exfil filler payload
+	}
+	var frames [][]byte
+	for i := 0; i < count; i++ {
+		seq := uint16(i + 1)
+		echoReq := buildICMPSegment(8, 0, 0, identifier, seq, payload) // type 8 = Echo Request, checksum=0 per file convention
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, c2IP, 1, echoReq)))
+
+		if withReplies {
+			echoReply := buildICMPSegment(0, 0, 0, identifier, seq, payload) // type 0 = Echo Reply
+			frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(c2IP, attackerIP, 1, echoReply)))
+		}
+	}
+	path, err := writePCAPFile(runID, attackName, frames, defaultDuration)
+	logInfo("Return from %s frames=%d path=%s", attackName, len(frames), path)
+	return path, err
 }

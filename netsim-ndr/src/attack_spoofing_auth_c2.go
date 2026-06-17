@@ -298,7 +298,8 @@ func runBruteForceSSH(req AttackRequest) (*AttackResult, error) {
 		result.EventIDs = append(result.EventIDs, flowID)
 
 		// PCAP (Option B)
-		path, _ := PCAPBruteForce(req.RunID, req.AttackerIP, targetIP, 22, "ssh", 10)
+		// PCAP (Option B)
+		path, _ := PCAPBruteForce(req.RunID, req.AttackerIP, targetIP, 22, "ssh", 10, nil)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
@@ -326,7 +327,8 @@ func runBruteForceRDP(req AttackRequest) (*AttackResult, error) {
 		}
 
 		// PCAP (Option B)
-		path, _ := PCAPBruteForce(req.RunID, req.AttackerIP, targetIP, 3389, "rdp", 10)
+		// PCAP (Option B)
+		path, _ := PCAPBruteForce(req.RunID, req.AttackerIP, targetIP, 3389, "rdp", 10, nil)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
@@ -354,7 +356,8 @@ func runBruteForceSMB(req AttackRequest) (*AttackResult, error) {
 		}
 
 		// PCAP (Option B)
-		path, _ := PCAPBruteForce(req.RunID, req.AttackerIP, targetIP, 445, "smb", 10)
+		// PCAP (Option B)
+		path, _ := PCAPBruteForce(req.RunID, req.AttackerIP, targetIP, 445, "smb", 10, nil)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}

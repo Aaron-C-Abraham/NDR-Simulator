@@ -34,6 +34,12 @@ func runDHCPStarvation(req AttackRequest) (*AttackResult, error) {
 	result.FlowCount++
 	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, "255.255.255.255", "UDP", flows)
 	result.EventIDs = append(result.EventIDs, flowID)
+
+	dhcpPath, dhcpErr := PCAPDHCPStarvation(req.RunID, 30)
+	if dhcpErr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, dhcpPath)
+	}
+
 	logInfo("Return from runDHCPStarvation syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -63,6 +69,10 @@ func runRogueDHCP(req AttackRequest) (*AttackResult, error) {
 	result.FlowCount++
 	flowID, _ := recordRunEvent(req.RunID, "netflow", "sw-core", req.AttackerIP, "255.255.255.255", "UDP", flows)
 	result.EventIDs = append(result.EventIDs, flowID)
+	roguePath, rogueErr := PCAPRogueDHCP(req.RunID, req.AttackerIP, fakeGW)
+	if rogueErr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, roguePath)
+	}
 	logInfo("Return from runRogueDHCP syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -158,6 +168,12 @@ func runXXEInjection(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+		xxePayload := []byte(fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/xml\r\n\r\n<!DOCTYPE foo [<!ENTITY xxe SYSTEM 'file:///etc/passwd'>]><foo>&xxe;</foo>", endpoint, targetIP))
+		xxeResp := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+		xxePath, xxeErr := PCAPGenericTCPExchange(req.RunID, "xxe_injection", req.AttackerIP, targetIP, 80, xxePayload, xxeResp)
+		if xxeErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, xxePath)
+		}
 	}
 	logInfo("Return from runXXEInjection syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -192,6 +208,12 @@ func runSSTInjection(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+		sstiPayload := []byte(fmt.Sprintf("GET %s?q={{7*7}} HTTP/1.1\r\nHost: %s\r\n\r\n", endpoint, targetIP))
+		sstiResp := []byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n49")
+		sstiPath, sstiErr := PCAPGenericTCPExchange(req.RunID, "ssti_injection", req.AttackerIP, targetIP, 80, sstiPayload, sstiResp)
+		if sstiErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, sstiPath)
+		}
 	}
 	logInfo("Return from runSSTInjection syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -223,6 +245,12 @@ func runLFIAttack(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+		lfiPayload := []byte(fmt.Sprintf("GET %s%s HTTP/1.1\r\nHost: %s\r\n\r\n", endpoint, paths[0], targetIP))
+		lfiResp := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+		lfiPath, lfiErr := PCAPGenericTCPExchange(req.RunID, "lfi_attack", req.AttackerIP, targetIP, 80, lfiPayload, lfiResp)
+		if lfiErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, lfiPath)
+		}
 	}
 	logInfo("Return from runLFIAttack syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -259,6 +287,12 @@ func runSSRFAttack(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount += len(flows)
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+		ssrfPayload := []byte(fmt.Sprintf("GET /fetch?url=%s HTTP/1.1\r\nHost: %s\r\n\r\n", targetURL, targetIP))
+		ssrfResp := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+		ssrfPath, ssrfErr := PCAPGenericTCPExchange(req.RunID, "ssrf_attack", req.AttackerIP, targetIP, 80, ssrfPayload, ssrfResp)
+		if ssrfErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, ssrfPath)
+		}
 	}
 	logInfo("Return from runSSRFAttack syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -292,6 +326,12 @@ func runNoSQLInjection(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+		nosqlPayload := []byte(fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\n\r\n{\"username\":\"admin\",\"password\":{\"$ne\":\"\"}}", endpoint, targetIP))
+		nosqlResp := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+		nosqlPath, nosqlErr := PCAPGenericTCPExchange(req.RunID, "nosql_injection", req.AttackerIP, targetIP, 80, nosqlPayload, nosqlResp)
+		if nosqlErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, nosqlPath)
+		}
 	}
 	logInfo("Return from runNoSQLInjection syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -325,6 +365,12 @@ func runHeaderInjection(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+		headerPayload := []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: evil.com\r\nX-Forwarded-For: 127.0.0.1\r\n\r\n", endpoint))
+		headerResp := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+		headerPath, headerErr := PCAPGenericTCPExchange(req.RunID, "header_injection", req.AttackerIP, targetIP, 80, headerPayload, headerResp)
+		if headerErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, headerPath)
+		}
 	}
 	logInfo("Return from runHeaderInjection syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -358,6 +404,12 @@ func runBruteForceFTP(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+
+		// PCAP (Option B)
+		path, _ := PCAPBruteForce(req.RunID, req.AttackerIP, targetIP, 21, "ftp", len(users), users)
+		if path != "" {
+			result.PCAPFiles = append(result.PCAPFiles, path)
+		}
 	}
 	logInfo("Return from runBruteForceFTP syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -373,8 +425,9 @@ func runBruteForceTelnet(req AttackRequest) (*AttackResult, error) {
 		if d, ok := getDeviceByIP(targetIP); ok && d != nil {
 			dev = d
 		}
+		users := []string{"admin", "cisco", "enable", "root", "operator", "guest", "manager", "user"}
 		for idx := 0; idx < 8; idx++ {
-			msg := fmt.Sprintf("Telnet: authentication failure for '%s' from %s — attempt %d/8", []string{"admin", "cisco", "enable", "root", "operator", "guest", "manager", "user"}[idx], req.AttackerIP, idx+1)
+			msg := fmt.Sprintf("Telnet: authentication failure for '%s' from %s — attempt %d/8", users[idx], req.AttackerIP, idx+1)
 			ev := sendSyslog(dev, msg, 4)
 			result.SyslogCount++
 			eventID, _ := recordRunEvent(req.RunID, "syslog", targetIP, req.AttackerIP, targetIP, "TCP", ev)
@@ -388,6 +441,12 @@ func runBruteForceTelnet(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+
+		// PCAP (Option B)
+		path, _ := PCAPBruteForce(req.RunID, req.AttackerIP, targetIP, 23, "telnet", len(users), users)
+		if path != "" {
+			result.PCAPFiles = append(result.PCAPFiles, path)
+		}
 	}
 	logInfo("Return from runBruteForceTelnet syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -404,6 +463,8 @@ func runBruteForceSMTP(req AttackRequest) (*AttackResult, error) {
 		if d, ok := getDeviceByIP(targetIP); ok && d != nil {
 			dev = d
 		}
+		users := []string{"admin@corp.local", "sales@corp.local", "support@corp.local", "info@corp.local", "noreply@corp.local",
+			"john.doe@corp.local", "accounts@corp.local", "billing@corp.local", "hr@corp.local", "it@corp.local"}
 		for idx := 0; idx < 10; idx++ {
 			msg := fmt.Sprintf("SMTP AUTH failure from %s: 535 Authentication failed — invalid credentials (attempt %d)", req.AttackerIP, idx+1)
 			ev := sendSyslog(dev, msg, 4)
@@ -419,6 +480,12 @@ func runBruteForceSMTP(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+
+		// PCAP (Option B)
+		path, _ := PCAPBruteForce(req.RunID, req.AttackerIP, targetIP, uint16(targetPort), "smtp", 10, users)
+		if path != "" {
+			result.PCAPFiles = append(result.PCAPFiles, path)
+		}
 	}
 	logInfo("Return from runBruteForceSMTP syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -429,6 +496,7 @@ func runBruteForceSNMP(req AttackRequest) (*AttackResult, error) {
 	logInfo("Entering runBruteForceSNMP attacker=%s", req.AttackerIP)
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	fw := getFirewall()
+	attackerDev, _ := getDeviceByIP(req.AttackerIP)
 	communities := []string{"public", "private", "community", "admin", "manager", "cisco", "secret", "network", "snmpd", "router"}
 	for _, targetIP := range req.TargetIPs {
 		dev := fw
@@ -453,6 +521,37 @@ func runBruteForceSNMP(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "UDP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+
+		if attackerDev == nil || dev == nil {
+			logWarn("runBruteForceSNMP target=%s: no device with MAC address available, skipping PCAP", targetIP)
+			continue
+		}
+
+		// PCAP: one query/response pair per community string attempted —
+		// each is its own UDP datagram (SNMP has no handshake/session to
+		// reuse across attempts), with the accepted community ('public')
+		// getting a real GetResponse and the rest getting an SNMP error
+		// response, matching the accepted/rejected split in the syslog above.
+		srcMAC := parseMACAddress(attackerDev.MACAddress)
+		dstMAC := parseMACAddress(dev.MACAddress)
+		var frames [][]byte
+		for _, c := range communities {
+			srcPort := randomPort()
+			query := buildUDPDatagram(srcPort, 161, SNMPQuery(c))
+			frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 17, query)))
+
+			var resp []byte
+			if c == "public" {
+				resp = buildUDPDatagram(161, srcPort, SNMPresponse(c))
+			} else {
+				resp = buildUDPDatagram(161, srcPort, SNMPresponse(c)) // same helper; real SNMP auth failures often just time out rather than reply, but a same-shape response keeps this consistent with existing SNMPenum precedent rather than inventing a new error PDU
+			}
+			frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 17, resp)))
+		}
+		path, _ := writePCAPFile(req.RunID, "bruteforce_snmp", frames, defaultDuration)
+		if path != "" {
+			result.PCAPFiles = append(result.PCAPFiles, path)
+		}
 	}
 	logInfo("Return from runBruteForceSNMP syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -469,8 +568,9 @@ func runBruteForceWinRM(req AttackRequest) (*AttackResult, error) {
 		if d, ok := getDeviceByIP(targetIP); ok && d != nil {
 			dev = d
 		}
+		users := []string{"admin", "administrator", "winrm", "user", "svc-admin", "backup", "deploy", "test"}
 		for idx := 0; idx < 8; idx++ {
-			msg := fmt.Sprintf("WinRM: authentication failed for %s from %s — HTTP 401 Unauthorized (attempt %d)", []string{"admin", "administrator", "winrm", "user", "svc-admin", "backup", "deploy", "test"}[idx], req.AttackerIP, idx+1)
+			msg := fmt.Sprintf("WinRM: authentication failed for %s from %s — HTTP 401 Unauthorized (attempt %d)", users[idx], req.AttackerIP, idx+1)
 			ev := sendSyslog(dev, msg, 4)
 			result.SyslogCount++
 			eventID, _ := recordRunEvent(req.RunID, "syslog", targetIP, req.AttackerIP, targetIP, "TCP", ev)
@@ -484,6 +584,12 @@ func runBruteForceWinRM(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+
+		// PCAP (Option B)
+		path, _ := PCAPBruteForce(req.RunID, req.AttackerIP, targetIP, uint16(targetPort), "winrm", len(users), users)
+		if path != "" {
+			result.PCAPFiles = append(result.PCAPFiles, path)
+		}
 	}
 	logInfo("Return from runBruteForceWinRM syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -514,6 +620,12 @@ func runBruteForceVNC(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+
+		// PCAP (Option B)
+		path, _ := PCAPBruteForce(req.RunID, req.AttackerIP, targetIP, 5900, "vnc", 6, nil)
+		if path != "" {
+			result.PCAPFiles = append(result.PCAPFiles, path)
+		}
 	}
 	logInfo("Return from runBruteForceVNC syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -614,6 +726,10 @@ func runICMPTunnel(req AttackRequest) (*AttackResult, error) {
 	result.FlowCount++
 	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, c2IP, "ICMP", flows)
 	result.EventIDs = append(result.EventIDs, flowID)
+	icmpTunPath, icmpTunErr := PCAPICMPTunnel(req.RunID, req.AttackerIP, c2IP, count)
+	if icmpTunErr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, icmpTunPath)
+	}
 	logInfo("Return from runICMPTunnel syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -812,6 +928,10 @@ func runDNSExfil(req AttackRequest) (*AttackResult, error) {
 	result.FlowCount++
 	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, dnsTarget, "UDP", flows)
 	result.EventIDs = append(result.EventIDs, flowID)
+	dnsPath, dnsErr := PCAPDNSExfilMulti(req.RunID, req.AttackerIP, dnsTarget, domain, chunkCount)
+	if dnsErr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, dnsPath)
+	}
 	logInfo("Return from runDNSExfil syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -840,6 +960,14 @@ func runICMPExfil(req AttackRequest) (*AttackResult, error) {
 	result.FlowCount++
 	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, c2IP, "ICMP", flows)
 	result.EventIDs = append(result.EventIDs, flowID)
+	packetCount := dataKB * 1024 / 1400
+	if packetCount < 1 {
+		packetCount = 1
+	}
+	icmpExfPath, icmpExfErr := PCAPICMPExfil(req.RunID, req.AttackerIP, c2IP, packetCount)
+	if icmpExfErr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, icmpExfPath)
+	}
 	logInfo("Return from runICMPExfil syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -877,6 +1005,11 @@ func runWMILateral(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount += len(flows)
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+		// PCAP (Option B)
+		wmiPath, wmiErr := PCAPLateralWMI(req.RunID, req.AttackerIP, targetIP, highPort)
+		if wmiErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, wmiPath)
+		}
 	}
 	logInfo("Return from runWMILateral syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -909,6 +1042,12 @@ func runDCOMLateral(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+
+		// PCAP (Option B)
+		dcomPath, dcomErr := PCAPLateralDCOM(req.RunID, req.AttackerIP, targetIP)
+		if dcomErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, dcomPath)
+		}
 	}
 	logInfo("Return from runDCOMLateral syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -941,6 +1080,12 @@ func runRDPHijack(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+
+		// PCAP (Option B)
+		rdpPath, rdpErr := PCAPLateralRDPHijack(req.RunID, req.AttackerIP, targetIP)
+		if rdpErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, rdpPath)
+		}
 	}
 	logInfo("Return from runRDPHijack syslogs=%d", result.SyslogCount)
 	return result, nil
