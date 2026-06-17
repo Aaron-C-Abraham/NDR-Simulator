@@ -1960,3 +1960,427 @@ func buildICMPExchangePCAP(runID, attackName, attackerIP, c2IP string, count int
 	logInfo("Return from %s frames=%d path=%s", attackName, len(frames), path)
 	return path, err
 }
+
+// ── Kerberos (RFC 4120) — simplified but ASN.1-structurally-correct ─────────
+//
+// These builders implement the real outer ASN.1 shape (application tags,
+// KDC-REQ/KDC-REQ-BODY/KDC-REP SEQUENCEs, PrincipalName, Realm,
+// KerberosTime, EncryptedData) using berTLV so every length is computed
+// from actual content rather than hardcoded — the class of bug that broke
+// the SNMP encoders earlier. What's intentionally NOT byte-accurate: optional
+// fields (padata, rtime, addresses, kdc-options flag semantics beyond an
+// all-zero placeholder), and all "encrypted" ciphertext fields are random
+// filler bytes of plausible length, not real Kerberos encryption output —
+// labeled below at each call site. Good enough for Wireshark to recognize
+// and dissect as Kerberos with correct field values for cname/realm/sname/
+// till/nonce/etype, not a faithful reproduction of real encrypted traffic.
+
+func kerberosString(s string) []byte {
+	return berTLV(0x1b, []byte(s))
+}
+
+func kerberosPrincipalName(nameType int, nameStrings []string) []byte {
+	nt := berTLV(0xa0, berInt(nameType))
+	var strs []byte
+	for _, s := range nameStrings {
+		strs = append(strs, kerberosString(s)...)
+	}
+	ns := berTLV(0xa1, berTLV(0x30, strs))
+	return berTLV(0x30, append(nt, ns...))
+}
+
+func kerberosRealm(name string) []byte {
+	return kerberosString(name)
+}
+
+func kerberosTime(t time.Time) []byte {
+	return berTLV(0x18, []byte(t.UTC().Format("20060102150405")+"Z"))
+}
+
+func berInt(value int) []byte {
+	if value == 0 {
+		return berTLV(0x02, []byte{0x00})
+	}
+	var body []byte
+	v := uint64(value)
+	for v > 0 {
+		body = append([]byte{byte(v & 0xff)}, body...)
+		v >>= 8
+	}
+	if body[0]&0x80 != 0 {
+		body = append([]byte{0x00}, body...)
+	}
+	return berTLV(0x02, body)
+}
+
+func kerberosEncryptedData(etype int, cipherBytes []byte) []byte {
+	body := berTLV(0xa0, berInt(etype))
+	body = append(body, berTLV(0xa2, berTLV(0x04, cipherBytes))...)
+	return berTLV(0x30, body)
+}
+
+func kerberosTicket(realmName string, snameStrs []string, etype int, cipherBytes []byte) []byte {
+	body := berTLV(0xa0, berInt(5))
+	body = append(body, berTLV(0xa1, kerberosRealm(realmName))...)
+	body = append(body, berTLV(0xa2, kerberosPrincipalName(2, snameStrs))...)
+	body = append(body, berTLV(0xa3, kerberosEncryptedData(etype, cipherBytes))...)
+	return berTLV(0x61, berTLV(0x30, body))
+}
+
+func kerberosKDCReqBody(isASReq bool, cnameStrs []string, realmName string, snameStrs []string, till time.Time, nonce int, etypes []int) []byte {
+	body := berTLV(0xa0, berTLV(0x03, []byte{0x00, 0x00, 0x00, 0x00}))
+	if isASReq {
+		body = append(body, berTLV(0xa1, kerberosPrincipalName(1, cnameStrs))...)
+	}
+	body = append(body, berTLV(0xa2, kerberosRealm(realmName))...)
+	body = append(body, berTLV(0xa3, kerberosPrincipalName(2, snameStrs))...)
+	body = append(body, berTLV(0xa5, kerberosTime(till))...)
+	body = append(body, berTLV(0xa7, berInt(nonce))...)
+	var etypeBody []byte
+	for _, e := range etypes {
+		etypeBody = append(etypeBody, berInt(e)...)
+	}
+	body = append(body, berTLV(0xa8, berTLV(0x30, etypeBody))...)
+	return berTLV(0x30, body)
+}
+
+func kerberosKDCReq(appTag byte, msgType int, isASReq bool, cnameStrs []string, realmName string, snameStrs []string, till time.Time, nonce int, etypes []int) []byte {
+	body := berTLV(0xa1, berInt(5))
+	body = append(body, berTLV(0xa2, berInt(msgType))...)
+	body = append(body, berTLV(0xa4, kerberosKDCReqBody(isASReq, cnameStrs, realmName, snameStrs, till, nonce, etypes))...)
+	return berTLV(appTag, berTLV(0x30, body))
+}
+
+func kerberosKDCRep(appTag byte, msgType int, crealmName string, cnameStrs []string, snameStrs []string, ticketEtype int, ticketCipher []byte, encPartEtype int, encPartCipher []byte) []byte {
+	body := berTLV(0xa0, berInt(5))
+	body = append(body, berTLV(0xa1, berInt(msgType))...)
+	body = append(body, berTLV(0xa3, kerberosRealm(crealmName))...)
+	body = append(body, berTLV(0xa4, kerberosPrincipalName(1, cnameStrs))...)
+	body = append(body, berTLV(0xa5, kerberosTicket(crealmName, snameStrs, ticketEtype, ticketCipher))...)
+	body = append(body, berTLV(0xa6, kerberosEncryptedData(encPartEtype, encPartCipher))...)
+	return berTLV(appTag, berTLV(0x30, body))
+}
+
+// ── PCAP generators ───────────────────────────────────────────────────────────
+
+func kerberosFillerCipher(n int) []byte {
+	b := make([]byte, n)
+	rand.Read(b)
+	return b
+}
+
+func PCAPASREPRoasting(runID, attackerIP, targetIP, realmName, userPrincipal string) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPASREPRoasting attacker=%s target=%s user=%s", attackerIP, targetIP, userPrincipal)
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	srcPort := randomPort()
+	till := time.Now().Add(10 * time.Hour)
+	nonce := rand.Intn(1<<31 - 1)
+
+	asReq := kerberosKDCReq(0x6a, 10, true, []string{userPrincipal}, realmName, []string{"krbtgt", realmName}, till, nonce, []int{18, 17, 23})
+	reqFrame := buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 17, buildUDPDatagram(srcPort, 88, asReq)))
+
+	asRep := kerberosKDCRep(0x6b, 11, realmName, []string{userPrincipal}, []string{"krbtgt", realmName}, 23, kerberosFillerCipher(32), 23, kerberosFillerCipher(64))
+	repFrame := buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 17, buildUDPDatagram(88, srcPort, asRep)))
+
+	frames := [][]byte{reqFrame, repFrame}
+	path, err := writePCAPFile(runID, "asrep_roasting", frames, defaultDuration)
+	logInfo("Return from PCAPASREPRoasting frames=%d path=%s", len(frames), path)
+	return path, err
+}
+
+func PCAPGoldenTicket(runID, attackerIP, targetIP, realmName, userPrincipal string) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPGoldenTicket attacker=%s target=%s user=%s", attackerIP, targetIP, userPrincipal)
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	krbPort := randomPort()
+	till := time.Now().Add(10 * 365 * 24 * time.Hour)
+	nonce := rand.Intn(1<<31 - 1)
+
+	tgsReq := kerberosKDCReq(0x6c, 12, false, nil, realmName, []string{"cifs", targetIP}, till, nonce, []int{23})
+	reqFrame := buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 17, buildUDPDatagram(krbPort, 88, tgsReq)))
+
+	tgsRep := kerberosKDCRep(0x6d, 13, realmName, []string{userPrincipal}, []string{"cifs", targetIP}, 23, kerberosFillerCipher(32), 23, kerberosFillerCipher(96))
+	repFrame := buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 17, buildUDPDatagram(88, krbPort, tgsRep)))
+
+	frames := [][]byte{reqFrame, repFrame}
+
+	smbSrcPort := randomPort()
+	clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
+	syn := buildTCPSegment(smbSrcPort, 445, 0x02, clientSeq, 0, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
+	clientSeq++
+	synAck := buildTCPSegment(445, smbSrcPort, 0x12, serverSeq, clientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck)))
+	serverSeq++
+	ack := buildTCPSegment(smbSrcPort, 445, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
+	neg := buildTCPSegment(smbSrcPort, 445, 0x18, clientSeq, serverSeq, smbNegotiatePDU[:])
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, neg)))
+	clientSeq += uint32(len(smbNegotiatePDU))
+	negResp := buildTCPSegment(445, smbSrcPort, 0x18, serverSeq, clientSeq, SMB2_Negotiate_Response)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, negResp)))
+
+	path, err := writePCAPFile(runID, "golden_ticket", frames, defaultDuration)
+	logInfo("Return from PCAPGoldenTicket frames=%d path=%s", len(frames), path)
+	return path, err
+}
+
+func PCAPPassTheTicket(runID, attackerIP, targetIP, realmName, userPrincipal string) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPPassTheTicket attacker=%s target=%s user=%s", attackerIP, targetIP, userPrincipal)
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	krbPort := randomPort()
+	till := time.Now().Add(8 * time.Hour)
+	nonce := rand.Intn(1<<31 - 1)
+
+	tgsReq := kerberosKDCReq(0x6c, 12, false, nil, realmName, []string{"cifs", targetIP}, till, nonce, []int{18, 17, 23})
+	reqFrame := buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 17, buildUDPDatagram(krbPort, 88, tgsReq)))
+
+	tgsRep := kerberosKDCRep(0x6d, 13, realmName, []string{userPrincipal}, []string{"cifs", targetIP}, 18, kerberosFillerCipher(32), 18, kerberosFillerCipher(80))
+	repFrame := buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 17, buildUDPDatagram(88, krbPort, tgsRep)))
+
+	frames := [][]byte{reqFrame, repFrame}
+
+	smbSrcPort := randomPort()
+	clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
+	syn := buildTCPSegment(smbSrcPort, 445, 0x02, clientSeq, 0, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
+	clientSeq++
+	synAck := buildTCPSegment(445, smbSrcPort, 0x12, serverSeq, clientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck)))
+	serverSeq++
+	ack := buildTCPSegment(smbSrcPort, 445, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
+	neg := buildTCPSegment(smbSrcPort, 445, 0x18, clientSeq, serverSeq, smbNegotiatePDU[:])
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, neg)))
+	clientSeq += uint32(len(smbNegotiatePDU))
+	negResp := buildTCPSegment(445, smbSrcPort, 0x18, serverSeq, clientSeq, SMB2_Negotiate_Response)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, negResp)))
+
+	path, err := writePCAPFile(runID, "pass_the_ticket", frames, defaultDuration)
+	logInfo("Return from PCAPPassTheTicket frames=%d path=%s", len(frames), path)
+	return path, err
+}
+
+// ── 802.1Q VLAN double-tagging ────────────────────────────────────────────────
+
+// buildDot1QTag builds a single 4-byte 802.1Q tag: 2-byte TPID (0x8100) +
+// 2-byte TCI (3-bit priority, 1-bit DEI, 12-bit VLAN ID).
+func buildDot1QTag(vlanID uint16, priority uint8) []byte {
+	tci := (uint16(priority&0x7) << 13) | (vlanID & 0x0FFF)
+	tag := make([]byte, 4)
+	binary.BigEndian.PutUint16(tag[0:2], 0x8100)
+	binary.BigEndian.PutUint16(tag[2:4], tci)
+	return tag
+}
+
+// buildDoubleTaggedFrame builds a VLAN-hopping double-tagged Ethernet
+// frame: dst MAC + src MAC, then an outer 802.1Q tag (the VLAN the
+// attacker's port is actually on — the one the first switch strips),
+// then an inner 802.1Q tag (the target VLAN — what the next switch sees
+// and forwards on, having already stripped what it believes was the only
+// tag), then the real EtherType and payload. This is genuinely different
+// framing from buildEthernetFrame (which has no room for VLAN tags at
+// all), not a variant of it.
+func buildDoubleTaggedFrame(srcMAC, dstMAC [6]byte, outerVLAN, innerVLAN uint16, innerEtherType uint16, payload []byte) []byte {
+	frame := make([]byte, 0, 12+4+4+2+len(payload))
+	frame = append(frame, dstMAC[:]...)
+	frame = append(frame, srcMAC[:]...)
+	frame = append(frame, buildDot1QTag(outerVLAN, 0)...)
+	frame = append(frame, buildDot1QTag(innerVLAN, 0)...)
+	etBuf := make([]byte, 2)
+	binary.BigEndian.PutUint16(etBuf, innerEtherType)
+	frame = append(frame, etBuf...)
+	frame = append(frame, payload...)
+	return frame
+}
+
+// PCAPVLANHopping generates a double-tagged 802.1Q frame carrying a TCP SYN
+// toward a host on the target VLAN, plus the same frame's SYN-ACK response
+// shown untagged (the responding host is genuinely on the target VLAN and
+// has no reason to see or send VLAN tags itself — only the attacker's
+// outbound frame needs the double tag, since that's the actual exploit
+// mechanism: tricking the first switch into forwarding traffic the
+// attacker was never authorized to reach).
+func PCAPVLANHopping(runID, attackerIP, targetVLANGateway string, outerVLAN, innerVLAN uint16) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPVLANHopping attacker=%s outerVLAN=%d innerVLAN=%d", attackerIP, outerVLAN, innerVLAN)
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	srcPort := randomPort()
+	seq := rand.Uint32()
+
+	syn := buildTCPSegment(srcPort, 80, 0x02, seq, 0, nil)
+	synIP := buildIPv4Packet(attackerIP, targetVLANGateway, 6, syn)
+	synFrame := buildDoubleTaggedFrame(srcMAC, dstMAC, outerVLAN, innerVLAN, 0x0800, synIP)
+
+	synAck := buildTCPSegment(80, srcPort, 0x12, rand.Uint32(), seq+1, nil)
+	synAckIP := buildIPv4Packet(targetVLANGateway, attackerIP, 6, synAck)
+	synAckFrame := buildEthernetFrame(dstMAC, srcMAC, synAckIP) // untagged: the response host is natively on the target VLAN
+
+	frames := [][]byte{synFrame, synAckFrame}
+	path, err := writePCAPFile(runID, "vlan_hopping", frames, defaultDuration)
+	logInfo("Return from PCAPVLANHopping frames=%d path=%s", len(frames), path)
+	return path, err
+}
+
+// ── BGP (RFC 4271) ────────────────────────────────────────────────────────────
+
+// bgpHeader prepends the 19-byte common BGP header (16-byte all-0xff
+// Marker, 2-byte total message Length, 1-byte Type) to the given
+// type-specific body.
+func bgpHeader(msgType byte, body []byte) []byte {
+	marker := make([]byte, 16)
+	for i := range marker {
+		marker[i] = 0xff
+	}
+	totalLen := uint16(19 + len(body))
+	lenBuf := make([]byte, 2)
+	binary.BigEndian.PutUint16(lenBuf, totalLen)
+	msg := append(append(marker, lenBuf...), msgType)
+	return append(msg, body...)
+}
+
+// bgpOpen builds a BGP OPEN message (type 1): version(1)=4, My Autonomous
+// System(2), Hold Time(2), BGP Identifier(4, the speaker's router ID as an
+// IPv4 address), Opt Parm Len(1)=0 (capabilities omitted).
+func bgpOpen(myAS uint16, holdTime uint16, bgpID string) []byte {
+	body := []byte{4} // version 4
+	asBuf := make([]byte, 2)
+	binary.BigEndian.PutUint16(asBuf, myAS)
+	body = append(body, asBuf...)
+	holdBuf := make([]byte, 2)
+	binary.BigEndian.PutUint16(holdBuf, holdTime)
+	body = append(body, holdBuf...)
+	body = append(body, dhcpIPv4Bytes(bgpID)...)
+	body = append(body, 0x00) // Opt Parm Len = 0
+	return bgpHeader(1, body)
+}
+
+// bgpKeepalive builds a BGP KEEPALIVE message (type 4): header only, empty body.
+func bgpKeepalive() []byte {
+	return bgpHeader(4, nil)
+}
+
+// bgpEncodePrefix encodes an IPv4 CIDR prefix as BGP NLRI: 1-byte prefix
+// length in bits, followed by ceil(bits/8) significant address bytes
+// (RFC 4271 §4.3 — not the full 4 bytes regardless of prefix length).
+func bgpEncodePrefix(cidr string) ([]byte, error) {
+	parts := strings.SplitN(cidr, "/", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("bgpEncodePrefix: invalid CIDR %q (missing '/')", cidr)
+	}
+	ip := parts[0]
+	var bits int
+	if _, err := fmt.Sscanf(parts[1], "%d", &bits); err != nil {
+		return nil, fmt.Errorf("bgpEncodePrefix: invalid prefix length in %q: %v", cidr, err)
+	}
+	full := dhcpIPv4Bytes(ip)
+	needed := (bits + 7) / 8
+	if needed > 4 {
+		needed = 4
+	}
+	return append([]byte{byte(bits)}, full[:needed]...), nil
+}
+
+// bgpUpdate builds a BGP UPDATE message (type 2) announcing the given
+// prefix with the given AS_PATH (a single AS_SEQUENCE segment) and
+// NEXT_HOP, and no withdrawn routes. Path attribute flags (0x40 = Well-
+// known, Transitive, Complete) and the ORIGIN=INCOMPLETE(2)/AS_PATH/
+// NEXT_HOP attribute set match the structure independently confirmed
+// against a real annotated BGP UPDATE capture (vendor documentation
+// trace), not just the RFC text.
+func bgpUpdate(prefixCIDR string, asPath []uint16, nextHop string) ([]byte, error) {
+	prefix, err := bgpEncodePrefix(prefixCIDR)
+	if err != nil {
+		return nil, err
+	}
+
+	origin := []byte{0x40, 1, 1, 2} // flags, type=ORIGIN(1), len=1, value=INCOMPLETE(2)
+
+	var asPathSegBody []byte
+	for _, asn := range asPath {
+		asnBuf := make([]byte, 2)
+		binary.BigEndian.PutUint16(asnBuf, asn)
+		asPathSegBody = append(asPathSegBody, asnBuf...)
+	}
+	asPathSeg := append([]byte{2, byte(len(asPath))}, asPathSegBody...) // segment type 2 = AS_SEQUENCE
+	asPathAttr := append([]byte{0x40, 2, byte(len(asPathSeg))}, asPathSeg...)
+
+	nextHopAttr := append([]byte{0x40, 3, 4}, dhcpIPv4Bytes(nextHop)...)
+
+	pathAttrs := append(append(append([]byte{}, origin...), asPathAttr...), nextHopAttr...)
+
+	withdrawnLenBuf := []byte{0x00, 0x00} // no withdrawn routes
+	pathAttrLenBuf := make([]byte, 2)
+	binary.BigEndian.PutUint16(pathAttrLenBuf, uint16(len(pathAttrs)))
+
+	body := append(append([]byte{}, withdrawnLenBuf...), pathAttrLenBuf...)
+	body = append(body, pathAttrs...)
+	body = append(body, prefix...)
+
+	return bgpHeader(2, body), nil
+}
+
+// PCAPBGPHijack generates a minimal real BGP session leading up to the
+// malicious UPDATE: TCP handshake on port 179, OPEN/OPEN, KEEPALIVE/
+// KEEPALIVE, then the attacker's UPDATE announcing the hijacked prefix
+// with the syslog's claimed AS_PATH and a NEXT_HOP of the attacker's own
+// IP — matching runBGPHijack's single-flow (attacker -> router, port 179)
+// telemetry shape.
+func PCAPBGPHijack(runID, attackerIP, routerIP, prefixCIDR string, hijackAS uint16) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPBGPHijack attacker=%s router=%s prefix=%s as=%d", attackerIP, routerIP, prefixCIDR, hijackAS)
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	srcPort := randomPort()
+	clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
+	var frames [][]byte
+
+	syn := buildTCPSegment(srcPort, 179, 0x02, clientSeq, 0, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, routerIP, 6, syn)))
+	clientSeq++
+	synAck := buildTCPSegment(179, srcPort, 0x12, serverSeq, clientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(routerIP, attackerIP, 6, synAck)))
+	serverSeq++
+	ack := buildTCPSegment(srcPort, 179, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, routerIP, 6, ack)))
+
+	openMsg := bgpOpen(hijackAS, 180, attackerIP)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, routerIP, 6, buildTCPSegment(srcPort, 179, 0x18, clientSeq, serverSeq, openMsg))))
+	clientSeq += uint32(len(openMsg))
+	openResp := bgpOpen(65000, 180, routerIP) // legitimate router's own AS (65000, per runBGPHijack's syslog: "expected via AS65000")
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(routerIP, attackerIP, 6, buildTCPSegment(179, srcPort, 0x18, serverSeq, clientSeq, openResp))))
+	serverSeq += uint32(len(openResp))
+
+	keepalive1 := bgpKeepalive()
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, routerIP, 6, buildTCPSegment(srcPort, 179, 0x18, clientSeq, serverSeq, keepalive1))))
+	clientSeq += uint32(len(keepalive1))
+	keepalive2 := bgpKeepalive()
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(routerIP, attackerIP, 6, buildTCPSegment(179, srcPort, 0x18, serverSeq, clientSeq, keepalive2))))
+	serverSeq += uint32(len(keepalive2))
+
+	updateMsg, err := bgpUpdate(prefixCIDR, []uint16{hijackAS}, attackerIP)
+	if err != nil {
+		logError("PCAPBGPHijack bgpUpdate: %v", err)
+		path, werr := writePCAPFile(runID, "bgp_hijack", frames, defaultDuration)
+		return path, werr
+	}
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, routerIP, 6, buildTCPSegment(srcPort, 179, 0x18, clientSeq, serverSeq, updateMsg))))
+	clientSeq += uint32(len(updateMsg))
+	finalAck := buildTCPSegment(179, srcPort, 0x10, serverSeq, clientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(routerIP, attackerIP, 6, finalAck)))
+
+	path, err := writePCAPFile(runID, "bgp_hijack", frames, defaultDuration)
+	logInfo("Return from PCAPBGPHijack frames=%d path=%s", len(frames), path)
+	return path, err
+}

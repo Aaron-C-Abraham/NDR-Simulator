@@ -102,6 +102,10 @@ func runVLANHopping(req AttackRequest) (*AttackResult, error) {
 	result.FlowCount++
 	flowID, _ := recordRunEvent(req.RunID, "netflow", "sw-core", req.AttackerIP, fmt.Sprintf("vlan%d", targetVLAN), "ETH", flows)
 	result.EventIDs = append(result.EventIDs, flowID)
+	vlanPath, vlanErr := PCAPVLANHopping(req.RunID, req.AttackerIP, fmt.Sprintf("10.0.%d.1", targetVLAN/10), 100, uint16(targetVLAN))
+	if vlanErr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, vlanPath)
+	}
 	logInfo("Return from runVLANHopping syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -134,6 +138,10 @@ func runBGPHijack(req AttackRequest) (*AttackResult, error) {
 	result.FlowCount++
 	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, dev.IPAddress, "TCP", flows)
 	result.EventIDs = append(result.EventIDs, flowID)
+	bgpPath, bgpErr := PCAPBGPHijack(req.RunID, req.AttackerIP, dev.IPAddress, prefix, 65001)
+	if bgpErr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, bgpPath)
+	}
 	logInfo("Return from runBGPHijack syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -663,6 +671,10 @@ func runPassTheTicket(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount += len(flows)
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "UDP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+		pttPath, pttErr := PCAPPassTheTicket(req.RunID, req.AttackerIP, targetIP, "CORP.LOCAL", user)
+		if pttErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, pttPath)
+		}
 	}
 	logInfo("Return from runPassTheTicket syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -695,6 +707,10 @@ func runASREPRoasting(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "UDP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+		asrepPath, asrepErr := PCAPASREPRoasting(req.RunID, req.AttackerIP, targetIP, "CORP.LOCAL", "svc-jenkins@corp.local")
+		if asrepErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, asrepPath)
+		}
 	}
 	logInfo("Return from runASREPRoasting syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -1187,6 +1203,10 @@ func runGoldenTicket(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount += len(flows)
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "UDP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+		goldenPath, goldenErr := PCAPGoldenTicket(req.RunID, req.AttackerIP, targetIP, "CORP.LOCAL", user)
+		if goldenErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, goldenPath)
+		}
 	}
 	logInfo("Return from runGoldenTicket syslogs=%d", result.SyslogCount)
 	return result, nil
