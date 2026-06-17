@@ -189,58 +189,30 @@ func runOSFingerprint(req AttackRequest) (*AttackResult, error) {
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", probeFlows)
 		result.EventIDs = append(result.EventIDs, flowID)
 
-		// PCAP with unusual TCP flag combinations (always generate)
+		// PCAP: nmap-spec OS fingerprint probes (SEQ/OPS/WIN/T1, IE, ECN, T2-T7, U1)
+		// per https://nmap.org/book/osdetect-methods.html
 		if targetDev != nil {
 			srcMAC := parseMACAddress(attackerDev.MACAddress)
 			dstMAC := parseMACAddress(targetDev.MACAddress)
 			var frames [][]byte
-			ICMP_probe_done := false
-			response := []uint8{0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x52, 0x04, 0x14, 0x04, 0x04}
-			for i, flags := range []uint8{0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0xC2, 0x00, 0x31, 0x10, 0x29} {
-				seq := rand.Uint32()
-				src_port := randomPort()
-				if i == 6 && !ICMP_probe_done {
-					// ICMP probe 1
-					payload1 := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
-					ICMPrequest1 := buildICMPSegment(8, 0, 0x485C, 0x0100, 0x0001, payload1)
-					ipPktreq1 := buildIPv4Packet(req.AttackerIP, targetIP, 1, ICMPrequest1)
-					framereq1 := buildEthernetFrame(srcMAC, dstMAC, ipPktreq1)
-					frames = append(frames, framereq1)
-					// ICMP probe 1 response
-					ICMPreply1 := buildICMPSegment(0, 0, 0x505C, 0x0100, 0x0001, payload1)
-					ipPktreply1 := buildIPv4Packet(req.AttackerIP, targetIP, 1, ICMPreply1)
-					framereply1 := buildEthernetFrame(srcMAC, dstMAC, ipPktreply1)
-					frames = append(frames, framereply1)
-					// ICMP probe 2
-					payload2 := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
-					ICMPrequest2 := buildICMPSegment(8, 0, 0x485C, 0x0100, 0x0001, payload2)
-					ipPktreq2 := buildIPv4Packet(req.AttackerIP, targetIP, 1, ICMPrequest2)
-					framereq2 := buildEthernetFrame(srcMAC, dstMAC, ipPktreq2)
-					frames = append(frames, framereq2)
-					// ICMP probe 2 response
-					ICMPreply2 := buildICMPSegment(0, 0, 0x505C, 0x0100, 0x0001, payload2)
-					ipPktreply2 := buildIPv4Packet(req.AttackerIP, targetIP, 1, ICMPreply2)
-					framereply2 := buildEthernetFrame(srcMAC, dstMAC, ipPktreply2)
-					frames = append(frames, framereply2)
-					ICMP_probe_done = true
-				}
-				// Sending packets with various TCP flag combinations for OS fingerprinting
-				tcpflagged := buildTCPSegment(src_port, 80, flags, seq, 0, nil)
-				ipPkt := buildIPv4Packet(req.AttackerIP, targetIP, 6, tcpflagged)
-				frame := buildEthernetFrame(srcMAC, dstMAC, ipPkt)
-				frames = append(frames, frame)
-				// Sending expected responses with corresponding TCP flags
-				tcpResponse := buildTCPSegment(80, src_port, response[i], 1, seq+1, nil)
-				ipPktres := buildIPv4Packet(targetIP, req.AttackerIP, 6, tcpResponse)
-				frameres := buildEthernetFrame(srcMAC, dstMAC, ipPktres)
-				frames = append(frames, frameres)
-			}
-			src_port := randomPort()
-			payload := []byte{0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07}
-			udp_datagram := buildUDPDatagram(src_port, 60, payload)
-			ipPkt := buildIPv4Packet(req.AttackerIP, targetIP, 17, udp_datagram)
-			frame := buildEthernetFrame(srcMAC, dstMAC, ipPkt)
-			frames = append(frames, frame)
+			openPort := uint16(80)
+			closedPort := uint16(60)
+
+			seqFrames, _ := buildSEQProbes(req.AttackerIP, targetIP, openPort, srcMAC, dstMAC)
+			frames = append(frames, seqFrames...)
+
+			ieFrames := buildIEProbes(req.AttackerIP, targetIP, srcMAC, dstMAC)
+			frames = append(frames, ieFrames...)
+
+			ecnFrames := buildECNProbe(req.AttackerIP, targetIP, openPort, srcMAC, dstMAC)
+			frames = append(frames, ecnFrames...)
+
+			t2t7Frames := buildT2T7Probes(req.AttackerIP, targetIP, openPort, closedPort, srcMAC, dstMAC)
+			frames = append(frames, t2t7Frames...)
+
+			u1Probe, u1Response := buildU1Probe(req.AttackerIP, targetIP, randomPort(), closedPort, srcMAC, dstMAC)
+			frames = append(frames, u1Probe, u1Response)
+
 			path, _ := writePCAPFile(req.RunID, "os_fingerprint", frames, defaultDuration)
 			if path != "" {
 				result.PCAPFiles = append(result.PCAPFiles, path)

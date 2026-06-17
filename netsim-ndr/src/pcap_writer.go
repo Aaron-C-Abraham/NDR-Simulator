@@ -995,3 +995,342 @@ func buildMinimalTLSClientHello() []byte {
 	record = append(record, handshake...)
 	return record
 }
+
+// TCPOption represents a single TCP header option for OS-fingerprint-style
+// probes. Kind follows RFC 793/1323/2018 option-kind numbers. Value is the
+// raw argument bytes for options that take one (MSS, WScale, Timestamp);
+// nil for options with no argument (NOP, EOL, SACK-permitted).
+type TCPOption struct {
+	Kind  byte
+	Value []byte
+}
+
+const (
+	tcpOptEOL       = 0
+	tcpOptNOP       = 1
+	tcpOptMSS       = 2
+	tcpOptWScale    = 3
+	tcpOptSACKPerm  = 4
+	tcpOptTimestamp = 8
+)
+
+// NOP returns a single-byte No-Operation TCP option.
+func NOP() TCPOption { return TCPOption{Kind: tcpOptNOP} }
+
+// EOL returns the End-of-Options-List TCP option.
+func EOL() TCPOption { return TCPOption{Kind: tcpOptEOL} }
+
+// MSS returns a Maximum Segment Size option carrying the given 16-bit value.
+func MSS(value uint16) TCPOption {
+	v := make([]byte, 2)
+	binary.BigEndian.PutUint16(v, value)
+	return TCPOption{Kind: tcpOptMSS, Value: v}
+}
+
+// WScale returns a Window Scale option carrying the given shift count.
+func WScale(shift byte) TCPOption {
+	return TCPOption{Kind: tcpOptWScale, Value: []byte{shift}}
+}
+
+// SACKPermitted returns a zero-length SACK-permitted option.
+func SACKPermitted() TCPOption {
+	return TCPOption{Kind: tcpOptSACKPerm}
+}
+
+// Timestamp returns a Timestamp option carrying TSval and TSecr (4 bytes each).
+func Timestamp(tsval, tsecr uint32) TCPOption {
+	v := make([]byte, 8)
+	binary.BigEndian.PutUint32(v[0:4], tsval)
+	binary.BigEndian.PutUint32(v[4:8], tsecr)
+	return TCPOption{Kind: tcpOptTimestamp, Value: v}
+}
+
+// encodeTCPOptions serializes a list of TCPOptions into the wire format
+// (kind byte, then for options with arguments: total-length byte, then the
+// argument bytes), padded with trailing NOPs to the next multiple of 4 bytes
+// so the resulting TCP header length stays a whole number of 32-bit words,
+// as TCP requires (RFC 793 §3.1, Data Offset field).
+func encodeTCPOptions(opts []TCPOption) []byte {
+	var buf []byte
+	for _, opt := range opts {
+		switch opt.Kind {
+		case tcpOptEOL, tcpOptNOP:
+			buf = append(buf, opt.Kind)
+		default:
+			totalLen := byte(2 + len(opt.Value)) // kind byte + length byte + value
+			buf = append(buf, opt.Kind, totalLen)
+			buf = append(buf, opt.Value...)
+		}
+	}
+	for len(buf)%4 != 0 {
+		buf = append(buf, tcpOptNOP)
+	}
+	return buf
+}
+
+// buildTCPSegmentWithOptions is buildTCPSegment with TCP options support,
+// for OS-fingerprint-style probes that need specific option combinations
+// (MSS, window scale, timestamp, SACK-permitted, NOP, EOL) to be byte-exact
+// to nmap's probe specification. The Data Offset field is computed from the
+// actual encoded options length, since unlike buildTCPSegment (always a
+// fixed 20-byte/5-word header), this header's length varies per probe.
+func buildTCPSegmentWithOptions(srcPort, dstPort uint16, flags uint8, seq, ack uint32, window uint16, opts []TCPOption, payload []byte) []byte {
+	optBytes := encodeTCPOptions(opts)
+	headerLen := 20 + len(optBytes)
+	dataOffset := byte(headerLen / 4)
+
+	seg := make([]byte, headerLen+len(payload))
+	binary.BigEndian.PutUint16(seg[0:], srcPort)
+	binary.BigEndian.PutUint16(seg[2:], dstPort)
+	binary.BigEndian.PutUint32(seg[4:], seq)
+	binary.BigEndian.PutUint32(seg[8:], ack)
+	seg[12] = dataOffset << 4
+	seg[13] = flags
+	binary.BigEndian.PutUint16(seg[14:], window)
+	// seg[16:18] checksum left as 0, same convention as buildTCPSegment
+	// seg[18:20] urgent pointer left as 0 by default
+	copy(seg[20:], optBytes)
+	copy(seg[20+len(optBytes):], payload)
+	return seg
+}
+
+// buildSEQProbes builds the 6 TCP SYN probes nmap sends for SEQ/OPS/WIN/T1
+// fingerprinting, per https://nmap.org/book/osdetect-methods.html. Each
+// probe carries the exact documented TCP options and window value, uses its
+// own source port (matching nmap's real behavior of 6 independent probes,
+// not one persistent connection), and is sent 100ms apart. Each probe gets
+// a SYN-ACK response and a closing ACK so Wireshark doesn't see overlapping
+// connections on reused ports. Returns the full ordered frame list and the
+// 6 sequence numbers used (for tests/inspection if needed).
+func buildSEQProbes(srcIP, dstIP string, dstPort uint16, srcMAC, dstMAC [6]byte) (frames [][]byte, seqs []uint32) {
+	type seqProbeSpec struct {
+		opts   []TCPOption
+		window uint16
+	}
+	specs := []seqProbeSpec{
+		{[]TCPOption{WScale(10), NOP(), MSS(1460), Timestamp(0xFFFFFFFF, 0), SACKPermitted()}, 1},
+		{[]TCPOption{MSS(1400), WScale(0), SACKPermitted(), Timestamp(0xFFFFFFFF, 0), EOL()}, 63},
+		{[]TCPOption{Timestamp(0xFFFFFFFF, 0), NOP(), NOP(), WScale(5), NOP(), MSS(640)}, 4},
+		{[]TCPOption{SACKPermitted(), Timestamp(0xFFFFFFFF, 0), WScale(10), EOL()}, 4},
+		{[]TCPOption{MSS(536), SACKPermitted(), Timestamp(0xFFFFFFFF, 0), WScale(10), EOL()}, 16},
+		{[]TCPOption{MSS(265), SACKPermitted(), Timestamp(0xFFFFFFFF, 0)}, 512},
+	}
+
+	for i, spec := range specs {
+		if i > 0 {
+			time.Sleep(100 * time.Millisecond)
+		}
+		srcPort := randomPort()
+		seq := rand.Uint32()
+		seqs = append(seqs, seq)
+
+		probeSeg := buildTCPSegmentWithOptions(srcPort, dstPort, 0x02, seq, 0, spec.window, spec.opts, nil)
+		probeIP := buildIPv4Packet(srcIP, dstIP, 6, probeSeg)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, probeIP))
+
+		respSeq := rand.Uint32()
+		respOpts := []TCPOption{MSS(1460), SACKPermitted(), Timestamp(0xFFFFFFFF, 0xFFFFFFFF), NOP(), WScale(7)}
+		respSeg := buildTCPSegmentWithOptions(dstPort, srcPort, 0x12, respSeq, seq+1, 65535, respOpts, nil)
+		respIP := buildIPv4Packet(dstIP, srcIP, 6, respSeg)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, respIP))
+
+		ackSeg := buildTCPSegment(srcPort, dstPort, 0x10, seq+1, respSeq+1, nil)
+		ackIP := buildIPv4Packet(srcIP, dstIP, 6, ackSeg)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, ackIP))
+	}
+	return frames, seqs
+}
+
+// buildIPv4PacketWithTOSAndDF is buildIPv4Packet with explicit control over
+// the TOS byte and the IP "Don't Fragment" bit, needed for nmap's IE (ICMP
+// echo) OS-fingerprint probes, which specify both fields exactly.
+func buildIPv4PacketWithTOSAndDF(srcIP, dstIP string, protocol uint8, tos byte, df bool, payload []byte) []byte {
+	totalLen := 20 + len(payload)
+	pkt := make([]byte, totalLen)
+	pkt[0] = 0x45
+	pkt[1] = tos
+	binary.BigEndian.PutUint16(pkt[2:], uint16(totalLen))
+	binary.BigEndian.PutUint16(pkt[4:], uint16(rand.Intn(65535)))
+	flags := uint16(0)
+	if df {
+		flags = 0x4000 // DF bit
+	}
+	binary.BigEndian.PutUint16(pkt[6:], flags)
+	pkt[8] = 64
+	pkt[9] = protocol
+	binary.BigEndian.PutUint32(pkt[12:], ipToUint32(srcIP))
+	binary.BigEndian.PutUint32(pkt[16:], ipToUint32(dstIP))
+	copy(pkt[20:], payload)
+	checksum := ipChecksum(pkt[:20])
+	binary.BigEndian.PutUint16(pkt[10:], checksum)
+	return pkt
+}
+
+// buildIEProbes builds the 2 ICMP echo request probes nmap sends for the IE
+// test, per https://nmap.org/book/osdetect-methods.html. Probe 1: DF set,
+// TOS=0, code=9, seq=295, 120 bytes of 0x00. Probe 2: TOS=4, code=0, ID and
+// seq incremented by 1, 150 bytes of 0x00. Includes plausible echo-reply
+// responses (response behavior is not nmap-specified).
+func buildIEProbes(srcIP, dstIP string, srcMAC, dstMAC [6]byte) (frames [][]byte) {
+	identifier := uint16(rand.Intn(65535))
+	seq1 := uint16(295)
+
+	payload1 := make([]byte, 120)
+	echo1 := buildICMPSegment(8, 9, 0, identifier, seq1, payload1)
+	ip1 := buildIPv4PacketWithTOSAndDF(srcIP, dstIP, 1, 0x00, true, echo1)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, ip1))
+
+	reply1 := buildICMPSegment(0, 0, 0, identifier, seq1, payload1)
+	ipReply1 := buildIPv4PacketWithTOSAndDF(dstIP, srcIP, 1, 0x00, false, reply1)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, ipReply1))
+
+	identifier2 := identifier + 1
+	seq2 := seq1 + 1
+	payload2 := make([]byte, 150)
+	echo2 := buildICMPSegment(8, 0, 0, identifier2, seq2, payload2)
+	ip2 := buildIPv4PacketWithTOSAndDF(srcIP, dstIP, 1, 0x04, false, echo2)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, ip2))
+
+	reply2 := buildICMPSegment(0, 0, 0, identifier2, seq2, payload2)
+	ipReply2 := buildIPv4PacketWithTOSAndDF(dstIP, srcIP, 1, 0x04, false, reply2)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, ipReply2))
+
+	return frames
+}
+
+// buildECNProbe builds nmap's ECN-support probe: a SYN packet to an open
+// port with CWR+ECE flags set, the reserved bit immediately preceding CWR
+// also set, urgent field 0xF7F5 despite URG not being set, ack=0, window=3,
+// and TCP options WScale(10), NOP, MSS(1460), SACKPermitted, NOP, NOP.
+// Per https://nmap.org/book/osdetect-methods.html.
+func buildECNProbe(srcIP, dstIP string, dstPort uint16, srcMAC, dstMAC [6]byte) (frames [][]byte) {
+	srcPort := randomPort()
+	opts := []TCPOption{WScale(10), NOP(), MSS(1460), SACKPermitted(), NOP(), NOP()}
+	optBytes := encodeTCPOptions(opts)
+	headerLen := 20 + len(optBytes)
+	dataOffset := byte(headerLen / 4)
+
+	seq := rand.Uint32()
+	seg := make([]byte, headerLen)
+	binary.BigEndian.PutUint16(seg[0:], srcPort)
+	binary.BigEndian.PutUint16(seg[2:], dstPort)
+	binary.BigEndian.PutUint32(seg[4:], seq)
+	binary.BigEndian.PutUint32(seg[8:], 0)
+	seg[12] = (dataOffset << 4) | 0x01
+	seg[13] = 0xC2
+	binary.BigEndian.PutUint16(seg[14:], 3)
+	binary.BigEndian.PutUint16(seg[18:], 0xF7F5)
+	copy(seg[20:], optBytes)
+
+	ip := buildIPv4Packet(srcIP, dstIP, 6, seg)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, ip))
+
+	respSeq := rand.Uint32()
+	respOpts := []TCPOption{MSS(1460), SACKPermitted(), WScale(7)}
+	respSeg := buildTCPSegmentWithOptions(dstPort, srcPort, 0x12, respSeq, seq+1, 65535, respOpts, nil)
+	respIP := buildIPv4Packet(dstIP, srcIP, 6, respSeg)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, respIP))
+
+	ackSeg := buildTCPSegment(srcPort, dstPort, 0x10, seq+1, respSeq+1, nil)
+	ackIP := buildIPv4Packet(srcIP, dstIP, 6, ackSeg)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, ackIP))
+
+	return frames
+}
+
+// buildT2T7Probes builds nmap's T2 through T7 TCP probes, per
+// https://nmap.org/book/osdetect-methods.html. All six share the same
+// options (WScale, NOP, MSS(265), Timestamp, SACKPermitted), except T7 uses
+// WScale(15) instead of 10. Open-port probes (T2-T4) and closed-port probes
+// (T5-T7) use openPort/closedPort respectively. Includes plausible
+// responses; nmap's spec defines only what nmap sends, not target behavior.
+func buildT2T7Probes(srcIP, dstIP string, openPort, closedPort uint16, srcMAC, dstMAC [6]byte) (frames [][]byte) {
+	type t2t7Spec struct {
+		flags   uint8
+		df      bool
+		window  uint16
+		port    uint16
+		wscale  byte
+		noReply bool
+	}
+	specs := []t2t7Spec{
+		{0x00, true, 128, openPort, 10, true},       // T2: NULL — many stacks send no response
+		{0x2B, false, 256, openPort, 10, false},     // T3: SYN+FIN+URG+PSH
+		{0x10, true, 1024, openPort, 10, false},     // T4: ACK
+		{0x02, false, 31337, closedPort, 10, false}, // T5: SYN
+		{0x10, true, 32768, closedPort, 10, false},  // T6: ACK
+		{0x29, false, 65535, closedPort, 15, false}, // T7: FIN+PSH+URG
+	}
+
+	for _, spec := range specs {
+		srcPort := randomPort()
+		opts := []TCPOption{WScale(spec.wscale), NOP(), MSS(265), Timestamp(0xFFFFFFFF, 0), SACKPermitted()}
+		seq := rand.Uint32()
+		seg := buildTCPSegmentWithOptions(srcPort, spec.port, spec.flags, seq, 0, spec.window, opts, nil)
+		ip := buildIPv4PacketWithTOSAndDF(srcIP, dstIP, 6, 0x00, spec.df, seg)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, ip))
+
+		if spec.noReply {
+			continue
+		}
+
+		var respFlags uint8 = 0x14 // RST+ACK
+		ackVal := seq
+		if spec.flags&0x02 != 0 { // probe had SYN set, so the response acks seq+1
+			ackVal = seq + 1
+		}
+		if spec.flags == 0x02 {
+			respFlags = 0x12 // SYN+ACK for a bare SYN probe (T5)
+		}
+		respSeq := rand.Uint32()
+		respSeg := buildTCPSegment(spec.port, srcPort, respFlags, respSeq, ackVal, nil)
+		respIP := buildIPv4Packet(dstIP, srcIP, 6, respSeg)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, respIP))
+	}
+	return frames
+}
+
+// buildIPv4PacketWithID is buildIPv4Packet with an explicit IP ID value,
+// needed for nmap's U1 UDP probe, which requires a fixed ID of 0x1042.
+func buildIPv4PacketWithID(srcIP, dstIP string, protocol uint8, id uint16, payload []byte) []byte {
+	totalLen := 20 + len(payload)
+	pkt := make([]byte, totalLen)
+	pkt[0] = 0x45
+	pkt[1] = 0x00
+	binary.BigEndian.PutUint16(pkt[2:], uint16(totalLen))
+	binary.BigEndian.PutUint16(pkt[4:], id)
+	pkt[8] = 64
+	pkt[9] = protocol
+	binary.BigEndian.PutUint32(pkt[12:], ipToUint32(srcIP))
+	binary.BigEndian.PutUint32(pkt[16:], ipToUint32(dstIP))
+	copy(pkt[20:], payload)
+	checksum := ipChecksum(pkt[:20])
+	binary.BigEndian.PutUint16(pkt[10:], checksum)
+	return pkt
+}
+
+// buildU1Probe builds nmap's U1 UDP probe: sent to a closed port, payload
+// is 300 bytes of 'C' (0x43), IP ID fixed at 0x1042. Includes a plausible
+// ICMP port-unreachable response, which is what a real closed UDP port
+// (with no firewall) would send back.
+func buildU1Probe(srcIP, dstIP string, srcPort, closedPort uint16, srcMAC, dstMAC [6]byte) (probe []byte, response []byte) {
+	payload := make([]byte, 300)
+	for i := range payload {
+		payload[i] = 0x43 // 'C'
+	}
+	udp := buildUDPDatagram(srcPort, closedPort, payload)
+	ip := buildIPv4PacketWithID(srcIP, dstIP, 17, 0x1042, udp)
+	probe = buildEthernetFrame(srcMAC, dstMAC, ip)
+
+	// ICMP type 3 (destination unreachable), code 3 (port unreachable).
+	// Per RFC 792, the payload echoes back the original IP header plus at
+	// least 8 bytes of the original datagram (here: the UDP header).
+	originalHeader := ip[:20]
+	originalUDPHeader := udp[:8]
+	icmpPayload := append(append([]byte{}, originalHeader...), originalUDPHeader...)
+	icmp := buildICMPSegment(3, 3, 0, 0, 0, icmpPayload)
+	respIP := buildIPv4Packet(dstIP, srcIP, 1, icmp)
+	response = buildEthernetFrame(dstMAC, srcMAC, respIP)
+
+	return probe, response
+}
