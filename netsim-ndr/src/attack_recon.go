@@ -964,10 +964,47 @@ func runLDAPEnum(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
-		ldapPath, ldapErr := PCAPGenericTCPExchange(req.RunID, "ldap_enum", req.AttackerIP, targetIP, 389,
-			[]byte(fmt.Sprintf("searchRequest base=%s filter=(objectClass=user)", baseDN)), nil)
-		if ldapErr == nil {
-			result.PCAPFiles = append(result.PCAPFiles, ldapPath)
+		// PCAP: LDAP enumeration sequence (Bind + Search)
+		srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+		dstMAC := [6]byte{0x00, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
+		srcPort := randomPort()
+		var frames [][]byte
+
+		// TCP handshake
+		clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
+		syn := buildTCPSegment(srcPort, 389, 0x02, clientSeq, 0, nil)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, syn)))
+		clientSeq++
+
+		synAck := buildTCPSegment(389, srcPort, 0x12, serverSeq, clientSeq, nil)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 6, synAck)))
+		serverSeq++
+
+		ack := buildTCPSegment(srcPort, 389, 0x10, clientSeq, serverSeq, nil)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, ack)))
+
+		// LDAP Bind request
+		bindReq := buildLDAPBindRequest(baseDN)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, buildTCPSegment(srcPort, 389, 0x18, clientSeq, serverSeq, bindReq))))
+		clientSeq += uint32(len(bindReq))
+
+		// LDAP Bind response
+		bindResp := buildLDAPBindResponse()
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 6, buildTCPSegment(389, srcPort, 0x18, serverSeq, clientSeq, bindResp))))
+		serverSeq += uint32(len(bindResp))
+
+		// LDAP Search request
+		searchReq := buildLDAPSearchRequest(baseDN)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, buildTCPSegment(srcPort, 389, 0x18, clientSeq, serverSeq, searchReq))))
+		clientSeq += uint32(len(searchReq))
+
+		// LDAP Search response (with results)
+		searchResp := buildLDAPSearchResponse(142)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 6, buildTCPSegment(389, srcPort, 0x18, serverSeq, clientSeq, searchResp))))
+
+		path, _ := writePCAPFile(req.RunID, "ldap_enum", frames, defaultDuration)
+		if path != "" {
+			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
 	}
 	logInfo("Return from runLDAPEnum syslogs=%d", result.SyslogCount)
@@ -1053,9 +1090,57 @@ func runSSLScan(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
-		sslScanPath, sslScanErr := PCAPGenericTCPExchange(req.RunID, "ssl_scan", req.AttackerIP, targetIP, uint16(targetPort), buildMinimalTLSClientHello(), nil)
-		if sslScanErr == nil {
-			result.PCAPFiles = append(result.PCAPFiles, sslScanPath)
+		// PCAP: Full SSL/TLS scan with Heartbleed + Padding Oracle probes
+		srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+		dstMAC := [6]byte{0x00, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
+		srcPort := randomPort()
+		var frames [][]byte
+		clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
+
+		// TCP handshake
+		syn := buildTCPSegment(srcPort, uint16(targetPort), 0x02, clientSeq, 0, nil)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, syn)))
+		clientSeq++
+
+		synAck := buildTCPSegment(uint16(targetPort), srcPort, 0x12, serverSeq, clientSeq, nil)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 6, synAck)))
+		serverSeq++
+
+		ack := buildTCPSegment(srcPort, uint16(targetPort), 0x10, clientSeq, serverSeq, nil)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, ack)))
+
+		// TLS ClientHello (with SNI)
+		clientHello := buildTLSClientHelloSNI(targetIP)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, buildTCPSegment(srcPort, uint16(targetPort), 0x18, clientSeq, serverSeq, clientHello))))
+		clientSeq += uint32(len(clientHello))
+
+		// TLS ServerHello + Certificate
+		serverHelloCert := buildTLSServerHelloCertificate()
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 6, buildTCPSegment(uint16(targetPort), srcPort, 0x18, serverSeq, clientSeq, serverHelloCert))))
+		serverSeq += uint32(len(serverHelloCert))
+
+		// Heartbleed probe (client sends malformed heartbeat)
+		heartbeatReq := buildTLSHeartbeatRequest()
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, buildTCPSegment(srcPort, uint16(targetPort), 0x18, clientSeq, serverSeq, heartbeatReq))))
+		clientSeq += uint32(len(heartbeatReq))
+
+		// Heartbleed response (server leaks memory)
+		heartbeatResp := buildTLSHeartbeatResponse()
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 6, buildTCPSegment(uint16(targetPort), srcPort, 0x18, serverSeq, clientSeq, heartbeatResp))))
+		serverSeq += uint32(len(heartbeatResp))
+
+		// Padding Oracle probe (crafted CBC record)
+		paddingProbe := buildTLSPaddingOracleProbe()
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, buildTCPSegment(srcPort, uint16(targetPort), 0x18, clientSeq, serverSeq, paddingProbe))))
+		clientSeq += uint32(len(paddingProbe))
+
+		// Padding Oracle response (fatal alert: bad_record_mac)
+		alertResp := buildTLSAlertBadRecordMAC()
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 6, buildTCPSegment(uint16(targetPort), srcPort, 0x18, serverSeq, clientSeq, alertResp))))
+
+		path, _ := writePCAPFile(req.RunID, "ssl_scan", frames, defaultDuration)
+		if path != "" {
+			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
 	}
 	logInfo("Return from runSSLScan syslogs=%d", result.SyslogCount)
@@ -1131,7 +1216,12 @@ func runSubdomainEnum(req AttackRequest) (*AttackResult, error) {
 	result.FlowCount++
 	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, dnsDev.IPAddress, "UDP", flows)
 	result.EventIDs = append(result.EventIDs, flowID)
-	dnsPath, dnsErr := PCAPDNSQueryResponse(req.RunID, "subdomain_enum", req.AttackerIP, dnsDev.IPAddress, fmt.Sprintf("%s.%s", subdomains[0], domain), true)
+	var queriedDomains []string
+	for idx := 0; idx < count; idx++ {
+		sub := subdomains[idx%len(subdomains)]
+		queriedDomains = append(queriedDomains, fmt.Sprintf("%s.%s", sub, domain))
+	}
+	dnsPath, dnsErr := PCAPDNSMultiQuery(req.RunID, "subdomain_enum", req.AttackerIP, dnsDev.IPAddress, queriedDomains, true)
 	if dnsErr == nil {
 		result.PCAPFiles = append(result.PCAPFiles, dnsPath)
 	}

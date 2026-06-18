@@ -2620,3 +2620,344 @@ func PCAPTLSExchange(runID, attackName, attackerIP, targetIP string, targetPort 
 	logInfo("Return from PCAPTLSExchange frames=%d path=%s", len(frames), path)
 	return path, err
 }
+
+func buildLDAPBindRequest(baseDN string) []byte {
+	buf := make([]byte, 0, 30)
+	// SEQUENCE { messageID, BindRequest }
+	buf = append(buf, 0x30) // SEQUENCE
+	buf = append(buf, 12)   // length: 12 bytes exactly
+
+	// MessageID INTEGER 1
+	buf = append(buf, 0x02, 0x01, 0x01)
+
+	// BindRequest [0]
+	buf = append(buf, 0x60) // context [0]
+	buf = append(buf, 7)    // length: 7 bytes
+
+	// Version INTEGER 3
+	buf = append(buf, 0x02, 0x01, 0x03)
+
+	// Name OCTET STRING (empty for anonymous)
+	buf = append(buf, 0x04, 0x00)
+
+	// Auth [0] (empty for anonymous simple auth)
+	buf = append(buf, 0x80, 0x00)
+
+	return buf
+}
+
+func buildLDAPBindResponse() []byte {
+	buf := make([]byte, 0, 30)
+	buf = append(buf, 0x30) // SEQUENCE
+	buf = append(buf, 12)   // length: 12 bytes
+
+	// MessageID INTEGER 1
+	buf = append(buf, 0x02, 0x01, 0x01)
+
+	// BindResponse [1]
+	buf = append(buf, 0x61) // context [1]
+	buf = append(buf, 7)    // length: 7 bytes
+
+	// ResultCode ENUMERATED 0 (success)
+	buf = append(buf, 0x0A, 0x01, 0x00)
+
+	// MatchedDN OCTET STRING (empty)
+	buf = append(buf, 0x04, 0x00)
+
+	// DiagnosticMessage OCTET STRING (empty)
+	buf = append(buf, 0x04, 0x00)
+
+	return buf
+}
+
+func buildLDAPSearchRequest(baseDN string) []byte {
+	buf := make([]byte, 0, 100)
+
+	// SEQUENCE
+	buf = append(buf, 0x30)
+
+	// Reserve space for length (will fill later)
+	lenPos := len(buf)
+	buf = append(buf, 0x00)
+
+	// MessageID INTEGER 2
+	buf = append(buf, 0x02, 0x01, 0x02)
+
+	// SearchRequest [3]
+	buf = append(buf, 0x63)
+	searchLenPos := len(buf)
+	buf = append(buf, 0x00) // Reserve for search length
+
+	// BaseObject OCTET STRING
+	dnBytes := []byte(baseDN)
+	buf = append(buf, 0x04, byte(len(dnBytes)))
+	buf = append(buf, dnBytes...)
+
+	// Scope ENUMERATED 2 (wholeSubtree)
+	buf = append(buf, 0x0A, 0x01, 0x02)
+
+	// DerefAliases ENUMERATED 0
+	buf = append(buf, 0x0A, 0x01, 0x00)
+
+	// SizeLimit INTEGER 0
+	buf = append(buf, 0x02, 0x01, 0x00)
+
+	// TimeLimit INTEGER 0
+	buf = append(buf, 0x02, 0x01, 0x00)
+
+	// TypesOnly BOOLEAN FALSE
+	buf = append(buf, 0x01, 0x01, 0x00)
+
+	// Filter: present [7] objectClass
+	buf = append(buf, 0xA7, 0x0B)
+	buf = append(buf, []byte("objectClass")...)
+
+	// Fill in SearchRequest length
+	searchLen := len(buf) - searchLenPos - 1
+	buf[searchLenPos] = byte(searchLen)
+
+	// Fill in SEQUENCE length
+	seqLen := len(buf) - lenPos - 1
+	buf[lenPos] = byte(seqLen)
+
+	return buf
+}
+
+// buildLDAPSearchResponse builds a minimal LDAP Search response with results
+func buildLDAPSearchResponse(count int) []byte {
+	buf := make([]byte, 0, 200)
+
+	// SEQUENCE
+	buf = append(buf, 0x30, 150)
+
+	// MessageID (INTEGER 2)
+	buf = append(buf, 0x02, 0x01, 0x02)
+
+	// SearchResultEntry [4] (simplified - just one entry)
+	buf = append(buf, 0x64, 100)
+
+	// ObjectName (OCTET STRING) - example user DN
+	userDN := fmt.Sprintf("cn=user%d,dc=corp,dc=local", count)
+	buf = append(buf, 0x04, byte(len(userDN)))
+	buf = append(buf, []byte(userDN)...)
+
+	// Attributes (SET OF)
+	buf = append(buf, 0x30, 50)
+
+	// Attribute: cn
+	buf = append(buf, 0x30, 20)
+	buf = append(buf, 0x04, 0x02)
+	buf = append(buf, []byte("cn")...)
+	buf = append(buf, 0x31, 15)
+	buf = append(buf, 0x04, byte(len(userDN)))
+	buf = append(buf, []byte(userDN)...)
+
+	for len(buf) < 180 {
+		buf = append(buf, 0x00)
+	}
+
+	return buf
+}
+
+// buildTLSServerHelloCertificate builds ServerHello + Certificate in one TLS record
+func buildTLSServerHelloCertificate() []byte {
+	// --- ServerHello ---
+	sh := []byte{
+		// Handshake: ServerHello (type 0x02)
+		0x02,
+		0x00, 0x00, 0x46, // length 70
+		0x03, 0x03, // TLS 1.2
+	}
+	// 32 bytes server random
+	serverRandom := make([]byte, 32)
+	for i := range serverRandom {
+		serverRandom[i] = byte(rand.Intn(256))
+	}
+	sh = append(sh, serverRandom...)
+	// Session ID length 0
+	sh = append(sh, 0x00)
+	// Cipher suite TLS_RSA_WITH_AES_128_GCM_SHA256 (0x009C)
+	sh = append(sh, 0x00, 0x9C)
+	// Compression method null
+	sh = append(sh, 0x00)
+	// Extensions length
+	sh = append(sh, 0x00, 0x0E)
+	// Renegotiation info extension
+	sh = append(sh, 0xFF, 0x01, 0x00, 0x01, 0x00)
+	// EC point formats
+	sh = append(sh, 0x00, 0x0B, 0x00, 0x04, 0x03, 0x00, 0x01, 0x02)
+	// Heartbeat extension (mode: peer_allowed_to_send = 1)
+	sh = append(sh, 0x00, 0x0F, 0x00, 0x01, 0x01)
+
+	// --- Certificate ---
+	// Fake self-signed cert (minimal DER structure)
+	certDER := make([]byte, 256)
+	// ASN.1 SEQUENCE
+	certDER[0] = 0x30
+	certDER[1] = 0x82
+	certDER[2] = 0x00
+	certDER[3] = 0xFC // length 252
+	// Version
+	certDER[4] = 0xA0
+	certDER[5] = 0x03
+	certDER[6] = 0x02
+	certDER[7] = 0x01
+	certDER[8] = 0x02 // v3
+	// Serial number
+	certDER[9] = 0x02
+	certDER[10] = 0x08
+	for i := 11; i < 19; i++ {
+		certDER[i] = byte(rand.Intn(256))
+	}
+	// Issuer CN=corp.local (simplified)
+	cn := []byte("CN=*.corp.local")
+	copy(certDER[40:], cn)
+
+	certLen := len(certDER)
+	cert := []byte{
+		0x0B, // Handshake: Certificate
+		byte((certLen + 6) >> 16), byte((certLen + 6) >> 8), byte(certLen + 6),
+		// Certificates length
+		byte((certLen + 3) >> 16), byte((certLen + 3) >> 8), byte(certLen + 3),
+		// Certificate length
+		byte(certLen >> 16), byte(certLen >> 8), byte(certLen),
+	}
+	cert = append(cert, certDER...)
+
+	// Combine into one TLS Handshake record
+	handshake := append(sh, cert...)
+	rec := []byte{
+		0x16,       // ContentType: Handshake
+		0x03, 0x03, // TLS 1.2
+		byte(len(handshake) >> 8), byte(len(handshake)),
+	}
+	rec = append(rec, handshake...)
+	return rec
+}
+
+// buildTLSHeartbeatRequest builds a Heartbleed probe
+func buildTLSHeartbeatRequest() []byte {
+	payload := []byte{
+		0x01,       // HeartbeatType: request
+		0x00, 0x05, // Payload length: 5 (actual)
+	}
+	// 5 bytes actual payload
+	payload = append(payload, 0x41, 0x41, 0x41, 0x41, 0x41)
+	// 16 bytes padding (required by RFC 6520)
+	padding := make([]byte, 16)
+	for i := range padding {
+		padding[i] = byte(rand.Intn(256))
+	}
+	payload = append(payload, padding...)
+
+	rec := []byte{
+		0x18,       // ContentType: Heartbeat
+		0x03, 0x03, // TLS 1.2
+		byte(len(payload) >> 8), byte(len(payload)),
+	}
+	rec = append(rec, payload...)
+	return rec
+}
+
+// buildTLSHeartbeatResponse builds a Heartbleed response (server leaks memory - response much larger than request)
+func buildTLSHeartbeatResponse() []byte {
+	// Heartbleed signature: response payload much larger than request payload
+	leakedSize := 256
+	payload := []byte{
+		0x02,                                    // HeartbeatType: response
+		byte(leakedSize >> 8), byte(leakedSize), // Payload length: 256
+	}
+	// Leaked memory (256 bytes)
+	leaked := make([]byte, leakedSize)
+	for i := range leaked {
+		leaked[i] = byte(rand.Intn(256))
+	}
+	payload = append(payload, leaked...)
+	// 16 bytes padding
+	padding := make([]byte, 16)
+	for i := range padding {
+		padding[i] = byte(rand.Intn(256))
+	}
+	payload = append(payload, padding...)
+
+	rec := []byte{
+		0x18,       // ContentType: Heartbeat
+		0x03, 0x03, // TLS 1.2
+		byte(len(payload) >> 8), byte(len(payload)),
+	}
+	rec = append(rec, payload...)
+	return rec
+}
+
+// buildTLSPaddingOracleProbe builds a crafted encrypted record for padding oracle test
+func buildTLSPaddingOracleProbe() []byte {
+	// Crafted CBC-encrypted record with manipulated IV/padding
+	encrypted := make([]byte, 48) // 3 AES blocks
+	for i := range encrypted {
+		encrypted[i] = byte(rand.Intn(256))
+	}
+	// Manipulate last byte (padding oracle attack modifies ciphertext)
+	encrypted[47] = 0x0F // Force bad padding
+
+	rec := []byte{
+		0x17,       // ContentType: Application Data
+		0x03, 0x01, // TLS 1.0 (CBC vulnerable version)
+		byte(len(encrypted) >> 8), byte(len(encrypted)),
+	}
+	rec = append(rec, encrypted...)
+	return rec
+}
+
+// buildTLSAlertBadRecordMAC builds a TLS Alert for bad_record_mac (padding oracle response)
+func buildTLSAlertBadRecordMAC() []byte {
+	alert := []byte{
+		0x02, // AlertLevel: fatal
+		0x14, // AlertDescription: bad_record_mac (20)
+	}
+	rec := []byte{
+		0x15,       // ContentType: Alert
+		0x03, 0x01, // TLS 1.0
+		0x00, 0x02, // length
+	}
+	rec = append(rec, alert...)
+	return rec
+}
+
+// PCAPDNSMultiQuery generates a single PCAP containing query/response pairs
+// for each domain in the list — used for subdomain enumeration, DNS recon,
+// and similar attacks where many DNS lookups happen in one run.
+func PCAPDNSMultiQuery(runID, attackName, clientIP, dnsIP string, domains []string, nxdomain bool) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPDNSMultiQuery attack=%s client=%s dns=%s count=%d", attackName, clientIP, dnsIP, len(domains))
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+
+	qtype := uint16(0x0010) // TXT
+	if !nxdomain {
+		qtype = 0x0001 // A record
+	}
+
+	var frames [][]byte
+	for _, domain := range domains {
+		srcPort := randomPort()
+		query := buildDNSQueryType(domain, qtype)
+		queryFrame := buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(clientIP, dnsIP, 17, buildUDPDatagram(srcPort, 53, query)))
+		frames = append(frames, queryFrame)
+
+		response := make([]byte, len(query))
+		copy(response, query)
+		response[2] = 0x81
+		if nxdomain {
+			response[3] = 0x83
+		} else {
+			response[3] = 0x80
+		}
+		responseFrame := buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(dnsIP, clientIP, 17, buildUDPDatagram(53, srcPort, response)))
+		frames = append(frames, responseFrame)
+	}
+
+	path, err := writePCAPFile(runID, attackName, frames, defaultDuration)
+	logInfo("Return from PCAPDNSMultiQuery frames=%d path=%s", len(frames), path)
+	return path, err
+}
