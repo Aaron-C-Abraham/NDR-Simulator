@@ -729,6 +729,7 @@ func runExfilHTTP(req AttackRequest) (*AttackResult, error) {
 
 func runRogueAP(req AttackRequest) (*AttackResult, error) {
 	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering runRogueAP attacker=%s", req.AttackerIP)
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	ssid := getAttackParam(req.Params, "ssid", "Corp-WiFi")
 
@@ -741,16 +742,18 @@ func runRogueAP(req AttackRequest) (*AttackResult, error) {
 		result.EventIDs = append(result.EventIDs, eventID)
 
 		// PCAP: rogue AP's beacon frame advertising the spoofed SSID
-		path, _ := PCAP80211Beacon(req.RunID, rogueMAC, ssid)
+		path, _ := PCAP80211Beacon(req.RunID, "rogue_ap_beacon", rogueMAC, ssid)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
 	}
+	logInfo("Return from runRogueAP syslogs=%d", result.SyslogCount)
 	return result, nil
 }
 
 func runDeauth(req AttackRequest) (*AttackResult, error) {
 	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering runDeauth attacker=%s", req.AttackerIP)
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	apName := getAttackParam(req.Params, "ap_name", "ap-floor1")
 
@@ -771,11 +774,12 @@ func runDeauth(req AttackRequest) (*AttackResult, error) {
 
 		// PCAP: deauth frames targeting one synthesized client
 		clientMAC := parseMACAddress(fmt.Sprintf("aa:bb:cc:%02x:%02x:%02x", rand.Intn(256), rand.Intn(256), rand.Intn(256)))
-		path, _ := PCAP80211Deauth(req.RunID, apMAC, clientMAC, 10)
+		path, _ := PCAP80211Deauth(req.RunID, "deauth_flood", apMAC, clientMAC, 10)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
 		break
 	}
+	logInfo("Return from runDeauth syslogs=%d", result.SyslogCount)
 	return result, nil
 }

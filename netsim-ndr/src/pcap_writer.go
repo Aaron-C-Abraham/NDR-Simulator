@@ -866,13 +866,13 @@ func PCAPDNSQueryResponse(runID, attackName, clientIP, dnsIP string, domain stri
 // (used for rogue AP detection). Uses LINKTYPE_IEEE802_11 (105), not
 // Ethernet — this is genuinely a different link layer, so it must go
 // through writePCAPFileLinkType rather than writePCAPFile.
-func PCAP80211Beacon(runID string, apMAC [6]byte, ssid string) (string, error) {
+func PCAP80211Beacon(runID, attackName string, apMAC [6]byte, ssid string) (string, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAP80211Beacon ssid=%s", ssid)
 
 	broadcastMAC := [6]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 	frame := build80211Beacon(apMAC, broadcastMAC, ssid)
-	path, err := writePCAPFileLinkType(runID, "rogue_ap_beacon", [][]byte{frame}, defaultDuration, 105)
+	path, err := writePCAPFileLinkType(runID, attackName, [][]byte{frame}, defaultDuration, 105)
 	logInfo("Return from PCAP80211Beacon path=%s", path)
 	return path, err
 }
@@ -880,7 +880,7 @@ func PCAP80211Beacon(runID string, apMAC [6]byte, ssid string) (string, error) {
 // PCAP80211Deauth generates a minimal raw 802.11 Deauthentication management
 // frame (used for deauth flood attacks). Same LINKTYPE_IEEE802_11 caveat
 // as PCAP80211Beacon.
-func PCAP80211Deauth(runID string, apMAC, clientMAC [6]byte, count int) (string, error) {
+func PCAP80211Deauth(runID, attackName string, apMAC, clientMAC [6]byte, count int) (string, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAP80211Deauth count=%d", count)
 
@@ -888,7 +888,7 @@ func PCAP80211Deauth(runID string, apMAC, clientMAC [6]byte, count int) (string,
 	for idx := 0; idx < count; idx++ {
 		frames = append(frames, build80211Deauth(apMAC, clientMAC))
 	}
-	path, err := writePCAPFileLinkType(runID, "deauth_flood", frames, defaultDuration, 105)
+	path, err := writePCAPFileLinkType(runID, attackName, frames, defaultDuration, 105)
 	logInfo("Return from PCAP80211Deauth frames=%d path=%s", len(frames), path)
 	return path, err
 }
@@ -1601,6 +1601,93 @@ func buildDCERPCResponseStub(callID uint32, approxPayload []byte) []byte {
 	body = append(body, 0x00, 0x00)             // cancel_count + reserved
 	body = append(body, approxPayload...)
 	return wrapDCERPCCommonHeader(2, callID, body) // PTYPE 2 = response
+}
+
+// ── SMB2 (RFC 1002) ──────────────────────────────────────────────────────────
+
+// buildSMB2Header builds a 64-byte SMB2 common header (Signature, StructureSize,
+// CreditCharge, Status, Command, CreditRequestResponse, Flags, NextCommand,
+// MessageID, AsyncID/TreeID, SessionID, Signature).
+func buildSMB2Header(command uint16, messageID uint64, treeID uint32, sessionID uint64, payload []byte) []byte {
+	hdr := make([]byte, 64)
+	copy(hdr[0:4], []byte{0xFF, 0x53, 0x4D, 0x42})  // Signature: "\xFFSMB"
+	binary.LittleEndian.PutUint16(hdr[4:6], 0x0040) // StructureSize = 64
+	binary.LittleEndian.PutUint16(hdr[6:8], 0)      // CreditCharge
+	binary.LittleEndian.PutUint32(hdr[8:12], 0)     // Status = 0 (success)
+	binary.LittleEndian.PutUint16(hdr[12:14], command)
+	binary.LittleEndian.PutUint16(hdr[14:16], 1) // CreditRequestResponse
+	binary.LittleEndian.PutUint32(hdr[16:20], 0) // Flags
+	binary.LittleEndian.PutUint32(hdr[20:24], 0) // NextCommand = 0 (single PDU)
+	binary.LittleEndian.PutUint64(hdr[24:32], messageID)
+	binary.LittleEndian.PutUint32(hdr[32:36], 0) // Reserved (ProcessID in requests)
+	binary.LittleEndian.PutUint32(hdr[36:40], treeID)
+	binary.LittleEndian.PutUint64(hdr[40:48], sessionID)
+	// Signature (48:64) = 16 bytes of zeros (HMAC, not computed for prototype)
+	return hdr
+}
+
+// buildSMB2WriteRequest builds a SMB2 WRITE request command (command 15): 49-byte
+// fixed structure + variable-length data buffer. The DataOffset field (at byte
+// offset 66-67 from the start of the SMB2 header) is automatically computed to
+// point to the payload buffer.
+func buildSMB2WriteRequest(payload []byte) []byte {
+	cmd := make([]byte, 49)
+	binary.LittleEndian.PutUint16(cmd[0:2], 0x0031)               // StructureSize = 49
+	binary.LittleEndian.PutUint16(cmd[2:4], 64+49)                // DataOffset (from start of SMB2 header)
+	binary.LittleEndian.PutUint32(cmd[4:8], uint32(len(payload))) // Length
+	binary.LittleEndian.PutUint64(cmd[8:16], 0)                   // Offset (file offset)
+	// FileID (16:32) = 16 bytes of zeros
+	binary.LittleEndian.PutUint32(cmd[32:36], 0) // Channel
+	binary.LittleEndian.PutUint32(cmd[36:40], 0) // RemainingLength
+	binary.LittleEndian.PutUint16(cmd[40:42], 0) // WriteChannelInfoOffset
+	binary.LittleEndian.PutUint16(cmd[42:44], 0) // WriteChannelInfoLength
+	binary.LittleEndian.PutUint32(cmd[44:48], 0) // Flags
+	return append(cmd, payload...)
+}
+
+// PCAPSMBChannel generates a PCAP frame for SMB named-pipe C2: TCP handshake
+// on port 445 (SMB), followed by a real SMB2 WRITE request to a named pipe
+// carrying C2 payload. The SMB2 structures (header + WriteRequest) are
+// RFC-compliant enough for Wireshark's dissector.
+func PCAPSMBChannel(runID, attackerIP, targetIP, pipeName string) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPSMBChannel attacker=%s target=%s pipe=%s", attackerIP, targetIP, pipeName)
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	srcPort := randomPort()
+	clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
+	var frames [][]byte
+
+	// TCP SYN
+	syn := buildTCPSegment(srcPort, 445, 0x02, clientSeq, 0, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
+	clientSeq++
+
+	// TCP SYN-ACK
+	synAck := buildTCPSegment(445, srcPort, 0x12, serverSeq, clientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck)))
+	serverSeq++
+
+	// TCP ACK
+	ack := buildTCPSegment(srcPort, 445, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
+
+	// SMB2 WriteRequest on the named pipe
+	payload := []byte(fmt.Sprintf("Covert channel payload on %s: encrypted C2 command", pipeName))
+	writeReq := buildSMB2WriteRequest(payload)
+	header := buildSMB2Header(15, 1, 0, 1, writeReq)
+	smbData := append(header, writeReq...)
+
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 445, 0x18, clientSeq, serverSeq, smbData))))
+	clientSeq += uint32(len(smbData))
+
+	finalAck := buildTCPSegment(445, srcPort, 0x10, serverSeq, clientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, finalAck)))
+
+	path, err := writePCAPFile(runID, "smb_channel", frames, defaultDuration)
+	logInfo("Return from PCAPSMBChannel frames=%d path=%s", len(frames), path)
+	return path, err
 }
 
 // PCAPLateralWMI generates PCAP frames for WMI lateral movement: a real

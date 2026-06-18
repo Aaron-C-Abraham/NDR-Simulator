@@ -778,6 +778,11 @@ func runSMBChannel(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+
+		smbPath, smbErr := PCAPSMBChannel(req.RunID, req.AttackerIP, targetIP, pipe)
+		if smbErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, smbPath)
+		}
 	}
 	logInfo("Return from runSMBChannel syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -1324,6 +1329,13 @@ func runPMKIDAttack(req AttackRequest) (*AttackResult, error) {
 		eventID, _ := recordRunEvent(req.RunID, "syslog", dev.Name, req.AttackerIP, dev.IPAddress, "802.11", ev)
 		result.EventIDs = append(result.EventIDs, eventID)
 	}
+
+	apMAC := [6]byte{0x00, 0xaa, 0xbb, 0xcc, 0xdd, 0x01}
+	path, _ := PCAP80211Beacon(req.RunID, "pmkid_attack", apMAC, apName)
+	if path != "" {
+		result.PCAPFiles = append(result.PCAPFiles, path)
+	}
+
 	logInfo("Return from runPMKIDAttack syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -1348,6 +1360,13 @@ func runEvilTwin(req AttackRequest) (*AttackResult, error) {
 		eventID, _ := recordRunEvent(req.RunID, "syslog", dev.Name, req.AttackerIP, dev.IPAddress, "802.11", ev)
 		result.EventIDs = append(result.EventIDs, eventID)
 	}
+
+	rogueMAC := [6]byte{0x00, 0xaa, 0xbb, 0xcc, 0xdd, 0xff}
+	path, _ := PCAP80211Beacon(req.RunID, "evil_twin_beacon", rogueMAC, ssid)
+	if path != "" {
+		result.PCAPFiles = append(result.PCAPFiles, path)
+	}
+
 	logInfo("Return from runEvilTwin syslogs=%d", result.SyslogCount)
 	return result, nil
 }
