@@ -807,6 +807,14 @@ func runWebSocketC2(req AttackRequest) (*AttackResult, error) {
 	result.FlowCount++
 	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, c2IP, "TCP", flows)
 	result.EventIDs = append(result.EventIDs, flowID)
+
+	wsPayload := []byte(fmt.Sprintf("ws-frame:%s", randomHexString(32)))
+	wsResp := []byte(randomHexString(32))
+	wsPath, wsErr := PCAPTLSExchange(req.RunID, "websocket_c2", req.AttackerIP, c2IP, 443, c2IP, wsPayload, wsResp)
+	if wsErr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, wsPath)
+	}
+
 	logInfo("Return from runWebSocketC2 syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -828,13 +836,22 @@ func runDomainFronting(req AttackRequest) (*AttackResult, error) {
 		eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", req.AttackerIP, frontDomain, "TCP", ev)
 		result.EventIDs = append(result.EventIDs, eventID)
 	}
-	flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: fmt.Sprintf("104.21.%d.%d", rand.Intn(255), rand.Intn(255)), SrcPort: randomPort(), DstPort: 443, Protocol: 6, Bytes: uint32(count * 3000), Packets: uint32(count * 5), StartTime: time.Now().Add(-time.Duration(count*30) * time.Second), EndTime: time.Now(), TCPFlags: 0x18}}
+	frontIP := fmt.Sprintf("104.21.%d.%d", rand.Intn(255), rand.Intn(255))
+	flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: frontIP, SrcPort: randomPort(), DstPort: 443, Protocol: 6, Bytes: uint32(count * 3000), Packets: uint32(count * 5), StartTime: time.Now().Add(-time.Duration(count*30) * time.Second), EndTime: time.Now(), TCPFlags: 0x18}}
 	if fw != nil && fw.Telemetry.Netflow {
 		ExportNetflowV9(fw.IPAddress, flows)
 	}
 	result.FlowCount++
 	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, frontDomain, "TCP", flows)
 	result.EventIDs = append(result.EventIDs, flowID)
+
+	dfPayload := []byte("GET / HTTP/1.1\r\nHost: evil-c2.com\r\n\r\n")
+	dfResp := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+	dfPath, dfErr := PCAPTLSExchange(req.RunID, "domain_fronting", req.AttackerIP, frontIP, 443, frontDomain, dfPayload, dfResp)
+	if dfErr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, dfPath)
+	}
+
 	logInfo("Return from runDomainFronting syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -912,6 +929,13 @@ func runPowerShellC2(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", targetIP, c2IP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
+
+		psPayload := []byte(fmt.Sprintf("cmd:%s", randomHexString(40)))
+		psResp := []byte(randomHexString(24))
+		psPath, psErr := PCAPTLSExchange(req.RunID, "powershell_c2", targetIP, c2IP, 443, c2IP, psPayload, psResp)
+		if psErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, psPath)
+		}
 	}
 	logInfo("Return from runPowerShellC2 syslogs=%d", result.SyslogCount)
 	return result, nil

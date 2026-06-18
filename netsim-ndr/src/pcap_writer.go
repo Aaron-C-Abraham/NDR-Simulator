@@ -2384,3 +2384,155 @@ func PCAPBGPHijack(runID, attackerIP, routerIP, prefixCIDR string, hijackAS uint
 	logInfo("Return from PCAPBGPHijack frames=%d path=%s", len(frames), path)
 	return path, err
 }
+
+// buildTLSExtensionSNI builds the Server Name Indication extension
+// (type 0x0000) carrying a single host_name entry for the given domain.
+func buildTLSExtensionSNI(serverName string) []byte {
+	nameBytes := []byte(serverName)
+	entry := make([]byte, 0, 3+len(nameBytes))
+	entry = append(entry, 0x00) // name_type: host_name
+	entry = append(entry, byte(len(nameBytes)>>8), byte(len(nameBytes)))
+	entry = append(entry, nameBytes...)
+
+	listLen := len(entry)
+	extData := make([]byte, 0, 2+listLen)
+	extData = append(extData, byte(listLen>>8), byte(listLen))
+	extData = append(extData, entry...)
+
+	ext := make([]byte, 0, 4+len(extData))
+	ext = append(ext, 0x00, 0x00) // extension_type: server_name
+	ext = append(ext, byte(len(extData)>>8), byte(len(extData)))
+	ext = append(ext, extData...)
+	return ext
+}
+
+// buildTLSClientHelloSNI builds a structurally valid TLS ClientHello carrying
+// a Server Name Indication extension. Needed for DomainFronting, where the
+// SNI value (the legitimate-looking front domain) is the entire point of
+// the attack and must be visible on the wire — otherwise identical to
+// buildMinimalTLSClientHello, which has no extensions at all.
+func buildTLSClientHelloSNI(serverName string) []byte {
+	random := make([]byte, 32)
+	rand.Read(random)
+
+	sniExt := buildTLSExtensionSNI(serverName)
+
+	body := make([]byte, 0, 40+len(sniExt))
+	body = append(body, 0x03, 0x03) // client_version: TLS 1.2
+	body = append(body, random...)
+	body = append(body, 0x00)       // session_id length: 0
+	body = append(body, 0x00, 0x02) // cipher_suites length: 2 bytes
+	body = append(body, 0x13, 0x01) // TLS_AES_128_GCM_SHA256
+	body = append(body, 0x01)       // compression_methods length: 1
+	body = append(body, 0x00)       // compression method: null
+	body = append(body, byte(len(sniExt)>>8), byte(len(sniExt)))
+	body = append(body, sniExt...)
+
+	handshake := make([]byte, 0, len(body)+4)
+	handshake = append(handshake, 0x01) // ClientHello
+	handshake = append(handshake, byte(len(body)>>16), byte(len(body)>>8), byte(len(body)))
+	handshake = append(handshake, body...)
+
+	record := make([]byte, 0, len(handshake)+5)
+	record = append(record, 0x16, 0x03, 0x01) // Handshake, TLS 1.0 record version
+	record = append(record, byte(len(handshake)>>8), byte(len(handshake)))
+	record = append(record, handshake...)
+	return record
+}
+
+// buildMinimalTLSServerHello builds a structurally valid ServerHello with
+// the same negotiated cipher suite buildMinimalTLSClientHello/
+// buildTLSClientHelloSNI offer.
+func buildMinimalTLSServerHello() []byte {
+	random := make([]byte, 32)
+	rand.Read(random)
+
+	body := make([]byte, 0, 40)
+	body = append(body, 0x03, 0x03) // server_version: TLS 1.2
+	body = append(body, random...)
+	body = append(body, 0x00)       // session_id length: 0
+	body = append(body, 0x13, 0x01) // cipher_suite chosen
+	body = append(body, 0x00)       // compression method: null
+	body = append(body, 0x00, 0x00) // extensions length: 0
+
+	handshake := make([]byte, 0, len(body)+4)
+	handshake = append(handshake, 0x02) // ServerHello
+	handshake = append(handshake, byte(len(body)>>16), byte(len(body)>>8), byte(len(body)))
+	handshake = append(handshake, body...)
+
+	record := make([]byte, 0, len(handshake)+5)
+	record = append(record, 0x16, 0x03, 0x03) // Handshake, TLS 1.2 record version
+	record = append(record, byte(len(handshake)>>8), byte(len(handshake)))
+	record = append(record, handshake...)
+	return record
+}
+
+// buildTLSApplicationData wraps arbitrary bytes in a TLS Application Data
+// record (type 0x17). The payload isn't actually encrypted — Wireshark has
+// no key material for real captures either, so any well-framed Application
+// Data record displays identically: opaque bytes, not a parse error. This
+// is what lets us represent "encrypted C2/exfil traffic" without a real
+// TLS implementation.
+func buildTLSApplicationData(payload []byte) []byte {
+	record := make([]byte, 0, 5+len(payload))
+	record = append(record, 0x17, 0x03, 0x03)
+	record = append(record, byte(len(payload)>>8), byte(len(payload)))
+	record = append(record, payload...)
+	return record
+}
+
+// PCAPTLSExchange generates a minimal real TLS handshake (ClientHello
+// carrying the given SNI, then ServerHello) followed by one Application
+// Data record each direction carrying requestPayload/responsePayload as
+// opaque bytes. Used for HTTPS-based C2/exfil attacks (PowerShellC2,
+// WebSocketC2, DomainFronting) — writing plaintext bytes directly on
+// port 443 via PCAPGenericTCPExchange would make Wireshark try (and fail)
+// to decode them as TLS, since port 443 is mapped to the TLS dissector.
+func PCAPTLSExchange(runID, attackName, attackerIP, targetIP string, targetPort uint16, sni string, requestPayload, responsePayload []byte) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPTLSExchange attack=%s attacker=%s target=%s port=%d sni=%s", attackName, attackerIP, targetIP, targetPort, sni)
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	srcPort := randomPort()
+	clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
+	var frames [][]byte
+
+	syn := buildTCPSegment(srcPort, targetPort, 0x02, clientSeq, 0, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
+	clientSeq++
+	synAck := buildTCPSegment(targetPort, srcPort, 0x12, serverSeq, clientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck)))
+	serverSeq++
+	ack := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
+
+	clientHello := buildTLSClientHelloSNI(sni)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, targetPort, 0x18, clientSeq, serverSeq, clientHello))))
+	clientSeq += uint32(len(clientHello))
+
+	serverHello := buildMinimalTLSServerHello()
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(targetPort, srcPort, 0x18, serverSeq, clientSeq, serverHello))))
+	serverSeq += uint32(len(serverHello))
+
+	midAck := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, midAck)))
+
+	if len(requestPayload) > 0 {
+		appData := buildTLSApplicationData(requestPayload)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, targetPort, 0x18, clientSeq, serverSeq, appData))))
+		clientSeq += uint32(len(appData))
+	}
+	if len(responsePayload) > 0 {
+		appData := buildTLSApplicationData(responsePayload)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(targetPort, srcPort, 0x18, serverSeq, clientSeq, appData))))
+		serverSeq += uint32(len(appData))
+	}
+
+	finalAck := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, finalAck)))
+
+	path, err := writePCAPFile(runID, attackName, frames, defaultDuration)
+	logInfo("Return from PCAPTLSExchange frames=%d path=%s", len(frames), path)
+	return path, err
+}
