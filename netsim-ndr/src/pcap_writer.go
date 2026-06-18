@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/rand"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -696,8 +697,8 @@ func PCAPARPSweep(runID, attackerIP string, subnet string, count int) (string, e
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAPARPSweep attacker=%s subnet=%s count=%d", attackerIP, subnet, count)
 
-	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, 0x99}
-	broadcastMAC := [6]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	broadcastMAC := [6]byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
 	var frames [][]byte
 
 	parts := strings.Split(subnet, ".")
@@ -708,19 +709,21 @@ func PCAPARPSweep(runID, attackerIP string, subnet string, count int) (string, e
 
 	for idx := 1; idx <= count; idx++ {
 		targetIP := fmt.Sprintf("%s.%d", prefix, idx)
-		// ARP request payload: who-has targetIP tell attackerIP
-		arp := buildARPRequest(srcMAC, attackerIP, targetIP)
-		// ARP uses EtherType 0x0806
-		frame := make([]byte, 14+len(arp))
-		copy(frame[0:6], broadcastMAC[:])
-		copy(frame[6:12], srcMAC[:])
-		frame[12] = 0x08
-		frame[13] = 0x06
-		copy(frame[14:], arp)
+
+		// Build ARP request payload (28 bytes)
+		arpReq := buildARPRequest(srcMAC, attackerIP, targetIP)
+
+		// Build complete Ethernet + ARP frame
+		frame := make([]byte, 14+len(arpReq))
+		copy(frame[0:6], broadcastMAC[:])                // Destination MAC (broadcast)
+		copy(frame[6:12], srcMAC[:])                     // Source MAC
+		binary.BigEndian.PutUint16(frame[12:14], 0x0806) // EtherType: ARP
+		copy(frame[14:], arpReq)                         // ARP payload
+
 		frames = append(frames, frame)
 	}
 
-	path, err := writePCAPFile(runID, "arp_sweep", frames, defaultDuration)
+	path, err := writePCAPFile(runID, "arp_scan", frames, defaultDuration)
 	logInfo("Return from PCAPARPSweep frames=%d path=%s", len(frames), path)
 	return path, err
 }
@@ -728,35 +731,29 @@ func PCAPARPSweep(runID, attackerIP string, subnet string, count int) (string, e
 // buildARPRequest builds a 28-byte ARP request payload.
 func buildARPRequest(srcMAC [6]byte, senderIP, targetIP string) []byte {
 	buf := make([]byte, 28)
-	buf[0] = 0x00
-	buf[1] = 0x01 // Hardware type: Ethernet
-	buf[2] = 0x08
-	buf[3] = 0x00 // Protocol type: IPv4
-	buf[4] = 0x06 // Hardware address length
-	buf[5] = 0x04 // Protocol address length
-	buf[6] = 0x00
-	buf[7] = 0x01 // Operation: request
-	copy(buf[8:14], srcMAC[:])
-	binary.BigEndian.PutUint32(buf[14:18], ipToUint32(senderIP))
-	// Target MAC: all zeros (unknown)
-	binary.BigEndian.PutUint32(buf[24:28], ipToUint32(targetIP))
+	binary.BigEndian.PutUint16(buf[0:2], 0x0001)  // Hardware type: Ethernet
+	binary.BigEndian.PutUint16(buf[2:4], 0x0800)  // Protocol type: IPv4
+	buf[4] = 6                                    // Hardware address length
+	buf[5] = 4                                    // Protocol address length
+	binary.BigEndian.PutUint16(buf[6:8], 0x0001)  // Operation: request
+	copy(buf[8:14], srcMAC[:])                    // Sender hardware address
+	copy(buf[14:18], net.ParseIP(senderIP).To4()) // Sender protocol address
+	// Target hardware address (bytes 18:24) = zeros (unknown in request)
+	copy(buf[24:28], net.ParseIP(targetIP).To4()) // Target protocol address
 	return buf
 }
 
 func buildARPReply(srcMAC, targetMAC [6]byte, senderIP, targetIP string) []byte {
 	buf := make([]byte, 28)
-	buf[0] = 0x00
-	buf[1] = 0x01 // Hardware type: Ethernet
-	buf[2] = 0x08
-	buf[3] = 0x00 // Protocol type: IPv4
-	buf[4] = 0x06 // Hardware address length
-	buf[5] = 0x04 // Protocol address length
-	buf[6] = 0x00
-	buf[7] = 0x02 // Operation: request
-	copy(buf[8:14], targetMAC[:])
-	binary.BigEndian.PutUint32(buf[14:18], ipToUint32(senderIP))
-	copy(buf[18:24], srcMAC[:]) // Target MAC
-	binary.BigEndian.PutUint32(buf[24:28], ipToUint32(targetIP))
+	binary.BigEndian.PutUint16(buf[0:2], 0x0001)  // Hardware type: Ethernet
+	binary.BigEndian.PutUint16(buf[2:4], 0x0800)  // Protocol type: IPv4
+	buf[4] = 6                                    // Hardware address length
+	buf[5] = 4                                    // Protocol address length
+	binary.BigEndian.PutUint16(buf[6:8], 0x0002)  // Operation: reply
+	copy(buf[8:14], srcMAC[:])                    // Sender hardware address
+	copy(buf[14:18], net.ParseIP(senderIP).To4()) // Sender protocol address
+	copy(buf[18:24], targetMAC[:])                // Target hardware address
+	copy(buf[24:28], net.ParseIP(targetIP).To4()) // Target protocol address
 	return buf
 }
 

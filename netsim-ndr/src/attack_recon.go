@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log"
@@ -643,8 +644,13 @@ func runNetDiscover(req AttackRequest) (*AttackResult, error) {
 			continue
 		}
 		targets := get_IPs_from_subnet(targetIP)
-		// Syslogs
+
+		// PCAP: ARP sweep
+		srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+		broadcastMAC := [6]byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
 		var frames [][]byte
+
+		// Syslogs + PCAP frames
 		for _, ip := range targets {
 			msg := fmt.Sprintf("ARP request: who-has %s tell %s", ip, req.AttackerIP)
 			ev := sendSyslog(sw, msg, 7)
@@ -661,21 +667,32 @@ func runNetDiscover(req AttackRequest) (*AttackResult, error) {
 				flowID, _ := recordRunEvent(req.RunID, "sflow", sw.Name, req.AttackerIP, ip, "ARP", arpFlows)
 				result.EventIDs = append(result.EventIDs, flowID)
 			}
-			// PCAP
-			srcMAC := parseMACAddress(req.AttackerIP)
-			ARPRequest := buildARPRequest(srcMAC, req.AttackerIP, ip)
-			broadMAC := parseMACAddress("FF:FF:FF:FF:FF:FF")
-			requestframe := buildEthernetFrameARP(srcMAC, broadMAC, ARPRequest, 0x0806)
-			frames = append(frames, requestframe)
+
+			// ARP Request frame
+			arpReq := buildARPRequest(srcMAC, req.AttackerIP, ip)
+			frame := make([]byte, 14+len(arpReq))
+			copy(frame[0:6], broadcastMAC[:])
+			copy(frame[6:12], srcMAC[:])
+			binary.BigEndian.PutUint16(frame[12:14], 0x0806)
+			copy(frame[14:], arpReq)
+			frames = append(frames, frame)
+
+			// ARP Reply frame (if target exists)
 			dev, res := getDeviceByIP(ip)
 			if res {
 				targetMAC := parseMACAddress(dev.MACAddress)
-				ARPReply := buildARPReply(srcMAC, targetMAC, req.AttackerIP, ip)
-				requestframe := buildEthernetFrameARP(targetMAC, srcMAC, ARPReply, 0x0806)
-				frames = append(frames, requestframe)
+				arpReply := buildARPReply(srcMAC, targetMAC, ip, req.AttackerIP)
+				frame := make([]byte, 14+len(arpReply))
+				copy(frame[0:6], srcMAC[:])
+				copy(frame[6:12], targetMAC[:])
+				binary.BigEndian.PutUint16(frame[12:14], 0x0806)
+				copy(frame[14:], arpReply)
+				frames = append(frames, frame)
 			}
 		}
-		path, _ := writePCAPFile(req.RunID, "ARP_scan", frames, defaultDuration)
+
+		// Write PCAP after all frames collected
+		path, _ := writePCAPFile(req.RunID, "arp_scan", frames, defaultDuration)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
