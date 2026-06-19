@@ -79,6 +79,9 @@ func startNetSimServer() {
 	if err := initPCAPWriter(); err != nil {
 		logWarn("startNetSimServer pcap writer: %v", err)
 	}
+	if err := initLogWriter(); err != nil {
+		logWarn("startNetSimServer log writer: %v", err)
+	}
 
 	// 7b. Initialise real packet sender (Option A — on-wire connections)
 	initRealPacketSender()

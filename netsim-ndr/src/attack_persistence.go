@@ -41,13 +41,10 @@ func runIPFragmentation(req AttackRequest) (*AttackResult, error) {
 	for _, targetIP := range req.TargetIPs {
 		flows = append(flows, FlowRecord{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: uint16(randomPort()), DstPort: uint16(randomPort()), Protocol: 6, Bytes: 6000, Packets: uint32(1500 / fragSize), TCPFlags: 0x02, StartTime: time.Now().Add(-30 * time.Second), EndTime: time.Now()})
 	}
-	if fw != nil && fw.Telemetry.Netflow {
-		ExportNetflowV9(fw.IPAddress, flows)
-	}
-	result.FlowCount += len(flows)
 	if len(req.TargetIPs) > 0 {
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, req.TargetIPs[0], "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, req.TargetIPs[0], "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 	}
 	for _, targetIP := range req.TargetIPs {
 		pcapPath, pcapErr := PCAPIPFragmentation(req.RunID, req.AttackerIP, targetIP, uint16(randomPort()), fragSize)
@@ -87,12 +84,9 @@ func runProtocolTunnel(req AttackRequest) (*AttackResult, error) {
 		dstPort = 80
 	}
 	flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: c2IP, SrcPort: uint16(randomPort()), DstPort: dstPort, Protocol: proto, Bytes: 2097152, Packets: 4096, StartTime: time.Now().Add(-5 * time.Minute), EndTime: time.Now()}}
-	if fw != nil && fw.Telemetry.Netflow {
-		ExportNetflowV9(fw.IPAddress, flows)
-	}
-	result.FlowCount++
-	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, c2IP, tunnelProto, flows)
-	result.EventIDs = append(result.EventIDs, flowID)
+	fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, c2IP, tunnelProto, flows)
+	result.FlowCount += fc
+	result.EventIDs = append(result.EventIDs, fids...)
 	switch tunnelProto {
 	case "HTTP":
 		reqPayload := []byte(fmt.Sprintf("POST /api/sync HTTP/1.1\r\nHost: cdn.example.net\r\nContent-Length: 512\r\n\r\n%s", randomHexString(512)))
@@ -148,13 +142,10 @@ func runLowSlowScan(req AttackRequest) (*AttackResult, error) {
 			flows = append(flows, FlowRecord{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: uint16(randomPort()), DstPort: port, Protocol: 6, Bytes: 60, Packets: 1, TCPFlags: 0x02, StartTime: time.Now().Add(-time.Hour + offset), EndTime: time.Now().Add(-time.Hour + offset + time.Second)})
 		}
 	}
-	if fw != nil && fw.Telemetry.Netflow {
-		ExportNetflowV9(fw.IPAddress, flows)
-	}
-	result.FlowCount += len(flows)
 	if len(req.TargetIPs) > 0 {
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, req.TargetIPs[0], "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, req.TargetIPs[0], "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 	}
 	for _, targetIP := range req.TargetIPs {
 		for _, port := range ports {
@@ -203,13 +194,10 @@ func runDecoyScan(req AttackRequest) (*AttackResult, error) {
 			flows = append(flows, FlowRecord{SrcIP: srcIP, DstIP: targetIP, SrcPort: uint16(randomPort()), DstPort: uint16(randomPort()), Protocol: 6, Bytes: 60, Packets: 1, TCPFlags: 0x02, StartTime: time.Now().Add(-10 * time.Second), EndTime: time.Now()})
 		}
 	}
-	if fw != nil && fw.Telemetry.Netflow {
-		ExportNetflowV9(fw.IPAddress, flows)
-	}
-	result.FlowCount += len(flows)
 	if len(req.TargetIPs) > 0 {
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, req.TargetIPs[0], "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, req.TargetIPs[0], "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 	}
 	for _, srcIP := range allSources {
 		for _, targetIP := range req.TargetIPs {

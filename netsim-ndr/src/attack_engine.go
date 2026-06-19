@@ -6,6 +6,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,11 +15,11 @@ import (
 
 // AttackDefinition describes a single attack capability.
 type AttackDefinition struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Category    string   `json:"category"`
-	MitreIDs    []string `json:"mitre_ids"`
-	Description string   `json:"description"`
+	ID          string        `json:"id"`
+	Name        string        `json:"name"`
+	Category    string        `json:"category"`
+	MitreIDs    []string      `json:"mitre_ids"`
+	Description string        `json:"description"`
 	Parameters  []AttackParam `json:"parameters"`
 }
 
@@ -42,17 +43,17 @@ type AttackRequest struct {
 
 // AttackResult summarises what happened after an attack executes.
 type AttackResult struct {
-	AttackID       string        `json:"attack_id"`
-	RunID          string        `json:"run_id"`
-	AttackerIP     string        `json:"attacker_ip"`
-	TargetIPs      []string      `json:"target_ips"`
-	StartedAt      time.Time     `json:"started_at"`
-	CompletedAt    time.Time     `json:"completed_at"`
-	SyslogCount    int           `json:"syslog_count"`
-	FlowCount      int           `json:"flow_count"`
-	PCAPFiles      []string      `json:"pcap_files"`
-	EventIDs       []int64       `json:"event_ids"`
-	Error          string        `json:"error,omitempty"`
+	AttackID    string    `json:"attack_id"`
+	RunID       string    `json:"run_id"`
+	AttackerIP  string    `json:"attacker_ip"`
+	TargetIPs   []string  `json:"target_ips"`
+	StartedAt   time.Time `json:"started_at"`
+	CompletedAt time.Time `json:"completed_at"`
+	SyslogCount int       `json:"syslog_count"`
+	FlowCount   int       `json:"flow_count"`
+	PCAPFiles   []string  `json:"pcap_files"`
+	EventIDs    []int64   `json:"event_ids"`
+	Error       string    `json:"error,omitempty"`
 }
 
 // GlobalActiveAttacks tracks currently running attack goroutines by runID.
@@ -86,7 +87,7 @@ func executeAttack(req AttackRequest) (*AttackResult, error) {
 		req.RunID = uuid.New().String()
 		result.RunID = req.RunID
 	}
-	
+
 	var err error
 	switch req.AttackID {
 	case "recon-portscan":
@@ -305,7 +306,36 @@ func recordRunEvent(runID, eventType, sourceDevice, srcIP, dstIP, protocol strin
 		return 0, err
 	}
 	id, _ := res.LastInsertId()
+
+	logLine := summarizeEventForLog(eventType, sourceDevice, srcIP, dstIP, protocol, payload)
+	writeLogLine(runID, eventType, logLine)
+
 	return id, nil
+}
+
+// summarizeEventForLog builds a clean, single-line, human-readable
+// representation of an event for the plain-text run log files. Where the
+// payload already carries a natural text form (e.g. a syslog event's raw
+// RFC5424 line), that's used directly; otherwise a compact summary is
+// built from the available fields.
+func summarizeEventForLog(eventType, sourceDevice, srcIP, dstIP, protocol string, payload interface{}) string {
+	switch eventType {
+	case "syslog":
+		if ev, ok := payload.(*SyslogEvent); ok {
+			return ev.Raw
+		}
+	case "netflow", "sflow", "ipfix":
+		if flows, ok := payload.([]FlowRecord); ok {
+			var parts []string
+			for _, f := range flows {
+				parts = append(parts, fmt.Sprintf("src=%s:%d dst=%s:%d proto=%d bytes=%d packets=%d",
+					f.SrcIP, f.SrcPort, f.DstIP, f.DstPort, f.Protocol, f.Bytes, f.Packets))
+			}
+			return fmt.Sprintf("%s %s", eventType, strings.Join(parts, " | "))
+		}
+	}
+	// Fallback for any payload shape we don't special-case above.
+	return fmt.Sprintf("%s src_device=%s src_ip=%s dst_ip=%s proto=%s", eventType, sourceDevice, srcIP, dstIP, protocol)
 }
 
 // buildAttackRegistry returns the full catalog of 87 network-layer attack modules.

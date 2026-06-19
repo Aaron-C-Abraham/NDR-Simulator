@@ -446,3 +446,35 @@ func publishFlowsForDevice(dev *Device, flows []FlowRecord) {
 		ExportSflow(dev, flows)
 	}
 }
+
+// exportFlowsAllFormats sends the same flow data out as NetFlow v9, sFlow,
+// and IPFIX (when the device's telemetry settings enable each), and
+// records one run_event per format so every attack using this helper gets
+// a log entry in netflow.log, sflow.log, and ipfix.log.
+func exportFlowsAllFormats(runID string, fw *Device, sourceLabel, attackerIP, targetIP, protocol string, flows []FlowRecord) (flowCount int, eventIDs []int64) {
+	defer panicHandler(traceFunc(), nil)
+
+	if fw == nil {
+		return 0, nil
+	}
+
+	if fw.Telemetry.Netflow {
+		ExportNetflowV9(fw.IPAddress, flows)
+		id, _ := recordRunEvent(runID, "netflow", sourceLabel, attackerIP, targetIP, protocol, flows)
+		eventIDs = append(eventIDs, id)
+	}
+	if fw.Telemetry.Sflow {
+		ExportSflow(fw, flows)
+		id, _ := recordRunEvent(runID, "sflow", sourceLabel, attackerIP, targetIP, protocol, flows)
+		eventIDs = append(eventIDs, id)
+	}
+	// IPFIX: no per-device telemetry flag exists yet for it, so it's
+	// exported alongside netflow whenever netflow is enabled.
+	if fw.Telemetry.Netflow {
+		ExportIPFIX(fw.IPAddress, flows)
+		id, _ := recordRunEvent(runID, "ipfix", sourceLabel, attackerIP, targetIP, protocol, flows)
+		eventIDs = append(eventIDs, id)
+	}
+
+	return len(flows), eventIDs
+}

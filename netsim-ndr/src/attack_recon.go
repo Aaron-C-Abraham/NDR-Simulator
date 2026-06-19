@@ -29,8 +29,6 @@ func runPortScan(req AttackRequest) (*AttackResult, error) {
 	portRange, _ := req.Params["port_range"]
 	low_up := strings.Split(portRange, "-")
 	if len(low_up) != 2 {
-		// port_range missing or malformed (e.g. when a scenario launches this
-		// attack without specifying it) — fall back to a sensible default range.
 		low_up = []string{"1", "1024"}
 	}
 	lower_range, err := strconv.Atoi(strings.TrimSpace(low_up[0]))
@@ -67,7 +65,6 @@ func runPortScan(req AttackRequest) (*AttackResult, error) {
 		}
 		var wg sync.WaitGroup
 		wg.Add(3)
-		// Syslog
 		go func(result *AttackResult) {
 			defer wg.Done()
 			syslogEvents := SyslogPortScan(attackerDev.IPAddress, targetIP, ports, port_mapping, duration)
@@ -78,20 +75,15 @@ func runPortScan(req AttackRequest) (*AttackResult, error) {
 			}
 		}(result)
 
-		// Flows
 		go func(result *AttackResult) {
 			defer wg.Done()
 			flows := FlowScan(attackerDev.IPAddress, targetIP, ports, duration)
-			result.FlowCount += len(flows)
 			fw := getFirewall()
-			if fw != nil && fw.Telemetry.Netflow {
-				ExportNetflowV9(fw.IPAddress, flows)
-			}
-			flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", attackerDev.IPAddress, targetIP, "TCP", flows)
-			result.EventIDs = append(result.EventIDs, flowID)
+			fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", attackerDev.IPAddress, targetIP, "TCP", flows)
+			result.FlowCount += fc
+			result.EventIDs = append(result.EventIDs, fids...)
 		}(result)
 
-		// PCAP (Option B — always generate)
 		go func(result *AttackResult) {
 			defer wg.Done()
 			_, path, err := PCAPPortScan(attackerDev, targetDev, ports, port_mapping)
@@ -100,9 +92,6 @@ func runPortScan(req AttackRequest) (*AttackResult, error) {
 			}
 		}(result)
 		wg.Wait()
-
-		// Real packets (Option A — on-wire SYN scan if enabled)
-		//go sendRealPortScanTCP(targetIP, ports)
 
 	}
 
@@ -125,28 +114,22 @@ func runOSFingerprint(req AttackRequest) (*AttackResult, error) {
 	for _, targetIP := range req.TargetIPs {
 		targetDev, _ := getDeviceByIP(targetIP)
 
-		// Syslog: firewall sees unusual TCP flag combinations
 		var message []string = []string{
-			// TCP probes
 			fmt.Sprintf("connection from %s to %s port 80 TCP SYN ACCEPTED", req.AttackerIP, targetIP),
 			fmt.Sprintf("connection from %s to %s port 80 TCP SYN ACCEPTED", req.AttackerIP, targetIP),
 			fmt.Sprintf("connection from %s to %s port 80 TCP SYN ACCEPTED", req.AttackerIP, targetIP),
 			fmt.Sprintf("connection from %s to %s port 80 TCP SYN ACCEPTED", req.AttackerIP, targetIP),
 			fmt.Sprintf("connection from %s to %s port 80 TCP SYN ACCEPTED", req.AttackerIP, targetIP),
 			fmt.Sprintf("connection from %s to %s port 80 TCP SYN ACCEPTED", req.AttackerIP, targetIP),
-			// ICMP Echo Requests
 			fmt.Sprintf("ICMP echo request from %s to %s port 40 of payload 10B", req.AttackerIP, targetIP),
 			fmt.Sprintf("ICMP echo request from %s to %s port 40 of payload 30B", req.AttackerIP, targetIP),
-			// EWN+CWR
 			fmt.Sprintf("PROBE detected src=%s dst=%s: TCP SYN+EWN+CWR flags (OS fingerprint probe)", req.AttackerIP, targetIP),
-			// T2-T7 probes
 			fmt.Sprintf("PROBE detected src=%s dst=%s: TCP NULL flag and DF bit set (OS fingerprint probe)", req.AttackerIP, targetIP),
 			fmt.Sprintf("PROBE detected src=%s dst=%s: TCP SYN+FIN+URG+PSH flags and DF bit not set (OS fingerprint probe)", req.AttackerIP, targetIP),
 			fmt.Sprintf("PROBE detected src=%s dst=%s: TCP ACK flag and DF bit set on open port with no session (OS fingerprint probe)", req.AttackerIP, targetIP),
 			fmt.Sprintf("connection from %s to %s port 60 TCP SYN DENIED", req.AttackerIP, targetIP),
 			fmt.Sprintf("PROBE detected src=%s dst=%s: TCP ACK flag on closed port 60 (OS fingerprint probe)", req.AttackerIP, targetIP),
 			fmt.Sprintf("PROBE detected src=%s dst=%s: TCP FIN+URG+PSH flags with DF bit set (OS fingerprint probe)", req.AttackerIP, targetIP),
-			// UDP probe
 			fmt.Sprintf("PROBE detected src=%s dst=%s: UDP probe with payload size 150MB to closed port 60 (OS fingerprint probe)", req.AttackerIP, targetIP),
 		}
 		severity_score := []int{5, 5, 5, 5, 5, 5, 4, 4, 3, 3, 2, 3, 5, 3, 2, 4}
@@ -159,39 +142,28 @@ func runOSFingerprint(req AttackRequest) (*AttackResult, error) {
 			}
 		}
 
-		// Flows: small high-variety packets
 		probeFlows := []FlowRecord{
-			//TCP probes
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 60, Packets: 1, StartTime: time.Now(), EndTime: time.Now().Add(100 * time.Millisecond), TCPFlags: 0x02},
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 60, Packets: 1, StartTime: time.Now(), EndTime: time.Now().Add(100 * time.Millisecond), TCPFlags: 0x02},
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 60, Packets: 1, StartTime: time.Now(), EndTime: time.Now().Add(100 * time.Millisecond), TCPFlags: 0x02},
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 60, Packets: 1, StartTime: time.Now(), EndTime: time.Now().Add(100 * time.Millisecond), TCPFlags: 0x02},
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 60, Packets: 1, StartTime: time.Now(), EndTime: time.Now().Add(100 * time.Millisecond), TCPFlags: 0x02},
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 60, Packets: 1, StartTime: time.Now(), EndTime: time.Now().Add(100 * time.Millisecond), TCPFlags: 0x02},
-			// ICMP probes
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 1, Bytes: 60, Packets: 1, StartTime: time.Now(), EndTime: time.Now().Add(time.Millisecond), TCPFlags: 0x00},
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 1, Bytes: 60, Packets: 1, StartTime: time.Now(), EndTime: time.Now().Add(time.Millisecond), TCPFlags: 0x00},
-			// ECN+CWR
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 60, Packets: 1, StartTime: time.Now(), EndTime: time.Now().Add(time.Millisecond), TCPFlags: 0xC2},
-			// T2-T7 probes
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 60, Packets: 1, StartTime: time.Now(), EndTime: time.Now().Add(time.Millisecond), TCPFlags: 0x00},
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 60, Packets: 1, StartTime: time.Now(), EndTime: time.Now().Add(time.Millisecond), TCPFlags: 0x31},
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 60, Packets: 1, StartTime: time.Now(), EndTime: time.Now().Add(time.Millisecond), TCPFlags: 0x10},
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 60, Packets: 1, StartTime: time.Now(), EndTime: time.Now().Add(time.Millisecond), TCPFlags: 0x02},
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 60, Packets: 1, StartTime: time.Now(), EndTime: time.Now().Add(time.Millisecond), TCPFlags: 0x10},
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 60, Packets: 1, StartTime: time.Now(), EndTime: time.Now().Add(time.Millisecond), TCPFlags: 0x29},
-			// UDP probe
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 17, Bytes: 60, Packets: 1, StartTime: time.Now(), EndTime: time.Now().Add(time.Millisecond), TCPFlags: 0x00},
 		}
-		if fw != nil {
-			ExportNetflowV9(fw.IPAddress, probeFlows)
-		}
-		result.FlowCount += len(probeFlows)
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", probeFlows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", probeFlows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 
-		// PCAP: nmap-spec OS fingerprint probes (SEQ/OPS/WIN/T1, IE, ECN, T2-T7, U1)
-		// per https://nmap.org/book/osdetect-methods.html
 		if targetDev != nil {
 			srcMAC := parseMACAddress(attackerDev.MACAddress)
 			dstMAC := parseMACAddress(targetDev.MACAddress)
@@ -220,7 +192,6 @@ func runOSFingerprint(req AttackRequest) (*AttackResult, error) {
 			}
 		}
 
-		// Real packets (Option A)
 		go sendRealServiceProbe(targetIP, 80)
 	}
 
@@ -251,7 +222,6 @@ func runServiceEnum(req AttackRequest) (*AttackResult, error) {
 			continue
 		}
 		src_port := randomPort()
-		// SMB NULL session enumeration syslog
 		msgs := []string{
 			fmt.Sprintf("SMB Session started from %s to %s", req.AttackerIP, targetIP),
 			fmt.Sprintf("SMB NULL connection established between %s and %s", req.AttackerIP, targetIP),
@@ -273,66 +243,45 @@ func runServiceEnum(req AttackRequest) (*AttackResult, error) {
 
 		}
 
-		// Flows
 		enumFlows := []FlowRecord{
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: src_port, DstPort: 445, Protocol: 6, Bytes: 5000, Packets: 12, StartTime: time.Now(), EndTime: time.Now().Add(5 * time.Second)},
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: src_port, DstPort: 161, Protocol: 17, Bytes: 500, Packets: 2, StartTime: time.Now(), EndTime: time.Now().Add(time.Second)},
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: src_port, DstPort: 161, Protocol: 17, Bytes: 500, Packets: 2, StartTime: time.Now(), EndTime: time.Now().Add(time.Second)},
 		}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, enumFlows)
-		}
-		result.FlowCount += len(enumFlows)
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "UDP+TCP", enumFlows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "UDP+TCP", enumFlows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 
 		seq := rand.Uint32()
 		srcMAC := parseMACAddress(attackerDev.MACAddress)
 		dstMAC := parseMACAddress(targetDev.MACAddress)
 		var frames [][]byte
-		// SMB enumeration
-		// SYN
 		frames = append(frames, create_TCP_frame(src_port, 445, 0x02, seq, 0, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
-		// SYN-ACK
 		frames = append(frames, create_TCP_frame(445, src_port, 0x12, 0, seq+1, targetIP, req.AttackerIP, dstMAC, srcMAC, nil))
-		// ACK
 		frames = append(frames, create_TCP_frame(src_port, 445, 0x02, seq+1, 1, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
-		// SMB client start session
 		frames = append(frames, create_TCP_frame(src_port, 445, 0x12, seq+2, 1, req.AttackerIP, targetIP, srcMAC, dstMAC, SMB2_Negotiate_request))
-		// SMB server response session
 		frames = append(frames, create_TCP_frame(445, src_port, 0x12, 1, seq+3, targetIP, req.AttackerIP, dstMAC, srcMAC, SMB2_Negotiate_Response))
-		// Null Session client
 		frames = append(frames, create_TCP_frame(src_port, 445, 0x12, seq+3, 2, req.AttackerIP, targetIP, srcMAC, dstMAC, SMB2_Session_Setup_Request_Null))
-		// Null Session server
 		frames = append(frames, create_TCP_frame(445, src_port, 0x12, 2, seq+4, targetIP, req.AttackerIP, dstMAC, srcMAC, SMB2_Session_Setup_Response_Null))
-		// IPC$ connection client
 		frames = append(frames, create_TCP_frame(src_port, 445, 0x12, seq+4, 3, req.AttackerIP, targetIP, srcMAC, dstMAC, SMB2_TreeConnect_Request_IPC))
-		// IPC$ connection server
 		frames = append(frames, create_TCP_frame(445, src_port, 0x12, 3, seq+5, targetIP, req.AttackerIP, dstMAC, srcMAC, SMB2_TreeConnect_Response_IPC))
-		// IOCTL connection client
 		frames = append(frames, create_TCP_frame(src_port, 445, 0x12, seq+5, 4, req.AttackerIP, targetIP, srcMAC, dstMAC, SMB2_IOCTL_Request_NetShareEnumAll))
-		// IOCTL connection server
 		frames = append(frames, create_TCP_frame(445, src_port, 0x12, 4, seq+6, targetIP, req.AttackerIP, dstMAC, srcMAC, SMB2_IOCTL_Response_NetShareEnumAll))
-		// ACK
 		frames = append(frames, create_TCP_frame(src_port, 445, 0x02, seq+6, 5, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
 
-		// SNMP query
 		SNMP_query := buildUDPDatagram(src_port, 161, SNMP_GetRequest)
 		ipPkt_q := buildIPv4Packet(req.AttackerIP, targetIP, 17, SNMP_query)
 		frame_q := buildEthernetFrame(srcMAC, dstMAC, ipPkt_q)
 		frames = append(frames, frame_q)
-		// SNMP response
 		SNMP_response := buildUDPDatagram(161, src_port, SNMP_GetRequest)
 		ipPkt_r := buildIPv4Packet(targetIP, req.AttackerIP, 17, SNMP_response)
 		frame_r := buildEthernetFrame(dstMAC, srcMAC, ipPkt_r)
 		frames = append(frames, frame_r)
 
-		// NetBIOS query
 		NetBIOS_query := buildUDPDatagram(src_port, 137, NBNS_Name_Query_Request)
 		ipPkt_nq := buildIPv4Packet(req.AttackerIP, targetIP, 137, NetBIOS_query)
 		frame_nq := buildEthernetFrame(srcMAC, dstMAC, ipPkt_nq)
 		frames = append(frames, frame_nq)
-		// NetBIOS response
 		NetBIOS_response := buildUDPDatagram(137, src_port, Get_NBNS_Response(targetIP))
 		ipPkt_nr := buildIPv4Packet(targetIP, req.AttackerIP, 137, NetBIOS_response)
 		frame_nr := buildEthernetFrame(dstMAC, srcMAC, ipPkt_nr)
@@ -350,23 +299,19 @@ func runServiceEnum(req AttackRequest) (*AttackResult, error) {
 
 func EncodeDomainName(domain string) ([]byte, error) {
 	var buf bytes.Buffer
-	// Remove trailing dot if present to avoid empty label at end
 	domain = strings.TrimSuffix(domain, ".")
 	parts := strings.Split(domain, ".")
 	for _, label := range parts {
 		lenLabel := len(label)
 		if lenLabel == 0 {
-			continue // Skip empty parts (e.g. double dots)
+			continue
 		}
 		if lenLabel > 63 {
 			return nil, errors.New("label too long: max 63 chars")
 		}
-		// 1. Write Length Byte
 		buf.WriteByte(byte(lenLabel))
-		// 2. Write Label Bytes
 		buf.WriteString(label)
 	}
-	// 3. Write Root Terminator
 	buf.WriteByte(0x00)
 	return buf.Bytes(), nil
 }
@@ -390,10 +335,6 @@ func encodable_domain(domain string) [][]byte {
 	return results
 }
 
-// prefixDNSTCPLength prepends the 2-byte big-endian length DNS-over-TCP
-// requires before the message. Without this, tcpdump/Wireshark misreads
-// the first 2 bytes of the DNS message itself (the transaction ID) as the
-// length field, producing "[prefix length(...) != length(...)] (invalid)".
 func prefixDNSTCPLength(msg []byte) []byte {
 	length := uint16(len(msg))
 	return append([]byte{byte(length >> 8), byte(length)}, msg...)
@@ -401,16 +342,12 @@ func prefixDNSTCPLength(msg []byte) []byte {
 func buildAXFRRequestPayload(domain string) []byte {
 
 	payload := []byte{
-		0x4A, 0x2B, // # ID: Transaction ID (0x4A2B)
-		0x01, 0x00, // # Flags: 0x0100 (QR=0 Query, Opcode=0, RD=1)
-		0x00, 0x01, // # QDCOUNT: 1 Question
-		0x00, 0x00, // # ANCOUNT: 0 Answers
-		0x00, 0x00, // # NSCOUNT: 0 Authority
-		0x00, 0x00, // # ARCOUNT: 0 Additional
-		// # QNAME Length: 7 bytes
-		// # QNAME: "example" (ASCII)
-		//# QNAME Length: 3 bytes
-		//# QNAME: "com" (ASCII)
+		0x4A, 0x2B,
+		0x01, 0x00,
+		0x00, 0x01,
+		0x00, 0x00,
+		0x00, 0x00,
+		0x00, 0x00,
 	}
 	domain_encoded := encodable_domain(domain)
 	for _, encoding := range domain_encoded {
@@ -420,9 +357,9 @@ func buildAXFRRequestPayload(domain string) []byte {
 		}
 	}
 	rest_of_payload := []byte{
-		0x00,       //# QNAME End: Null terminator
-		0x00, 0xFC, //# QTYPE: 252 (AXFR)
-		0x00, 0x01, //# QCLASS: 1 (IN),
+		0x00,
+		0x00, 0xFC,
+		0x00, 0x01,
 	}
 	for _, bytecode := range rest_of_payload {
 		payload = append(payload, bytecode)
@@ -432,12 +369,12 @@ func buildAXFRRequestPayload(domain string) []byte {
 
 func buildAXFRResponsePayload(domain string) []byte {
 	payload := []byte{
-		0x4A, 0x2B, // # ID: Transaction ID (0x4A2B)
-		0x81, 0x00, // # Flags: 0x0100 (QR=0 Query, Opcode=0, RD=1)
-		0x00, 0x01, // # QDCOUNT: 1 Question
-		0x00, 0x01, // # ANCOUNT: 0 Answers
-		0x00, 0x00, // # NSCOUNT: 0 Authority
-		0x00, 0x00, // # ARCOUNT: 0 Additional
+		0x4A, 0x2B,
+		0x81, 0x00,
+		0x00, 0x01,
+		0x00, 0x01,
+		0x00, 0x00,
+		0x00, 0x00,
 	}
 	domain_encoded := encodable_domain(domain)
 	for _, encoding := range domain_encoded {
@@ -447,27 +384,25 @@ func buildAXFRResponsePayload(domain string) []byte {
 		}
 	}
 	rest_of_payload := []byte{
-		0x00,       //# QNAME End: Null terminator
-		0x00, 0xFC, //# QTYPE: 252 (AXFR)
-		0x00, 0x01, //# QCLASS: 1 (IN),
-		// # --- Answer Section (SOA Record) ---
-		0xC0, 0x0C, //# NAME: Pointer to offset 12 ("example.com")
-		0x00, 0x06, //# TYPE: 6 (SOA)
-		0x00, 0x01, //# CLASS: 1 (IN)
-		0x00, 0x00, 0x0E, 0x10, //# TTL: 3600 seconds
-		0x00, 0x3E, //# RDLENGTH: 62 bytes (Size of RDATA)
-		// # --- RDATA (SOA Specifics) ---
-		0x03, 0x6E, 0x73, 0x31, //# MNAME Len + "ns1"
-		0x07, 0x65, 0x78, 0x61, 0x6D, 0x70, 0x6C, 0x65, //# "example"
-		0x03, 0x63, 0x6F, 0x6D, 0x00, //# "com." + Null (Primary NS: ns1.example.com)
-		0x05, 0x61, 0x64, 0x6D, 0x69, 0x6E, //# RNAME Len + "admin"
-		0x07, 0x65, 0x78, 0x61, 0x6D, 0x70, 0x6C, 0x65, //# "example"
-		0x03, 0x63, 0x6F, 0x6D, 0x00, //# "com." + Null (Admin: admin.example.com)
-		0x78, 0x9A, 0x4C, 0x01, //# SERIAL: 2026052601
-		0x00, 0x00, 0x0E, 0x10, //# REFRESH: 3600
-		0x00, 0x00, 0x02, 0x58, //# RETRY: 600
-		0x00, 0x09, 0x3A, 0x80, //# EXPIRE: 604800
-		0x00, 0x00, 0x0E, 0x10, //# MINIMUM: 3600
+		0x00,
+		0x00, 0xFC,
+		0x00, 0x01,
+		0xC0, 0x0C,
+		0x00, 0x06,
+		0x00, 0x01,
+		0x00, 0x00, 0x0E, 0x10,
+		0x00, 0x3E,
+		0x03, 0x6E, 0x73, 0x31,
+		0x07, 0x65, 0x78, 0x61, 0x6D, 0x70, 0x6C, 0x65,
+		0x03, 0x63, 0x6F, 0x6D, 0x00,
+		0x05, 0x61, 0x64, 0x6D, 0x69, 0x6E,
+		0x07, 0x65, 0x78, 0x61, 0x6D, 0x70, 0x6C, 0x65,
+		0x03, 0x63, 0x6F, 0x6D, 0x00,
+		0x78, 0x9A, 0x4C, 0x01,
+		0x00, 0x00, 0x0E, 0x10,
+		0x00, 0x00, 0x02, 0x58,
+		0x00, 0x09, 0x3A, 0x80,
+		0x00, 0x00, 0x0E, 0x10,
 	}
 	for _, bytecode := range rest_of_payload {
 		payload = append(payload, bytecode)
@@ -488,14 +423,12 @@ func runDNSRecon(req AttackRequest) (*AttackResult, error) {
 		return result, fmt.Errorf("no DNS server in topology")
 	}
 	src_port := randomPort()
-	// DNS zone transfer attempt (AXFR)
 	axfrMsg := fmt.Sprintf("client %s#%d: zone transfer 'AXFR' for zone '%s' accepted", req.AttackerIP, src_port, domain)
 	ev := sendSyslog(dnsDev, axfrMsg, 3)
 	result.SyslogCount++
 	eventID, _ := recordRunEvent(req.RunID, "syslog", dnsDev.Name, req.AttackerIP, dnsDev.IPAddress, "TCP", ev)
 	result.EventIDs = append(result.EventIDs, eventID)
 
-	// DNS brute-force subdomains
 	var queries [][]byte
 	var queryPorts []uint16
 	subdomains := []string{"mail", "vpn", "dc", "admin", "dev", "stage", "prod", "backup"}
@@ -514,20 +447,15 @@ func runDNSRecon(req AttackRequest) (*AttackResult, error) {
 	enumFlows := []FlowRecord{
 		{SrcIP: req.AttackerIP, DstIP: dnsDev.IPAddress, SrcPort: src_port, DstPort: 53, Protocol: 6, Bytes: 5000, Packets: 14, StartTime: time.Now(), EndTime: time.Now().Add(5 * time.Second)},
 	}
-	if fw != nil && fw.Telemetry.Netflow {
-		ExportNetflowV9(fw.IPAddress, enumFlows)
-	}
-	result.FlowCount += len(enumFlows)
-	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, dnsDev.IPAddress, "UDP+TCP", enumFlows)
-	result.EventIDs = append(result.EventIDs, flowID)
+	fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, dnsDev.IPAddress, "UDP+TCP", enumFlows)
+	result.FlowCount += fc
+	result.EventIDs = append(result.EventIDs, fids...)
 
-	// PCAP for DNS recon (always generate)
 	{
 		var frames [][]byte
 		srcMAC := parseMACAddress(attackDev.MACAddress)
 		dstMAC := parseMACAddress(dnsDev.MACAddress)
 		seq := rand.Uint32()
-		// TCP Handshake
 		clientSeq := seq
 		serverSeq := uint32(0)
 		frames = append(frames, create_TCP_frame(src_port, 53, 0x02, clientSeq, 0, req.AttackerIP, dnsDev.IPAddress, srcMAC, dstMAC, nil))
@@ -536,19 +464,16 @@ func runDNSRecon(req AttackRequest) (*AttackResult, error) {
 		serverSeq++
 		frames = append(frames, create_TCP_frame(src_port, 53, 0x10, clientSeq, serverSeq, req.AttackerIP, dnsDev.IPAddress, srcMAC, dstMAC, nil))
 
-		// AXFR request
 		axfr := buildAXFRRequestPayload(domain)
 		frames = append(frames, create_TCP_frame(src_port, 53, 0x18, clientSeq, serverSeq, req.AttackerIP, dnsDev.IPAddress, srcMAC, dstMAC, axfr))
 		clientSeq += uint32(len(axfr))
 		frames = append(frames, create_TCP_frame(53, src_port, 0x10, serverSeq, clientSeq, req.AttackerIP, dnsDev.IPAddress, dstMAC, srcMAC, nil))
 
-		// AXFR response
 		response := buildAXFRResponsePayload(domain)
 		frames = append(frames, create_TCP_frame(53, src_port, 0x18, serverSeq, clientSeq, req.AttackerIP, dnsDev.IPAddress, dstMAC, srcMAC, response))
 		serverSeq += uint32(len(response))
 		frames = append(frames, create_TCP_frame(src_port, 53, 0x10, clientSeq, serverSeq, req.AttackerIP, dnsDev.IPAddress, srcMAC, dstMAC, nil))
 
-		// Additional AXFR response segments
 		frames = append(frames, create_TCP_frame(53, src_port, 0x18, serverSeq, clientSeq, req.AttackerIP, dnsDev.IPAddress, dstMAC, srcMAC, AXFRTCPResponse2))
 		serverSeq += uint32(len(AXFRTCPResponse2))
 		frames = append(frames, create_TCP_frame(src_port, 53, 0x10, clientSeq, serverSeq, req.AttackerIP, dnsDev.IPAddress, srcMAC, dstMAC, nil))
@@ -557,7 +482,6 @@ func runDNSRecon(req AttackRequest) (*AttackResult, error) {
 		serverSeq += uint32(len(AXFRTCPResponse3))
 		frames = append(frames, create_TCP_frame(src_port, 53, 0x10, clientSeq, serverSeq, req.AttackerIP, dnsDev.IPAddress, srcMAC, dstMAC, nil))
 
-		// Connection teardown
 		frames = append(frames, create_TCP_frame(src_port, 53, 0x01, clientSeq, serverSeq, req.AttackerIP, dnsDev.IPAddress, srcMAC, dstMAC, nil))
 		clientSeq++
 		frames = append(frames, create_TCP_frame(53, src_port, 0x10, serverSeq, clientSeq, req.AttackerIP, dnsDev.IPAddress, dstMAC, srcMAC, nil))
@@ -574,7 +498,6 @@ func runDNSRecon(req AttackRequest) (*AttackResult, error) {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
 	}
-	// Real packets (Option A)
 	go sendRealDNSQuery(dnsDev.IPAddress, domain, 1)
 
 	logInfo("Return from runDNSRecon syslogs=%d", result.SyslogCount)
@@ -604,6 +527,13 @@ func get_IPs_from_subnet(IPAddress string) []string {
 }
 
 // runNetDiscover simulates an ARP sweep to enumerate live hosts.
+//
+// NOTE on telemetry formats: this attack deliberately exports sFlow only
+// (via the switch it sweeps through), not NetFlow/IPFIX. ARP sweeps are
+// observed by switches at L2, and sFlow is the realistic switch-side
+// telemetry format for that — a perimeter firewall wouldn't see L2 ARP
+// traffic on an internal subnet, so there's no NetFlow/IPFIX equivalent
+// here without inventing an unrealistic data path.
 func runNetDiscover(req AttackRequest) (*AttackResult, error) {
 
 	defer panicHandler(traceFunc(), nil)
@@ -621,7 +551,6 @@ func runNetDiscover(req AttackRequest) (*AttackResult, error) {
 		var got_switch bool = false
 		var sw *Device = nil
 		var subnet string
-		// Identifying subnet and corresponding router
 		if strings.ContainsRune(targetIP, '/') {
 			for i := len(targetIP) - 1; i > 0; i-- {
 				if targetIP[i] == '/' {
@@ -645,19 +574,16 @@ func runNetDiscover(req AttackRequest) (*AttackResult, error) {
 		}
 		targets := get_IPs_from_subnet(targetIP)
 
-		// PCAP: ARP sweep
 		srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
 		broadcastMAC := [6]byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
 		var frames [][]byte
 
-		// Syslogs + PCAP frames
 		for _, ip := range targets {
 			msg := fmt.Sprintf("ARP request: who-has %s tell %s", ip, req.AttackerIP)
 			ev := sendSyslog(sw, msg, 7)
 			result.SyslogCount++
 			eventID, _ := recordRunEvent(req.RunID, "syslog", sw.Name, req.AttackerIP, targetIP, "ARP", ev)
 			result.EventIDs = append(result.EventIDs, eventID)
-			// sFlow samples from switch
 			arpFlows := []FlowRecord{
 				{SrcIP: req.AttackerIP, DstIP: ip, SrcPort: 0, DstPort: 0, Protocol: 1, Bytes: 280, Packets: 1, StartTime: time.Now(), EndTime: time.Now().Add(time.Second)},
 			}
@@ -668,7 +594,6 @@ func runNetDiscover(req AttackRequest) (*AttackResult, error) {
 				result.EventIDs = append(result.EventIDs, flowID)
 			}
 
-			// ARP Request frame
 			arpReq := buildARPRequest(srcMAC, req.AttackerIP, ip)
 			frame := make([]byte, 14+len(arpReq))
 			copy(frame[0:6], broadcastMAC[:])
@@ -677,7 +602,6 @@ func runNetDiscover(req AttackRequest) (*AttackResult, error) {
 			copy(frame[14:], arpReq)
 			frames = append(frames, frame)
 
-			// ARP Reply frame (if target exists)
 			dev, res := getDeviceByIP(ip)
 			if res {
 				targetMAC := parseMACAddress(dev.MACAddress)
@@ -691,7 +615,6 @@ func runNetDiscover(req AttackRequest) (*AttackResult, error) {
 			}
 		}
 
-		// Write PCAP after all frames collected
 		path, _ := writePCAPFile(req.RunID, "arp_scan", frames, defaultDuration)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
@@ -727,40 +650,32 @@ func runSNMPEnum(req AttackRequest) (*AttackResult, error) {
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 161, Protocol: 17, Bytes: 2400, Packets: 30, StartTime: time.Now(), EndTime: time.Now().Add(3 * time.Second)}}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount++
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "UDP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "UDP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 
 		if attackerDev == nil || dev == nil {
 			logWarn("runSNMPEnum target=%s: no device with MAC address available, skipping PCAP", targetIP)
 			continue
 		}
 
-		// PCAP
 		srcMAC := parseMACAddress(attackerDev.MACAddress)
 		dstMAC := parseMACAddress(dev.MACAddress)
 		src_port := randomPort()
 		var frames [][]byte
-		// SNMP query
 		SNMP_query := buildUDPDatagram(src_port, 161, SNMPQuery(community))
 		ipPkt_q := buildIPv4Packet(req.AttackerIP, targetIP, 17, SNMP_query)
 		frame_q := buildEthernetFrame(srcMAC, dstMAC, ipPkt_q)
 		frames = append(frames, frame_q)
-		// SNMP response
 		SNMP_response := buildUDPDatagram(161, src_port, SNMPresponse(community))
 		ipPkt_r := buildIPv4Packet(targetIP, req.AttackerIP, 17, SNMP_response)
 		frame_r := buildEthernetFrame(dstMAC, srcMAC, ipPkt_r)
 		frames = append(frames, frame_r)
 		for i := 0; i < 5; i++ {
-			// SNMP query
 			SNMP_query := buildUDPDatagram(src_port, 161, SNMPGetNextResponse(community))
 			ipPkt_q := buildIPv4Packet(req.AttackerIP, targetIP, 17, SNMP_query)
 			frame_q := buildEthernetFrame(srcMAC, dstMAC, ipPkt_q)
 			frames = append(frames, frame_q)
-			// SNMP response
 			SNMP_response := buildUDPDatagram(161, src_port, SNMPReplyNextResponse(community))
 			ipPkt_r := buildIPv4Packet(targetIP, req.AttackerIP, 17, SNMP_response)
 			frame_r := buildEthernetFrame(dstMAC, srcMAC, ipPkt_r)
@@ -797,12 +712,9 @@ func runSMTPUserEnum(req AttackRequest) (*AttackResult, error) {
 			time.Sleep(20 * time.Millisecond)
 		}
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 25, Protocol: 6, Bytes: 1600, Packets: 16, StartTime: time.Now(), EndTime: time.Now().Add(5 * time.Second), TCPFlags: 0x18}}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount++
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 
 		attackerDev, _ := getDeviceByIP(req.AttackerIP)
 		if attackerDev == nil || targetDev == nil {
@@ -821,34 +733,27 @@ func runSMTPUserEnum(req AttackRequest) (*AttackResult, error) {
 		clientSeq := rand.Uint32()
 		serverSeq := uint32(0)
 
-		// SYN
 		frames = append(frames, create_TCP_frame(src_port, dst_port, 0x02, clientSeq, 0, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
 		clientSeq++
-		// SYN-ACK
 		frames = append(frames, create_TCP_frame(dst_port, src_port, 0x12, serverSeq, clientSeq, targetIP, req.AttackerIP, dstMAC, srcMAC, nil))
 		serverSeq++
-		// ACK
 		frames = append(frames, create_TCP_frame(src_port, dst_port, 0x10, clientSeq, serverSeq, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
 
-		// 1. SMTP Server Banner
 		banner := serverBanner(attackerdomain)
 		frames = append(frames, create_TCP_frame(dst_port, src_port, 0x18, serverSeq, clientSeq, targetIP, req.AttackerIP, dstMAC, srcMAC, banner))
 		serverSeq += uint32(len(banner))
 		frames = append(frames, create_TCP_frame(src_port, dst_port, 0x10, clientSeq, serverSeq, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
 
-		// 2. Client EHLO
 		ehlo := clientEhlo(fmt.Sprintf("attacker@%s", domain))
 		frames = append(frames, create_TCP_frame(src_port, dst_port, 0x18, clientSeq, serverSeq, req.AttackerIP, targetIP, srcMAC, dstMAC, ehlo))
 		clientSeq += uint32(len(ehlo))
 		frames = append(frames, create_TCP_frame(dst_port, src_port, 0x10, serverSeq, clientSeq, targetIP, req.AttackerIP, dstMAC, srcMAC, nil))
 
-		// 3. Server replies to EHLO
 		ehloResp := serverEhloResponse(attackerdomain)
 		frames = append(frames, create_TCP_frame(dst_port, src_port, 0x18, serverSeq, clientSeq, targetIP, req.AttackerIP, dstMAC, srcMAC, ehloResp))
 		serverSeq += uint32(len(ehloResp))
 		frames = append(frames, create_TCP_frame(src_port, dst_port, 0x10, clientSeq, serverSeq, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
 
-		// 4. VRFY for each candidate user
 		for _, user := range users {
 			mail_id := fmt.Sprintf("%s@%s", user, domain)
 			vrfy := clientVrfy(user)
@@ -862,7 +767,6 @@ func runSMTPUserEnum(req AttackRequest) (*AttackResult, error) {
 			frames = append(frames, create_TCP_frame(src_port, dst_port, 0x10, clientSeq, serverSeq, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
 		}
 
-		// Connection teardown
 		frames = append(frames, create_TCP_frame(src_port, dst_port, 0x01, clientSeq, serverSeq, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
 		clientSeq++
 		frames = append(frames, create_TCP_frame(dst_port, src_port, 0x10, serverSeq, clientSeq, targetIP, req.AttackerIP, dstMAC, srcMAC, nil))
@@ -887,7 +791,6 @@ func runWebDirBrute(req AttackRequest) (*AttackResult, error) {
 	wordCount := getAttackParamInt(req.Params, "wordcount", 500)
 	fw := getFirewall()
 
-	// "Hits" — realistic paths a gobuster/dirbuster wordlist would actually find.
 	hits := []struct {
 		path   string
 		status int
@@ -904,9 +807,6 @@ func runWebDirBrute(req AttackRequest) (*AttackResult, error) {
 		{"/config", 404},
 	}
 
-	// Generic wordlist words used to pad out to wordCount entries — almost
-	// all of these come back 404, same as a real wordlist run where the vast
-	// majority of guesses miss.
 	genericWords := []string{
 		"test", "old", "new", "tmp", "data", "files", "uploads", "images",
 		"css", "js", "lib", "src", "include", "scripts", "assets", "media",
@@ -925,8 +825,6 @@ func runWebDirBrute(req AttackRequest) (*AttackResult, error) {
 	paths = append(paths, hits...)
 	for len(paths) < wordCount {
 		word := genericWords[len(paths)%len(genericWords)]
-		// occasional numeric suffix so repeated cycles through genericWords
-		// don't produce literally identical paths
 		suffix := len(paths) / len(genericWords)
 		p := "/" + word
 		if suffix > 0 {
@@ -955,12 +853,9 @@ func runWebDirBrute(req AttackRequest) (*AttackResult, error) {
 		}
 
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: uint16(targetPort), Protocol: 6, Bytes: uint32(len(paths) * 300), Packets: uint32(len(paths) * 3), StartTime: time.Now(), EndTime: time.Now().Add(10 * time.Second), TCPFlags: 0x18}}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount++
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 
 		var httpRequests, httpResponses [][]byte
 		for _, p := range paths {
@@ -1001,19 +896,14 @@ func runLDAPEnum(req AttackRequest) (*AttackResult, error) {
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 389, Protocol: 6, Bytes: 45000, Packets: 80, StartTime: time.Now(), EndTime: time.Now().Add(8 * time.Second), TCPFlags: 0x18}}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount++
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
-		// PCAP: LDAP enumeration sequence (Bind + Search)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 		srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
 		dstMAC := [6]byte{0x00, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
 		srcPort := randomPort()
 		var frames [][]byte
 
-		// TCP handshake
 		clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
 		syn := buildTCPSegment(srcPort, 389, 0x02, clientSeq, 0, nil)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, syn)))
@@ -1026,22 +916,18 @@ func runLDAPEnum(req AttackRequest) (*AttackResult, error) {
 		ack := buildTCPSegment(srcPort, 389, 0x10, clientSeq, serverSeq, nil)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, ack)))
 
-		// LDAP Bind request
 		bindReq := buildLDAPBindRequest(baseDN)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, buildTCPSegment(srcPort, 389, 0x18, clientSeq, serverSeq, bindReq))))
 		clientSeq += uint32(len(bindReq))
 
-		// LDAP Bind response
 		bindResp := buildLDAPBindResponse()
 		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 6, buildTCPSegment(389, srcPort, 0x18, serverSeq, clientSeq, bindResp))))
 		serverSeq += uint32(len(bindResp))
 
-		// LDAP Search request
 		searchReq := buildLDAPSearchRequest(baseDN)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, buildTCPSegment(srcPort, 389, 0x18, clientSeq, serverSeq, searchReq))))
 		clientSeq += uint32(len(searchReq))
 
-		// LDAP Search response (with results)
 		searchResp := buildLDAPSearchResponse(142)
 		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 6, buildTCPSegment(389, srcPort, 0x18, serverSeq, clientSeq, searchResp))))
 
@@ -1078,12 +964,9 @@ func runNetBIOSEnum(req AttackRequest) (*AttackResult, error) {
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 137, Protocol: 17, Bytes: 500, Packets: 4, StartTime: time.Now(), EndTime: time.Now().Add(time.Second)},
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 138, Protocol: 17, Bytes: 300, Packets: 2, StartTime: time.Now(), EndTime: time.Now().Add(time.Second)},
 		}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount += len(flows)
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "UDP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "UDP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 		if attackerDev, ok := getDeviceByIP(req.AttackerIP); ok && attackerDev != nil {
 			if devMAC, ok2 := getDeviceByIP(targetIP); ok2 && devMAC != nil {
 				srcMAC := parseMACAddress(attackerDev.MACAddress)
@@ -1127,20 +1010,15 @@ func runSSLScan(req AttackRequest) (*AttackResult, error) {
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: uint16(targetPort), Protocol: 6, Bytes: 6000, Packets: 20, StartTime: time.Now(), EndTime: time.Now().Add(4 * time.Second), TCPFlags: 0x18}}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount++
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
-		// PCAP: Full SSL/TLS scan with Heartbleed + Padding Oracle probes
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 		srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
 		dstMAC := [6]byte{0x00, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
 		srcPort := randomPort()
 		var frames [][]byte
 		clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
 
-		// TCP handshake
 		syn := buildTCPSegment(srcPort, uint16(targetPort), 0x02, clientSeq, 0, nil)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, syn)))
 		clientSeq++
@@ -1152,32 +1030,26 @@ func runSSLScan(req AttackRequest) (*AttackResult, error) {
 		ack := buildTCPSegment(srcPort, uint16(targetPort), 0x10, clientSeq, serverSeq, nil)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, ack)))
 
-		// TLS ClientHello (with SNI)
 		clientHello := buildTLSClientHelloSNI(targetIP)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, buildTCPSegment(srcPort, uint16(targetPort), 0x18, clientSeq, serverSeq, clientHello))))
 		clientSeq += uint32(len(clientHello))
 
-		// TLS ServerHello + Certificate
 		serverHelloCert := buildTLSServerHelloCertificate()
 		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 6, buildTCPSegment(uint16(targetPort), srcPort, 0x18, serverSeq, clientSeq, serverHelloCert))))
 		serverSeq += uint32(len(serverHelloCert))
 
-		// Heartbleed probe (client sends malformed heartbeat)
 		heartbeatReq := buildTLSHeartbeatRequest()
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, buildTCPSegment(srcPort, uint16(targetPort), 0x18, clientSeq, serverSeq, heartbeatReq))))
 		clientSeq += uint32(len(heartbeatReq))
 
-		// Heartbleed response (server leaks memory)
 		heartbeatResp := buildTLSHeartbeatResponse()
 		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 6, buildTCPSegment(uint16(targetPort), srcPort, 0x18, serverSeq, clientSeq, heartbeatResp))))
 		serverSeq += uint32(len(heartbeatResp))
 
-		// Padding Oracle probe (crafted CBC record)
 		paddingProbe := buildTLSPaddingOracleProbe()
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, buildTCPSegment(srcPort, uint16(targetPort), 0x18, clientSeq, serverSeq, paddingProbe))))
 		clientSeq += uint32(len(paddingProbe))
 
-		// Padding Oracle response (fatal alert: bad_record_mac)
 		alertResp := buildTLSAlertBadRecordMAC()
 		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 6, buildTCPSegment(uint16(targetPort), srcPort, 0x18, serverSeq, clientSeq, alertResp))))
 
@@ -1212,12 +1084,9 @@ func runCloudMetaDiscovery(req AttackRequest) (*AttackResult, error) {
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: "169.254.169.254", SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 4000, Packets: 8, StartTime: time.Now(), EndTime: time.Now().Add(2 * time.Second), TCPFlags: 0x18}}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount++
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, "169.254.169.254", "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, "169.254.169.254", "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 		ssrfPath, ssrfErr := PCAPGenericTCPExchange(req.RunID, "cloud_meta_discovery", req.AttackerIP, "169.254.169.254", 80,
 			[]byte("GET /latest/meta-data/iam/security-credentials/ HTTP/1.1\r\nHost: 169.254.169.254\r\n\r\n"),
 			[]byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"))
@@ -1253,12 +1122,9 @@ func runSubdomainEnum(req AttackRequest) (*AttackResult, error) {
 	}
 	flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: dnsDev.IPAddress, SrcPort: randomPort(), DstPort: 53, Protocol: 17, Bytes: uint32(queriesSent * 60), Packets: uint32(queriesSent * 2), StartTime: time.Now(), EndTime: time.Now().Add(time.Duration(queriesSent/10) * time.Second)}}
 	fw := getFirewall()
-	if fw != nil && fw.Telemetry.Netflow {
-		ExportNetflowV9(fw.IPAddress, flows)
-	}
-	result.FlowCount++
-	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, dnsDev.IPAddress, "UDP", flows)
-	result.EventIDs = append(result.EventIDs, flowID)
+	fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, dnsDev.IPAddress, "UDP", flows)
+	result.FlowCount += fc
+	result.EventIDs = append(result.EventIDs, fids...)
 	var queriedDomains []string
 	for idx := 0; idx < count; idx++ {
 		sub := subdomains[idx%len(subdomains)]

