@@ -2961,3 +2961,61 @@ func PCAPDNSMultiQuery(runID, attackName, clientIP, dnsIP string, domains []stri
 	logInfo("Return from PCAPDNSMultiQuery frames=%d path=%s", len(frames), path)
 	return path, err
 }
+
+// PCAPHTTPMultiRequest generates a single PCAP containing one TCP handshake
+// followed by multiple HTTP GET request/response pairs over the same
+// connection (HTTP/1.1 keep-alive) — used for directory brute-forcing,
+// web fuzzing, and similar attacks that hammer one host with many requests.
+func PCAPHTTPMultiRequest(runID, attackName, clientIP, serverIP string, serverPort uint16, requests [][]byte, responses [][]byte) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPHTTPMultiRequest attack=%s client=%s server=%s count=%d", attackName, clientIP, serverIP, len(requests))
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
+	srcPort := randomPort()
+	clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
+
+	var frames [][]byte
+
+	// TCP handshake
+	syn := buildTCPSegment(srcPort, serverPort, 0x02, clientSeq, 0, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(clientIP, serverIP, 6, syn)))
+	clientSeq++
+
+	synAck := buildTCPSegment(serverPort, srcPort, 0x12, serverSeq, clientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(serverIP, clientIP, 6, synAck)))
+	serverSeq++
+
+	ack := buildTCPSegment(srcPort, serverPort, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(clientIP, serverIP, 6, ack)))
+
+	// One GET/response pair per path, over the same connection
+	for i := range requests {
+		req := requests[i]
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(clientIP, serverIP, 6, buildTCPSegment(srcPort, serverPort, 0x18, clientSeq, serverSeq, req))))
+		clientSeq += uint32(len(req))
+
+		resp := responses[i]
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(serverIP, clientIP, 6, buildTCPSegment(serverPort, srcPort, 0x18, serverSeq, clientSeq, resp))))
+		serverSeq += uint32(len(resp))
+	}
+
+	path, err := writePCAPFile(runID, attackName, frames, defaultDuration)
+	logInfo("Return from PCAPHTTPMultiRequest frames=%d path=%s", len(frames), path)
+	return path, err
+}
+
+func httpStatusText(code int) string {
+	switch code {
+	case 200:
+		return "OK"
+	case 301:
+		return "Moved Permanently"
+	case 403:
+		return "Forbidden"
+	case 404:
+		return "Not Found"
+	default:
+		return "OK"
+	}
+}
