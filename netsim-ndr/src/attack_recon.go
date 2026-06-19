@@ -884,10 +884,11 @@ func runWebDirBrute(req AttackRequest) (*AttackResult, error) {
 	logInfo("Entering runWebDirBrute attacker=%s", req.AttackerIP)
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	targetPort := getAttackParamInt(req.Params, "target_port", 80)
+	wordCount := getAttackParamInt(req.Params, "wordcount", 500)
 	fw := getFirewall()
-	// path → HTTP status the simulated server returns. A real dir brute-force
-	// is only useful when some paths are "found" (200/403/301) among the 404s.
-	paths := []struct {
+
+	// "Hits" — realistic paths a gobuster/dirbuster wordlist would actually find.
+	hits := []struct {
 		path   string
 		status int
 	}{
@@ -902,19 +903,57 @@ func runWebDirBrute(req AttackRequest) (*AttackResult, error) {
 		{"/.env", 200},
 		{"/config", 404},
 	}
+
+	// Generic wordlist words used to pad out to wordCount entries — almost
+	// all of these come back 404, same as a real wordlist run where the vast
+	// majority of guesses miss.
+	genericWords := []string{
+		"test", "old", "new", "tmp", "data", "files", "uploads", "images",
+		"css", "js", "lib", "src", "include", "scripts", "assets", "media",
+		"docs", "private", "public", "static", "cache", "logs", "log",
+		"db", "database", "sql", "bak", "archive", "download", "downloads",
+		"upload", "secret", "secrets", "key", "keys", "cert", "certs",
+		"login", "logout", "signin", "signup", "register", "account",
+		"accounts", "user", "users", "profile", "settings", "dashboard",
+		"panel", "cpanel", "webmail", "mail", "ftp", "ssh", "rdp",
+	}
+
+	var paths []struct {
+		path   string
+		status int
+	}
+	paths = append(paths, hits...)
+	for len(paths) < wordCount {
+		word := genericWords[len(paths)%len(genericWords)]
+		// occasional numeric suffix so repeated cycles through genericWords
+		// don't produce literally identical paths
+		suffix := len(paths) / len(genericWords)
+		p := "/" + word
+		if suffix > 0 {
+			p = fmt.Sprintf("/%s%d", word, suffix)
+		}
+		paths = append(paths, struct {
+			path   string
+			status int
+		}{p, 404})
+	}
+	paths = paths[:wordCount]
+
 	for _, targetIP := range req.TargetIPs {
 		targetDev, _ := getDeviceByIP(targetIP)
+		dev := targetDev
+		if dev == nil {
+			dev = fw
+		}
+
 		for _, p := range paths {
 			msg := fmt.Sprintf("%s - - \"GET %s HTTP/1.1\" %d 0 \"-\" \"gobuster/3.1.0\"", req.AttackerIP, p.path, p.status)
-			dev := targetDev
-			if dev == nil {
-				dev = fw
-			}
 			ev := sendSyslog(dev, msg, 6)
 			result.SyslogCount++
 			eventID, _ := recordRunEvent(req.RunID, "syslog", targetIP, req.AttackerIP, targetIP, "TCP", ev)
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
+
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: uint16(targetPort), Protocol: 6, Bytes: uint32(len(paths) * 300), Packets: uint32(len(paths) * 3), StartTime: time.Now(), EndTime: time.Now().Add(10 * time.Second), TCPFlags: 0x18}}
 		if fw != nil && fw.Telemetry.Netflow {
 			ExportNetflowV9(fw.IPAddress, flows)
@@ -922,9 +961,13 @@ func runWebDirBrute(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount++
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
-		wdbPath, wdbErr := PCAPGenericTCPExchange(req.RunID, "web_dir_brute", req.AttackerIP, targetIP, uint16(targetPort),
-			[]byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: gobuster/3.1.0\r\n\r\n", paths[0].path, targetIP)),
-			[]byte(fmt.Sprintf("HTTP/1.1 %d OK\r\nContent-Length: 0\r\n\r\n", paths[0].status)))
+
+		var httpRequests, httpResponses [][]byte
+		for _, p := range paths {
+			httpRequests = append(httpRequests, []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: gobuster/3.1.0\r\n\r\n", p.path, targetIP)))
+			httpResponses = append(httpResponses, []byte(fmt.Sprintf("HTTP/1.1 %d %s\r\nContent-Length: 0\r\n\r\n", p.status, httpStatusText(p.status))))
+		}
+		wdbPath, wdbErr := PCAPHTTPMultiRequest(req.RunID, "web_dir_brute", req.AttackerIP, targetIP, uint16(targetPort), httpRequests, httpResponses)
 		if wdbErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, wdbPath)
 		}
