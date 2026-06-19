@@ -139,7 +139,7 @@ func runICMPFlood(req AttackRequest) (*AttackResult, error) {
 		flowID, _ := recordRunEvent(req.RunID, "netflow", "fw-perimeter", req.AttackerIP, targetIP, "ICMP", flows)
 		result.EventIDs = append(result.EventIDs, flowID)
 
-		path, _ := PCAPICMPFlood(req.RunID, req.AttackerIP, targetIP, 30)
+		path, _ := PCAPICMPFlood(req.RunID, req.AttackerIP, targetIP, 100)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}

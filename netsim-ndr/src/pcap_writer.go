@@ -176,16 +176,40 @@ func buildTCPSegment(srcPort, dstPort uint16, flags uint8, seq, ack uint32, payl
 	return seg
 }
 
-// buildICMPSegment builds a minimal ICMP segment
-func buildICMPSegment(PacketType, Code byte, checksum, identifier, seq uint16, payload []byte) []byte {
+// buildICMPSegment builds an ICMP segment with a correctly computed
+// checksum. The checksum parameter is no longer used as input — Wireshark
+// flags a literal 0x0000 checksum as "Bad checksum", so we always compute
+// the real one here instead of trusting callers to pass a precomputed value.
+func buildICMPSegment(PacketType, Code byte, _ uint16, identifier, seq uint16, payload []byte) []byte {
 	seg := make([]byte, 8+len(payload))
 	seg[0] = PacketType
 	seg[1] = Code
-	binary.BigEndian.PutUint16(seg[2:], checksum)
+	binary.BigEndian.PutUint16(seg[2:], 0) // checksum placeholder, filled below
 	binary.BigEndian.PutUint16(seg[4:], identifier)
 	binary.BigEndian.PutUint16(seg[6:], seq)
 	copy(seg[8:], payload)
+
+	checksum := icmpChecksum(seg)
+	binary.BigEndian.PutUint16(seg[2:], checksum)
 	return seg
+}
+
+// icmpChecksum computes the standard Internet checksum (RFC 1071) over an
+// ICMP message, treating the checksum field itself as zero during
+// calculation.
+func icmpChecksum(data []byte) uint16 {
+	var sum uint32
+	length := len(data)
+	for i := 0; i < length-1; i += 2 {
+		sum += uint32(data[i])<<8 | uint32(data[i+1])
+	}
+	if length%2 == 1 {
+		sum += uint32(data[length-1]) << 8
+	}
+	for sum>>16 > 0 {
+		sum = (sum & 0xFFFF) + (sum >> 16)
+	}
+	return ^uint16(sum)
 }
 
 // buildUDPDatagram builds a minimal UDP datagram.
@@ -370,18 +394,42 @@ func buildDNSQueryType(domain string, qtype uint16) []byte {
 
 // ─── Additional PCAP generators (Option B) ───────────────────────────────────
 
-// PCAPSYNFlood generates PCAP frames for a SYN flood from multiple spoofed sources.
+// PCAPSYNFlood generates PCAP frames for a SYN flood from multiple spoofed
+// sources. Most SYNs get no reply (the realistic SYN-flood symptom — the
+// target's backlog queue fills and it stops responding), but a handful
+// of early SYNs receive a SYN-ACK back, since a real target doesn't drop
+// every single packet from the very first one; the backlog only fills
+// up partway through the flood.
 func PCAPSYNFlood(runID, targetIP string, targetPort uint16, sourceIPs []string) (string, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAPSYNFlood target=%s port=%d sources=%d", targetIP, targetPort, len(sourceIPs))
 
 	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	targetMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
 	var frames [][]byte
-	for _, srcIP := range sourceIPs {
+
+	// Respond to roughly the first 10% of sources (or at least 1, if any
+	// sources exist) before the simulated backlog "fills up" and the
+	// target stops replying for the rest of the flood.
+	replyCount := len(sourceIPs) / 10
+	if replyCount < 1 && len(sourceIPs) > 0 {
+		replyCount = 1
+	}
+
+	for idx, srcIP := range sourceIPs {
+		srcPort := randomPort()
 		srcMAC := [6]byte{0x00, byte(rand.Intn(255)), byte(rand.Intn(255)), byte(rand.Intn(255)), byte(rand.Intn(255)), byte(rand.Intn(255))}
-		syn := buildTCPSegment(randomPort(), targetPort, 0x02, rand.Uint32(), 0, nil)
+		clientSeq := rand.Uint32()
+		syn := buildTCPSegment(srcPort, targetPort, 0x02, clientSeq, 0, nil)
 		ip := buildIPv4Packet(srcIP, targetIP, 6, syn)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, ip))
+
+		if idx < replyCount {
+			serverSeq := rand.Uint32()
+			synAck := buildTCPSegment(targetPort, srcPort, 0x12, serverSeq, clientSeq+1, nil)
+			synAckIP := buildIPv4Packet(targetIP, srcIP, 6, synAck)
+			frames = append(frames, buildEthernetFrame(targetMAC, srcMAC, synAckIP))
+		}
 	}
 
 	path, err := writePCAPFile(runID, "syn_flood", frames, defaultDuration)
@@ -395,8 +443,21 @@ func PCAPUDPFlood(runID, targetIP string, targetPort uint16, sourceIPs []string)
 	logInfo("Entering PCAPUDPFlood target=%s port=%d sources=%d", targetIP, targetPort, len(sourceIPs))
 
 	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	// Flood payload: when targetPort is 53 (DNS, the default for this
+	// attack), Wireshark always tries to dissect the UDP payload as DNS.
+	// A 12-byte valid-but-meaningless DNS header (QDCOUNT=0, all other
+	// counts=0, no question/answer sections) followed by junk filler
+	// parses cleanly as an empty DNS query instead of throwing
+	// [Malformed Packet] — this is what real-world UDP/DNS flood tools'
+	// garbage traffic looks like on the wire when captured.
 	payload := make([]byte, 512)
-	rand.Read(payload)
+	binary.BigEndian.PutUint16(payload[0:2], uint16(rand.Intn(65536))) // Transaction ID
+	payload[2] = 0x01                                                  // Flags: standard query
+	payload[3] = 0x00
+	// QDCOUNT, ANCOUNT, NSCOUNT, ARCOUNT all left as 0x0000 (zeroed)
+	for i := 12; i < len(payload); i++ {
+		payload[i] = 0x41 // filler after the valid header
+	}
 	var frames [][]byte
 	for _, srcIP := range sourceIPs {
 		srcMAC := [6]byte{0x00, byte(rand.Intn(255)), byte(rand.Intn(255)), byte(rand.Intn(255)), byte(rand.Intn(255)), byte(rand.Intn(255))}
@@ -410,21 +471,45 @@ func PCAPUDPFlood(runID, targetIP string, targetPort uint16, sourceIPs []string)
 	return path, err
 }
 
-// PCAPHTTPFlood generates PCAP frames for a Layer-7 HTTP flood.
+// PCAPHTTPFlood generates PCAP frames for a Layer-7 HTTP flood. A handful
+// of early requests get a real HTTP response back (mostly 503 Service
+// Unavailable, since the server is being hammered) before it's considered
+// overwhelmed and stops responding for the rest of the flood — a real
+// server doesn't go silent on request #1.
 func PCAPHTTPFlood(runID, attackerIP, targetIP string, targetPort uint16, count int) (string, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAPHTTPFlood attacker=%s target=%s port=%d count=%d", attackerIP, targetIP, targetPort, count)
 
 	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, 0x44}
 	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	targetMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+
+	// Respond to roughly the first 10% of requests before the server is
+	// considered overwhelmed and stops replying for the rest.
+	replyCount := count / 10
+	if replyCount < 1 && count > 0 {
+		replyCount = 1
+	}
+
 	var frames [][]byte
 	for idx := 0; idx < count; idx++ {
+		srcPort := randomPort()
+		clientSeq := rand.Uint32()
+		serverSeq := rand.Uint32()
+
 		payload := []byte(fmt.Sprintf(
 			"GET /?r=%s HTTP/1.1\r\nHost: %s\r\nUser-Agent: Mozilla/5.0\r\nConnection: keep-alive\r\n\r\n",
 			randomHexString(8), targetIP))
-		syn := buildTCPSegment(randomPort(), targetPort, 0x18, rand.Uint32(), rand.Uint32(), payload)
-		ip := buildIPv4Packet(attackerIP, targetIP, 6, syn)
+		req := buildTCPSegment(srcPort, targetPort, 0x18, clientSeq, serverSeq, payload)
+		ip := buildIPv4Packet(attackerIP, targetIP, 6, req)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, ip))
+
+		if idx < replyCount {
+			respBody := []byte("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+			resp := buildTCPSegment(targetPort, srcPort, 0x18, serverSeq, clientSeq+uint32(len(payload)), respBody)
+			respIP := buildIPv4Packet(targetIP, attackerIP, 6, resp)
+			frames = append(frames, buildEthernetFrame(targetMAC, srcMAC, respIP))
+		}
 	}
 
 	path, err := writePCAPFile(runID, "http_flood", frames, defaultDuration)
@@ -1008,19 +1093,40 @@ func writeICMPTunnelPCAP(runID, attackerIP, c2IP string) (string, error) {
 	return writePCAPFile(runID, "protocol_tunnel_icmp", [][]byte{reqFrame, replyFrame}, defaultDuration)
 }
 
-// PCAPICMPFlood generates a burst of ICMP echo requests representing a Smurf/ICMP flood.
+// PCAPICMPFlood generates a burst of ICMP echo requests representing a
+// Smurf/ICMP flood. A handful of early echo requests get a real echo
+// reply back — a real target doesn't go instantly unresponsive; it starts
+// dropping/ignoring requests only once it's overwhelmed partway through
+// the flood.
 func PCAPICMPFlood(runID, attackerIP, targetIP string, count int) (string, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAPICMPFlood attacker=%s target=%s count=%d", attackerIP, targetIP, count)
 
 	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
 	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	targetMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+
+	identifier := uint16(rand.Intn(65535))
 	var frames [][]byte
-	for idx := 0; idx < count; idx++ {
-		identifier := uint16(rand.Intn(65535))
-		echo := buildICMPSegment(8, 0, 0, identifier, uint16(idx), nil)
-		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 1, echo)))
+
+	// Respond to roughly the first 10% of echo requests before the target
+	// is considered overwhelmed and stops replying for the rest.
+	replyCount := count / 10
+	if replyCount < 1 && count > 0 {
+		replyCount = 1
 	}
+
+	for idx := 0; idx < count; idx++ {
+		seq := uint16(idx)
+		echo := buildICMPSegment(8, 0, 0, identifier, seq, nil)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 1, echo)))
+
+		if idx < replyCount {
+			echoReply := buildICMPSegment(0, 0, 0, identifier, seq, nil)
+			frames = append(frames, buildEthernetFrame(targetMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 1, echoReply)))
+		}
+	}
+
 	path, err := writePCAPFile(runID, "icmp_flood", frames, defaultDuration)
 	logInfo("Return from PCAPICMPFlood frames=%d path=%s", len(frames), path)
 	return path, err
