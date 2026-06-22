@@ -320,22 +320,173 @@ func recordRunEvent(runID, eventType, sourceDevice, srcIP, dstIP, protocol strin
 // built from the available fields.
 func summarizeEventForLog(eventType, sourceDevice, srcIP, dstIP, protocol string, payload interface{}) string {
 	switch eventType {
+
+	// ── SYSLOG ────────────────────────────────────────────────────────────────
+	// Emit firewall/device-style connection/packet log lines, NOT attack descriptions.
 	case "syslog":
 		if ev, ok := payload.(*SyslogEvent); ok {
-			return ev.Raw
+			// Parse src/dst IPs and port from the raw message where possible.
+			// Fall back to device-level connection language if parsing fails.
+			device := ev.DeviceName
+			if device == "" {
+				device = ev.DeviceIP
+			}
+
+			// Determine protocol string and a plausible dst port from the message.
+			proto := strings.ToUpper(protocol)
+			if proto == "" {
+				proto = "TCP"
+			}
+
+			// Syslog severity → syslog priority tag
+			facilityNames := []string{"kern", "user", "mail", "daemon", "auth", "syslog",
+				"lpr", "news", "uucp", "cron", "authpriv", "ftp"}
+			facilityStr := "daemon"
+			if int(ev.Facility) < len(facilityNames) {
+				facilityStr = facilityNames[ev.Facility]
+			}
+			severityNames := []string{"EMERG", "ALERT", "CRIT", "ERR", "WARNING", "NOTICE", "INFO", "DEBUG"}
+			severityStr := "INFO"
+			if int(ev.Severity) < len(severityNames) {
+				severityStr = severityNames[ev.Severity]
+			}
+
+			ts := ev.Timestamp.UTC().Format("Jan 02 15:04:05")
+			if ev.Timestamp.IsZero() {
+				ts = time.Now().UTC().Format("Jan 02 15:04:05")
+			}
+
+			// Emit a generic connection-event line that mirrors real fw/iptables syslog.
+			return fmt.Sprintf("%s %s %s[%s]: %s: %s %s connection src=%s dst=%s proto=%s -- policy=ACCEPT",
+				ts, device, facilityStr, severityStr,
+				ev.DeviceIP, proto, "session",
+				srcIP, dstIP, proto)
 		}
-	case "netflow", "sflow", "ipfix":
+		// Fallback — no SyslogEvent struct
+		ts := time.Now().UTC().Format("Jan 02 15:04:05")
+		return fmt.Sprintf("%s %s kernel[INFO]: %s connection from %s to %s proto=%s -- policy=ACCEPT",
+			ts, sourceDevice, strings.ToUpper(protocol), srcIP, dstIP, strings.ToUpper(protocol))
+
+	// ── NETFLOW ───────────────────────────────────────────────────────────────
+	// Emit NetFlow v9 text-export style records.
+	case "netflow":
 		if flows, ok := payload.([]FlowRecord); ok {
 			var parts []string
 			for _, f := range flows {
-				parts = append(parts, fmt.Sprintf("src=%s:%d dst=%s:%d proto=%d bytes=%d packets=%d",
-					f.SrcIP, f.SrcPort, f.DstIP, f.DstPort, f.Protocol, f.Bytes, f.Packets))
+				protoName := protoNumToName(f.Protocol)
+				flags := decodeTCPFlags(f.TCPFlags)
+				start := f.StartTime.UTC().Format(time.RFC3339)
+				end := f.EndTime.UTC().Format(time.RFC3339)
+				if f.StartTime.IsZero() {
+					start = time.Now().UTC().Add(-2 * time.Second).Format(time.RFC3339)
+				}
+				if f.EndTime.IsZero() {
+					end = time.Now().UTC().Format(time.RFC3339)
+				}
+				line := fmt.Sprintf(
+					"NETFLOW src=%s sport=%d dst=%s dport=%d proto=%s bytes=%d pkts=%d start=%s end=%s flags=%s in_if=%d out_if=%d",
+					f.SrcIP, f.SrcPort, f.DstIP, f.DstPort, protoName,
+					f.Bytes, f.Packets, start, end, flags,
+					f.InputIface, f.OutputIface,
+				)
+				parts = append(parts, line)
 			}
-			return fmt.Sprintf("%s %s", eventType, strings.Join(parts, " | "))
+			return strings.Join(parts, "\n")
 		}
+		return fmt.Sprintf("NETFLOW src=%s dst=%s proto=%s bytes=0 pkts=0", srcIP, dstIP, strings.ToUpper(protocol))
+
+	// ── IPFIX ─────────────────────────────────────────────────────────────────
+	// Emit IPFIX Information Element-style records.
+	case "ipfix":
+		if flows, ok := payload.([]FlowRecord); ok {
+			var parts []string
+			for _, f := range flows {
+				protoNum := f.Protocol
+				start := f.StartTime.UTC().Unix()
+				end := f.EndTime.UTC().Unix()
+				if f.StartTime.IsZero() {
+					start = time.Now().UTC().Unix() - 2
+				}
+				if f.EndTime.IsZero() {
+					end = time.Now().UTC().Unix()
+				}
+				line := fmt.Sprintf(
+					"IPFIX sourceIPv4Address=%s sourceTransportPort=%d destinationIPv4Address=%s destinationTransportPort=%d protocolIdentifier=%d octetDeltaCount=%d packetDeltaCount=%d flowStartSeconds=%d flowEndSeconds=%d tcpControlBits=0x%02X ingressInterface=%d egressInterface=%d",
+					f.SrcIP, f.SrcPort, f.DstIP, f.DstPort, protoNum,
+					f.Bytes, f.Packets, start, end, f.TCPFlags,
+					f.InputIface, f.OutputIface,
+				)
+				parts = append(parts, line)
+			}
+			return strings.Join(parts, "\n")
+		}
+		return fmt.Sprintf("IPFIX sourceIPv4Address=%s destinationIPv4Address=%s protocolIdentifier=6 octetDeltaCount=0 packetDeltaCount=0", srcIP, dstIP)
+
+	// ── SFLOW ─────────────────────────────────────────────────────────────────
+	// Emit sFlow sample record style lines.
+	case "sflow":
+		if flows, ok := payload.([]FlowRecord); ok {
+			var parts []string
+			for i, f := range flows {
+				protoName := protoNumToName(f.Protocol)
+				line := fmt.Sprintf(
+					"SFLOW agent=%s sample_seq=%d src=%s:%d dst=%s:%d proto=%s bytes=%d in_port=%d out_port=%d",
+					sourceDevice, i+1,
+					f.SrcIP, f.SrcPort, f.DstIP, f.DstPort, protoName,
+					f.Bytes, f.InputIface, f.OutputIface,
+				)
+				parts = append(parts, line)
+			}
+			return strings.Join(parts, "\n")
+		}
+		return fmt.Sprintf("SFLOW agent=%s sample_seq=1 src=%s dst=%s proto=%s bytes=0 in_port=0 out_port=0",
+			sourceDevice, srcIP, dstIP, strings.ToUpper(protocol))
 	}
-	// Fallback for any payload shape we don't special-case above.
+
+	// Generic fallback
 	return fmt.Sprintf("%s src_device=%s src_ip=%s dst_ip=%s proto=%s", eventType, sourceDevice, srcIP, dstIP, protocol)
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+func protoNumToName(proto uint8) string {
+	switch proto {
+	case 1:
+		return "ICMP"
+	case 6:
+		return "TCP"
+	case 17:
+		return "UDP"
+	case 47:
+		return "GRE"
+	case 50:
+		return "ESP"
+	default:
+		return fmt.Sprintf("PROTO%d", proto)
+	}
+}
+
+func decodeTCPFlags(flags uint8) string {
+	if flags == 0 {
+		return "NONE"
+	}
+	var f []string
+	if flags&0x02 != 0 {
+		f = append(f, "SYN")
+	}
+	if flags&0x10 != 0 {
+		f = append(f, "ACK")
+	}
+	if flags&0x08 != 0 {
+		f = append(f, "PSH")
+	}
+	if flags&0x01 != 0 {
+		f = append(f, "FIN")
+	}
+	if flags&0x04 != 0 {
+		f = append(f, "RST")
+	}
+	return strings.Join(f, ",")
 }
 
 // buildAttackRegistry returns the full catalog of 87 network-layer attack modules.
