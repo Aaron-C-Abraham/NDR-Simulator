@@ -52,11 +52,12 @@ func runSYNFlood(req AttackRequest) (*AttackResult, error) {
 
 		// Flows: flood from many sources
 		// NEW
-		flows := FlowDDoS(sources[:10], targetIP, targetPort, uint32(pps*duration/10))
-		// Adjust StartTime to reflect actual attack duration
+		totalPkts := uint32(pps * duration / 10) // per source (10 sources)
+		flows := FlowDDoS(sources[:10], targetIP, targetPort, totalPkts)
 		for i := range flows {
 			flows[i].StartTime = time.Now().Add(-time.Duration(duration) * time.Second)
 			flows[i].EndTime = time.Now()
+			flows[i].Bytes = totalPkts * 60 // fixed 60 bytes per SYN packet
 		}
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
@@ -97,7 +98,14 @@ func runUDPFlood(req AttackRequest) (*AttackResult, error) {
 		for idx := 0; idx < 20; idx++ {
 			sources = append(sources, fmt.Sprintf("198.51.%d.%d", rand.Intn(255), 1+rand.Intn(254)))
 		}
-		flows := FlowDDoS(sources, targetIP, targetPort, uint32(pps/20))
+		duration := getAttackParamInt(req.Params, "duration", 30)
+		totalPkts := uint32(pps * duration / len(sources))
+		flows := FlowDDoS(sources, targetIP, targetPort, totalPkts)
+		for i := range flows {
+			flows[i].StartTime = time.Now().Add(-time.Duration(duration) * time.Second)
+			flows[i].EndTime = time.Now()
+			flows[i].Bytes = totalPkts * 1500 // fixed 1500 bytes per UDP packet
+		}
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "UDP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
@@ -131,7 +139,11 @@ func runICMPFlood(req AttackRequest) (*AttackResult, error) {
 		eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", req.AttackerIP, targetIP, "ICMP", ev)
 		result.EventIDs = append(result.EventIDs, eventID)
 
-		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: 0, DstPort: 0, Protocol: 1, Bytes: 6000000, Packets: 100000, StartTime: time.Now().Add(-30 * time.Second), EndTime: time.Now()}}
+		duration := getAttackParamInt(req.Params, "duration", 30)
+		icmpPkts := uint32(100000 / 30 * duration) // 100k pps baseline
+		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: 0, DstPort: 0, Protocol: 1,
+			Bytes: icmpPkts * 64, Packets: icmpPkts,
+			StartTime: time.Now().Add(-time.Duration(duration) * time.Second), EndTime: time.Now()}}
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "ICMP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
@@ -177,7 +189,11 @@ func runHTTPFlood(req AttackRequest) (*AttackResult, error) {
 		eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", req.AttackerIP, targetIP, "TCP", ev)
 		result.EventIDs = append(result.EventIDs, eventID)
 
-		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: uint32(rps * 500), Packets: uint32(rps), StartTime: time.Now().Add(-30 * time.Second), EndTime: time.Now(), TCPFlags: 0x18}}
+		duration := getAttackParamInt(req.Params, "duration", 30)
+		totalPkts := uint32(rps * duration)
+		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6,
+			Bytes: totalPkts * 500, Packets: totalPkts,
+			StartTime: time.Now().Add(-time.Duration(duration) * time.Second), EndTime: time.Now(), TCPFlags: 0x18}}
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
@@ -218,8 +234,11 @@ func runSlowloris(req AttackRequest) (*AttackResult, error) {
 
 		// Many small TCP flows with long duration
 		var flows []FlowRecord
+		duration := getAttackParamInt(req.Params, "duration", 300)
 		for idx := 0; idx < 20; idx++ {
-			flows = append(flows, FlowRecord{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 200, Packets: 2, StartTime: time.Now().Add(-300 * time.Second), EndTime: time.Now(), TCPFlags: 0x02})
+			flows = append(flows, FlowRecord{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6,
+				Bytes: 200, Packets: uint32(2 * duration / 300), // fixed 200 bytes, packets scale with duration
+				StartTime: time.Now().Add(-time.Duration(duration) * time.Second), EndTime: time.Now(), TCPFlags: 0x02})
 		}
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
@@ -270,7 +289,11 @@ func runAmplification(req AttackRequest) (*AttackResult, error) {
 		eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", amplifier, targetIP, "UDP", ev)
 		result.EventIDs = append(result.EventIDs, eventID)
 
-		flows := []FlowRecord{{SrcIP: amplifier, DstIP: targetIP, SrcPort: 53, DstPort: randomPort(), Protocol: 17, Bytes: 30000000, Packets: 10000, StartTime: time.Now().Add(-60 * time.Second), EndTime: time.Now()}}
+		duration := getAttackParamInt(req.Params, "duration", 60)
+		ampPkts := uint32(10000 / 60 * duration) // ~166 pps baseline
+		flows := []FlowRecord{{SrcIP: amplifier, DstIP: targetIP, SrcPort: 53, DstPort: randomPort(), Protocol: 17,
+			Bytes: ampPkts * 3000, Packets: ampPkts,
+			StartTime: time.Now().Add(-time.Duration(duration) * time.Second), EndTime: time.Now()}}
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", amplifier, targetIP, "UDP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
@@ -301,7 +324,11 @@ func runHTTP2Reset(req AttackRequest) (*AttackResult, error) {
 			eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", req.AttackerIP, targetIP, "TCP", ev)
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
-		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 443, Protocol: 6, Bytes: uint32(streams * 50), Packets: uint32(streams * 2), StartTime: time.Now().Add(-30 * time.Second), EndTime: time.Now(), TCPFlags: 0x18}}
+		duration := getAttackParamInt(req.Params, "duration", 30)
+		totalStreams := streams * duration
+		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 443, Protocol: 6,
+			Bytes: uint32(totalStreams * 50), Packets: uint32(totalStreams * 2),
+			StartTime: time.Now().Add(-time.Duration(duration) * time.Second), EndTime: time.Now(), TCPFlags: 0x18}}
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
@@ -332,8 +359,15 @@ func runSSLExhaustion(req AttackRequest) (*AttackResult, error) {
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 		var flows []FlowRecord
-		for idx := 0; idx < 20; idx++ {
-			flows = append(flows, FlowRecord{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: uint16(targetPort), Protocol: 6, Bytes: 300, Packets: 3, StartTime: time.Now(), EndTime: time.Now().Add(time.Second), TCPFlags: 0x02})
+		duration := getAttackParamInt(req.Params, "duration", 30)
+		sslFlowCount := 20 * duration / 30 // scale number of handshake flows with duration
+		if sslFlowCount < 1 {
+			sslFlowCount = 1
+		}
+		for idx := 0; idx < sslFlowCount; idx++ {
+			flows = append(flows, FlowRecord{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: uint16(targetPort), Protocol: 6,
+				Bytes: 300, Packets: 3, // fixed per-handshake size
+				StartTime: time.Now().Add(-time.Duration(duration) * time.Second), EndTime: time.Now(), TCPFlags: 0x02})
 		}
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
@@ -364,7 +398,11 @@ func runMemcachedAmp(req AttackRequest) (*AttackResult, error) {
 			eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", reflector, targetIP, "UDP", ev)
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
-		flows := []FlowRecord{{SrcIP: reflector, DstIP: targetIP, SrcPort: 11211, DstPort: randomPort(), Protocol: 17, Bytes: 100000000, Packets: 20000, StartTime: time.Now().Add(-60 * time.Second), EndTime: time.Now()}}
+		duration := getAttackParamInt(req.Params, "duration", 60)
+		mcPkts := uint32(20000 / 60 * duration) // ~333 pps baseline
+		flows := []FlowRecord{{SrcIP: reflector, DstIP: targetIP, SrcPort: 11211, DstPort: randomPort(), Protocol: 17,
+			Bytes: mcPkts * 5000, Packets: mcPkts,
+			StartTime: time.Now().Add(-time.Duration(duration) * time.Second), EndTime: time.Now()}}
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", reflector, targetIP, "UDP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
@@ -401,7 +439,14 @@ func runRUDY(req AttackRequest) (*AttackResult, error) {
 		}
 		var flows []FlowRecord
 		for idx := 0; idx < flowCount; idx++ {
-			flows = append(flows, FlowRecord{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: 50, Packets: 1, StartTime: time.Now().Add(-600 * time.Second), EndTime: time.Now(), TCPFlags: 0x18})
+			duration := getAttackParamInt(req.Params, "duration", 600)
+			rudyPkts := uint32(duration / 10) // 1 packet every 10s — RUDY's defining characteristic
+			if rudyPkts < 1 {
+				rudyPkts = 1
+			}
+			flows = append(flows, FlowRecord{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6,
+				Bytes: rudyPkts * 50, Packets: rudyPkts, // fixed 50 bytes per drip packet
+				StartTime: time.Now().Add(-time.Duration(duration) * time.Second), EndTime: time.Now(), TCPFlags: 0x18})
 		}
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
@@ -433,7 +478,14 @@ func runACKFlood(req AttackRequest) (*AttackResult, error) {
 		result.SyslogCount++
 		eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", req.AttackerIP, targetIP, "TCP", ev)
 		result.EventIDs = append(result.EventIDs, eventID)
-		flows := FlowDDoS(sources, targetIP, targetPort, uint32(pps/10))
+		duration := getAttackParamInt(req.Params, "duration", 30)
+		totalPkts := uint32(pps * duration / len(sources))
+		flows := FlowDDoS(sources, targetIP, targetPort, totalPkts)
+		for i := range flows {
+			flows[i].StartTime = time.Now().Add(-time.Duration(duration) * time.Second)
+			flows[i].EndTime = time.Now()
+			flows[i].Bytes = totalPkts * 60 // fixed 60 bytes per ACK packet
+		}
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
@@ -463,7 +515,11 @@ func runRSTFlood(req AttackRequest) (*AttackResult, error) {
 			eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", req.AttackerIP, targetIP, "TCP", ev)
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
-		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: targetPort, Protocol: 6, Bytes: 60000, Packets: 1000, StartTime: time.Now().Add(-10 * time.Second), EndTime: time.Now(), TCPFlags: 0x04}}
+		duration := getAttackParamInt(req.Params, "duration", 30)
+		rstPkts := uint32(1000 / 10 * duration) // 100 pps baseline
+		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: targetPort, Protocol: 6,
+			Bytes: rstPkts * 60, Packets: rstPkts,
+			StartTime: time.Now().Add(-time.Duration(duration) * time.Second), EndTime: time.Now(), TCPFlags: 0x04}}
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
