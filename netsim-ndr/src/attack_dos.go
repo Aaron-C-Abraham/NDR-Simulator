@@ -51,7 +51,13 @@ func runSYNFlood(req AttackRequest) (*AttackResult, error) {
 		}
 
 		// Flows: flood from many sources
+		// NEW
 		flows := FlowDDoS(sources[:10], targetIP, targetPort, uint32(pps*duration/10))
+		// Adjust StartTime to reflect actual attack duration
+		for i := range flows {
+			flows[i].StartTime = time.Now().Add(-time.Duration(duration) * time.Second)
+			flows[i].EndTime = time.Now()
+		}
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
