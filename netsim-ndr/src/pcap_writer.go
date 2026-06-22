@@ -400,7 +400,7 @@ func buildDNSQueryType(domain string, qtype uint16) []byte {
 // of early SYNs receive a SYN-ACK back, since a real target doesn't drop
 // every single packet from the very first one; the backlog only fills
 // up partway through the flood.
-func PCAPSYNFlood(runID, targetIP string, targetPort uint16, sourceIPs []string) (string, error) {
+func PCAPSYNFlood(runID, targetIP string, targetPort uint16, sourceIPs []string, duration int) (string, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAPSYNFlood target=%s port=%d sources=%d", targetIP, targetPort, len(sourceIPs))
 
@@ -411,12 +411,22 @@ func PCAPSYNFlood(runID, targetIP string, targetPort uint16, sourceIPs []string)
 	// Respond to roughly the first 10% of sources (or at least 1, if any
 	// sources exist) before the simulated backlog "fills up" and the
 	// target stops replying for the rest of the flood.
-	replyCount := len(sourceIPs) / 10
-	if replyCount < 1 && len(sourceIPs) > 0 {
+	replyCount := 1 // will be recalculated after scaling
+
+	// Scale packet count with duration — repeat source IPs to simulate sustained flood
+	pktsPerSrc := duration / 30
+	if pktsPerSrc < 1 {
+		pktsPerSrc = 1
+	}
+	var scaledSources []string
+	for i := 0; i < pktsPerSrc; i++ {
+		scaledSources = append(scaledSources, sourceIPs...)
+	}
+	replyCount = len(scaledSources) / 10
+	if replyCount < 1 && len(scaledSources) > 0 {
 		replyCount = 1
 	}
-
-	for idx, srcIP := range sourceIPs {
+	for idx, srcIP := range scaledSources {
 		srcPort := randomPort()
 		srcMAC := [6]byte{0x00, byte(rand.Intn(255)), byte(rand.Intn(255)), byte(rand.Intn(255)), byte(rand.Intn(255)), byte(rand.Intn(255))}
 		clientSeq := rand.Uint32()

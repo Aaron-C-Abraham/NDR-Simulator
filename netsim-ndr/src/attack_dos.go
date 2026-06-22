@@ -64,7 +64,7 @@ func runSYNFlood(req AttackRequest) (*AttackResult, error) {
 		result.EventIDs = append(result.EventIDs, fids...)
 
 		// PCAP (Option B)
-		path, _ := PCAPSYNFlood(req.RunID, targetIP, targetPort, sources)
+		path, _ := PCAPSYNFlood(req.RunID, targetIP, targetPort, sources, duration)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
