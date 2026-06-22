@@ -39,19 +39,13 @@ func writeLogLine(runID, format, line string) error {
 		return nil
 	}
 
-	runDir := filepath.Join(GlobalLogsDir, runID)
-	if err := ensureDir(runDir); err != nil {
-		logError("writeLogLine ensureDir %s: %v", runDir, err)
-		return err
-	}
-
-	lockKey := runID + ":" + format
+	lockKey := format
 	lockIface, _ := logWriteLocks.LoadOrStore(lockKey, &sync.Mutex{})
 	lock := lockIface.(*sync.Mutex)
 	lock.Lock()
 	defer lock.Unlock()
 
-	path := filepath.Join(runDir, format+".log")
+	path := filepath.Join(GlobalLogsDir, format+".log")
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		logError("writeLogLine open %s: %v", path, err)
@@ -60,7 +54,7 @@ func writeLogLine(runID, format, line string) error {
 	defer file.Close()
 
 	timestamp := time.Now().UTC().Format(time.RFC3339)
-	if _, err := fmt.Fprintf(file, "%s %s\n", timestamp, line); err != nil {
+	if _, err := fmt.Fprintf(file, "%s run_id=%s %s\n", timestamp, runID, line); err != nil {
 		logError("writeLogLine write %s: %v", path, err)
 		return err
 	}
