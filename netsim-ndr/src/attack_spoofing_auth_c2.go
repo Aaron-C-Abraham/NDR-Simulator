@@ -34,21 +34,50 @@ func runARPSpoofing(req AttackRequest) (*AttackResult, error) {
 		}
 	}
 
-	// PCAP: gratuitous ARP reply claiming to own victimIP, sent to broadcast
+	// PCAP: ARP request from victim + legitimate reply from gateway + forged reply from attacker
 	srcMAC := parseMACAddress(attackerDev.MACAddress)
 	broadMAC := parseMACAddress("FF:FF:FF:FF:FF:FF")
-	for idx := 0; idx < 5; idx++ {
-		reply := buildARPReply(srcMAC, broadMAC, victimIP, victimIP)
-		frame := buildEthernetFrameARP(srcMAC, broadMAC, reply, 0x0806)
-		frames = append(frames, frame)
+
+	victimDev, _ := getDeviceByIP(victimIP)
+	var victimMAC [6]byte
+	if victimDev != nil {
+		victimMAC = parseMACAddress(victimDev.MACAddress)
+	} else {
+		victimMAC = [6]byte{0x00, 0xBB, 0x22, 0x33, 0x44, 0x55}
 	}
+
+	fw := getFirewall()
+	var gwMAC [6]byte
+	gwIP := ""
+	if fw != nil {
+		gwMAC = parseMACAddress(fw.MACAddress)
+		gwIP = fw.IPAddress
+	} else {
+		gwMAC = [6]byte{0x00, 0xCC, 0x33, 0x44, 0x55, 0x66}
+		gwIP = "10.0.0.1"
+	}
+
+	// 1. ARP Request — victim broadcasts "who has gwIP?"
+	request := buildARPRequest(victimMAC, victimIP, gwIP)
+	reqFrame := buildEthernetFrameARP(victimMAC, broadMAC, request, 0x0806)
+	frames = append(frames, reqFrame)
+
+	// 2. Legitimate ARP Reply — real gateway responds to victim
+	legitReply := buildARPReply(gwMAC, victimMAC, gwIP, victimIP)
+	legitFrame := buildEthernetFrameARP(gwMAC, victimMAC, legitReply, 0x0806)
+	frames = append(frames, legitFrame)
+
+	// 3. Forged ARP Reply — attacker claims to be the gateway (poison)
+	forgedReply := buildARPReply(srcMAC, victimMAC, gwIP, victimIP)
+	forgedFrame := buildEthernetFrameARP(srcMAC, victimMAC, forgedReply, 0x0806)
+	frames = append(frames, forgedFrame)
+
 	path, _ := writePCAPFile(req.RunID, "arp_spoof", frames, defaultDuration)
 	if path != "" {
 		result.PCAPFiles = append(result.PCAPFiles, path)
 	}
 
 	// Flow export — ARP gratuitous replies, one per switch
-	fw := getFirewall()
 	for _, swDev := range switches {
 		if swDev.DeviceType != "switch" {
 			continue
@@ -93,15 +122,47 @@ func runIPSourceSpoof(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
 
-		// PCAP: single forged-source TCP SYN, MAC addresses synthesized since
-		// a spoofed source IP has no real device entry to pull a MAC from
+		// PCAP: finite loop of SYN → SYN-ACK → ACK-RST sequences
+		// simulating IP source spoof where attacker uses spoofIP as source
 		targetDev, _ := getDeviceByIP(targetIP)
+		spoofDev, _ := getDeviceByIP(spoofIP)
 		if targetDev != nil {
-			srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+			attackerDev := getAttackerDevice()
 			dstMAC := parseMACAddress(targetDev.MACAddress)
-			syn := buildTCPSegment(randomPort(), 443, 0x02, rand.Uint32(), 0, nil)
-			frame := buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(spoofIP, targetIP, 6, syn))
-			path, _ := writePCAPFile(req.RunID, "ip_source_spoof", [][]byte{frame}, defaultDuration)
+			attackerMAC := parseMACAddress(attackerDev.MACAddress)
+
+			// spoofed device MAC — use real MAC if available, else synthesize
+			var spoofMAC [6]byte
+			if spoofDev != nil {
+				spoofMAC = parseMACAddress(spoofDev.MACAddress)
+			} else {
+				spoofMAC = [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+			}
+
+			var frames [][]byte
+			for idx := 0; idx < 5; idx++ {
+				srcPort := randomPort()
+				dstPort := uint16(443)
+				clientSeq := rand.Uint32()
+				serverSeq := rand.Uint32()
+
+				// 1. TCP SYN — attacker's MAC, spoofed source IP, to destination
+				syn := buildTCPSegment(srcPort, dstPort, 0x02, clientSeq, 0, nil)
+				synFrame := buildEthernetFrame(attackerMAC, dstMAC, buildIPv4Packet(spoofIP, targetIP, 6, syn))
+				frames = append(frames, synFrame)
+
+				// 2. TCP SYN-ACK — destination replies to spoofIP (the "target")
+				synAck := buildTCPSegment(dstPort, srcPort, 0x12, serverSeq, clientSeq+1, nil)
+				synAckFrame := buildEthernetFrame(dstMAC, spoofMAC, buildIPv4Packet(targetIP, spoofIP, 6, synAck))
+				frames = append(frames, synAckFrame)
+
+				// 3. TCP RST — spoofIP rejects the unexpected SYN-ACK
+				rst := buildTCPSegment(srcPort, dstPort, 0x14, clientSeq+1, serverSeq+1, nil) // ACK+RST = 0x14
+				rstFrame := buildEthernetFrame(spoofMAC, dstMAC, buildIPv4Packet(spoofIP, targetIP, 6, rst))
+				frames = append(frames, rstFrame)
+			}
+
+			path, _ := writePCAPFile(req.RunID, "ip_source_spoof", frames, defaultDuration)
 			if path != "" {
 				result.PCAPFiles = append(result.PCAPFiles, path)
 			}
@@ -156,13 +217,95 @@ func runMACSpoofing(req AttackRequest) (*AttackResult, error) {
 		eventID, _ := recordRunEvent(req.RunID, "syslog", swDev.Name, req.AttackerIP, "broadcast", "ETH", ev)
 		result.EventIDs = append(result.EventIDs, eventID)
 
-		// PCAP: attacker's frame using the cloned/target MAC as source
+		// PCAP: target device sends normal TCP traffic, then attacker clones
+		// target's MAC and requests a different IP from DHCP server
 		if attackerDev != nil {
 			clonedMAC := parseMACAddress(targetMAC)
 			dstMAC := parseMACAddress(swDev.MACAddress)
-			syn := buildTCPSegment(randomPort(), 80, 0x02, rand.Uint32(), 0, nil)
-			frame := buildEthernetFrame(clonedMAC, dstMAC, buildIPv4Packet(attackerDev.IPAddress, swDev.IPAddress, 6, syn))
-			path, _ := writePCAPFile(req.RunID, "mac_spoof", [][]byte{frame}, defaultDuration)
+			broadcastMAC := [6]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
+
+			// Find the target device to get its real IP
+			var targetDevIP string
+			for _, d := range getAllDevices() {
+				if d.MACAddress == targetMAC {
+					targetDevIP = d.IPAddress
+					break
+				}
+			}
+			if targetDevIP == "" {
+				targetDevIP = "10.0.1.10" // fallback
+			}
+
+			// Find a few other devices on the network for target to send traffic to
+			var otherDevices []*Device
+			for _, d := range getDevicesByZone("internal") {
+				if d.MACAddress != targetMAC && d.DeviceType != "switch" && len(otherDevices) < 3 {
+					otherDevices = append(otherDevices, d)
+				}
+			}
+
+			var frames [][]byte
+
+			// Phase 1: Target device sends normal TCP traffic to other computers
+			for _, other := range otherDevices {
+				otherMAC := parseMACAddress(other.MACAddress)
+				// SYN
+				srcPort := randomPort()
+				seq := rand.Uint32()
+				syn := buildTCPSegment(srcPort, 80, 0x02, seq, 0, nil)
+				synFrame := buildEthernetFrame(clonedMAC, otherMAC, buildIPv4Packet(targetDevIP, other.IPAddress, 6, syn))
+				frames = append(frames, synFrame)
+				// SYN-ACK from other device
+				serverSeq := rand.Uint32()
+				synAck := buildTCPSegment(80, srcPort, 0x12, serverSeq, seq+1, nil)
+				synAckFrame := buildEthernetFrame(otherMAC, clonedMAC, buildIPv4Packet(other.IPAddress, targetDevIP, 6, synAck))
+				frames = append(frames, synAckFrame)
+				// ACK from target
+				ack := buildTCPSegment(srcPort, 80, 0x10, seq+1, serverSeq+1, nil)
+				ackFrame := buildEthernetFrame(clonedMAC, otherMAC, buildIPv4Packet(targetDevIP, other.IPAddress, 6, ack))
+				frames = append(frames, ackFrame)
+			}
+
+			// Phase 2: Attacker sends DHCP Discover using cloned MAC requesting different IP
+			xid := rand.Uint32()
+			discoverOptions := []byte{}
+			discoverOptions = append(discoverOptions, buildDHCPOption(53, []byte{0x01})...)                   // DHCP Discover
+			discoverOptions = append(discoverOptions, buildDHCPOption(50, []byte{192, 168, 1, 99})...)        // Request different IP
+			discoverOptions = append(discoverOptions, buildDHCPOption(55, []byte{0x01, 0x03, 0x06, 0x0f})...) // Parameter request list
+			discover := buildDHCPPacket(0x01, xid, clonedMAC, "0.0.0.0", "0.0.0.0", "0.0.0.0", "0.0.0.0", discoverOptions)
+			discoverFrame := buildEthernetFrame(clonedMAC, broadcastMAC, buildIPv4Packet(attackerDev.IPAddress, "255.255.255.255", 17, buildUDPDatagram(68, 67, discover)))
+			frames = append(frames, discoverFrame)
+
+			// Phase 3: DHCP Offer from server — offers the requested different IP
+			offerOptions := []byte{}
+			offerOptions = append(offerOptions, buildDHCPOption(53, []byte{0x02})...)                   // DHCP Offer
+			offerOptions = append(offerOptions, buildDHCPOption(51, []byte{0x00, 0x01, 0x51, 0x80})...) // Lease time 86400s
+			offerOptions = append(offerOptions, buildDHCPOption(1, []byte{255, 255, 255, 0})...)        // Subnet mask
+			offerOptions = append(offerOptions, buildDHCPOption(3, []byte{10, 0, 1, 1})...)             // Router
+			offer := buildDHCPPacket(0x02, xid, clonedMAC, "0.0.0.0", "192.168.1.99", swDev.IPAddress, "0.0.0.0", offerOptions)
+			offerFrame := buildEthernetFrame(dstMAC, clonedMAC, buildIPv4Packet(swDev.IPAddress, "255.255.255.255", 17, buildUDPDatagram(67, 68, offer)))
+			frames = append(frames, offerFrame)
+
+			// Phase 4: DHCP Request — attacker formally requests the offered IP
+			requestOptions := []byte{}
+			requestOptions = append(requestOptions, buildDHCPOption(53, []byte{0x03})...)                   // DHCP Request
+			requestOptions = append(requestOptions, buildDHCPOption(50, []byte{192, 168, 1, 99})...)        // Requested IP
+			requestOptions = append(requestOptions, buildDHCPOption(54, dhcpIPv4Bytes(swDev.IPAddress))...) // Server identifier
+			request := buildDHCPPacket(0x01, xid, clonedMAC, "0.0.0.0", "0.0.0.0", "0.0.0.0", "0.0.0.0", requestOptions)
+			requestFrame := buildEthernetFrame(clonedMAC, broadcastMAC, buildIPv4Packet(attackerDev.IPAddress, "255.255.255.255", 17, buildUDPDatagram(68, 67, request)))
+			frames = append(frames, requestFrame)
+
+			// Phase 5: DHCP ACK — server confirms the lease for the cloned MAC with new IP
+			ackOptions := []byte{}
+			ackOptions = append(ackOptions, buildDHCPOption(53, []byte{0x05})...)                   // DHCP ACK
+			ackOptions = append(ackOptions, buildDHCPOption(51, []byte{0x00, 0x01, 0x51, 0x80})...) // Lease time
+			ackOptions = append(ackOptions, buildDHCPOption(1, []byte{255, 255, 255, 0})...)        // Subnet mask
+			ackOptions = append(ackOptions, buildDHCPOption(3, []byte{10, 0, 1, 1})...)             // Router
+			dhcpAck := buildDHCPPacket(0x02, xid, clonedMAC, "0.0.0.0", "192.168.1.99", swDev.IPAddress, "0.0.0.0", ackOptions)
+			dhcpAckFrame := buildEthernetFrame(dstMAC, clonedMAC, buildIPv4Packet(swDev.IPAddress, "255.255.255.255", 17, buildUDPDatagram(67, 68, dhcpAck)))
+			frames = append(frames, dhcpAckFrame)
+
+			path, _ := writePCAPFile(req.RunID, "mac_spoof", frames, defaultDuration)
 			if path != "" {
 				result.PCAPFiles = append(result.PCAPFiles, path)
 			}
@@ -170,7 +313,7 @@ func runMACSpoofing(req AttackRequest) (*AttackResult, error) {
 			// Flow export — cloned MAC frames sent to switch
 			fw := getFirewall()
 			duration := getAttackParamInt(req.Params, "duration", 30)
-			macPkts := uint32(10 * duration / 30) // ~10 frames per 30s baseline
+			macPkts := uint32(10 * duration / 30)
 			if macPkts < 1 {
 				macPkts = 1
 			}

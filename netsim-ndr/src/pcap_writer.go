@@ -133,13 +133,12 @@ func buildEthernetFrame(srcMAC, dstMAC [6]byte, ipPayload []byte) []byte {
 	copy(frame[14:], ipPayload)
 	return frame
 }
-func buildEthernetFrameARP(srcMAC, dstMAC [6]byte, ipPayload []byte, protocol uint16) []byte {
-	frame := make([]byte, 15+len(ipPayload))
+func buildEthernetFrameARP(srcMAC, dstMAC [6]byte, arpPayload []byte, protocol uint16) []byte {
+	frame := make([]byte, 14+len(arpPayload))
 	copy(frame[0:6], dstMAC[:])
 	copy(frame[6:12], srcMAC[:])
 	binary.BigEndian.PutUint16(frame[12:14], protocol)
-	frame[14] = 0x00
-	copy(frame[15:], ipPayload)
+	copy(frame[14:], arpPayload)
 	return frame
 }
 
@@ -918,37 +917,106 @@ func PCAPGenericTCPExchange(runID, attackName, attackerIP, targetIP string, targ
 	return path, err
 }
 
-// PCAPDNSQueryResponse generates a single DNS query/response pair, used for
-// DGA lookups (NXDOMAIN) and DNS cache poisoning (forged answer).
+// PCAPDNSQueryResponse generates DNS query/response pairs.
+// For DGA (nxdomain=true): single query + NXDOMAIN response.
+// For DNS cache poisoning (nxdomain=false): single query + multiple forged
+// responses from attacker with different source ports and TXIDs, simulating
+// a Kaminsky-style cache poisoning attack. One response is finally accepted.
 func PCAPDNSQueryResponse(runID, attackName, clientIP, dnsIP string, domain string, nxdomain bool) (string, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAPDNSQueryResponse attack=%s client=%s dns=%s domain=%s", attackName, clientIP, dnsIP, domain)
 
 	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
 	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
-	srcPort := randomPort()
+	attackerMAC := [6]byte{0x00, 0xBB, 0x22, 0x33, 0x44, byte(rand.Intn(255))}
 
-	qtype := uint16(0x0010) // TXT, for DGA NXDOMAIN lookups
-	if !nxdomain {
-		qtype = 0x0001 // A record, for DNS spoofing/poisoning
-	}
-	query := buildDNSQueryType(domain, qtype)
-	queryFrame := buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(clientIP, dnsIP, 17, buildUDPDatagram(srcPort, 53, query)))
-
-	// Minimal response: same header bytes as the query but with the QR bit
-	// set and (for nxdomain) RCODE=3; this is not a byte-accurate DNS
-	// response, just enough to show a reply on the wire.
-	response := make([]byte, len(query))
-	copy(response, query)
-	response[2] = 0x81 // QR=1, response
 	if nxdomain {
-		response[3] = 0x83 // RCODE=3 NXDOMAIN
-	} else {
-		response[3] = 0x80 // RCODE=0 (forged success answer for poisoning case)
-	}
-	responseFrame := buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(dnsIP, clientIP, 17, buildUDPDatagram(53, srcPort, response)))
+		// DGA case: single query + NXDOMAIN response
+		srcPort := randomPort()
+		query := buildDNSQueryType(domain, 0x0010) // TXT
+		queryFrame := buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(clientIP, dnsIP, 17, buildUDPDatagram(srcPort, 53, query)))
 
-	frames := [][]byte{queryFrame, responseFrame}
+		response := make([]byte, len(query))
+		copy(response, query)
+		response[2] = 0x81
+		response[3] = 0x83 // RCODE=3 NXDOMAIN
+		responseFrame := buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(dnsIP, clientIP, 17, buildUDPDatagram(53, srcPort, response)))
+
+		frames := [][]byte{queryFrame, responseFrame}
+		path, err := writePCAPFile(runID, attackName, frames, defaultDuration)
+		logInfo("Return from PCAPDNSQueryResponse frames=%d path=%s", len(frames), path)
+		return path, err
+	}
+
+	// DNS Cache Poisoning case (Kaminsky-style):
+	var frames [][]byte
+
+	resolverPort := randomPort()
+	txid := uint16(rand.Intn(65536))
+
+	// Build question section once — reused in all responses
+	parts := splitDomain(domain)
+	var questionSection []byte
+	for _, part := range parts {
+		questionSection = append(questionSection, byte(len(part)))
+		questionSection = append(questionSection, []byte(part)...)
+	}
+	questionSection = append(questionSection, 0x00)       // null terminator
+	questionSection = append(questionSection, 0x00, 0x01) // QTYPE A
+	questionSection = append(questionSection, 0x00, 0x01) // QCLASS IN
+
+	// Forged answer: 198.51.100.1
+	forgedAnswerSection := []byte{
+		0xC0, 0x0C, 0x00, 0x01, 0x00, 0x01,
+		0x00, 0x00, 0x00, 0x3C, 0x00, 0x04,
+		0xC6, 0x33, 0x64, 0x01,
+	}
+
+	// Real answer: 8.8.8.8
+	realAnswerSection := []byte{
+		0xC0, 0x0C, 0x00, 0x01, 0x00, 0x01,
+		0x00, 0x00, 0x01, 0x2C, 0x00, 0x04,
+		0x08, 0x08, 0x08, 0x08,
+	}
+
+	buildDNSResponse := func(id uint16, answer []byte) []byte {
+		var buf []byte
+		buf = append(buf, byte(id>>8), byte(id&0xFF))
+		buf = append(buf, 0x81, 0x80)
+		buf = append(buf, 0x00, 0x01)
+		buf = append(buf, 0x00, 0x01)
+		buf = append(buf, 0x00, 0x00)
+		buf = append(buf, 0x00, 0x00)
+		buf = append(buf, questionSection...)
+		buf = append(buf, answer...)
+		return buf
+	}
+
+	// Frame 1: Resolver queries upstream DNS
+	query := buildDNSQueryType(domain, 0x0001)
+	binary.BigEndian.PutUint16(query[0:2], txid)
+	queryFrame := buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(clientIP, dnsIP, 17, buildUDPDatagram(resolverPort, 53, query)))
+	frames = append(frames, queryFrame)
+
+	// Frames 2-11: Attacker floods wrong TXIDs from different source ports
+	for i := 0; i < 10; i++ {
+		wrongTXID := uint16(rand.Intn(65536))
+		forgedResponse := buildDNSResponse(wrongTXID, forgedAnswerSection)
+		attackerSrcPort := randomPort()
+		forgedFrame := buildEthernetFrame(attackerMAC, srcMAC, buildIPv4Packet("198.51.100.1", clientIP, 17, buildUDPDatagram(attackerSrcPort, resolverPort, forgedResponse)))
+		frames = append(frames, forgedFrame)
+	}
+
+	// Frame 12: Winning forged response — correct TXID, accepted by resolver
+	winningResponse := buildDNSResponse(txid, forgedAnswerSection)
+	winningFrame := buildEthernetFrame(attackerMAC, srcMAC, buildIPv4Packet("198.51.100.1", clientIP, 17, buildUDPDatagram(randomPort(), resolverPort, winningResponse)))
+	frames = append(frames, winningFrame)
+
+	// Frame 13: Legitimate response arrives too late — ignored
+	legitResponse := buildDNSResponse(txid, realAnswerSection)
+	legitFrame := buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(dnsIP, clientIP, 17, buildUDPDatagram(53, resolverPort, legitResponse)))
+	frames = append(frames, legitFrame)
+
 	path, err := writePCAPFile(runID, attackName, frames, defaultDuration)
 	logInfo("Return from PCAPDNSQueryResponse frames=%d path=%s", len(frames), path)
 	return path, err
@@ -2013,37 +2081,100 @@ func dhcpIPv4Bytes(ip string) []byte {
 
 // ── PCAP generators ───────────────────────────────────────────────────────────
 
-// PCAPDHCPStarvation simulates a DHCP starvation attack: many DISCOVER
-// packets, each from a different spoofed MAC, broadcast to the DHCP server.
-// No OFFER/ACK responses are generated since the pool is exhausted — that's
-// the point of the attack (the server stops replying once leases run out).
+// PCAPDHCPStarvation simulates a DHCP starvation attack: many DISCOVER/REQUEST
+// pairs each from a different spoofed MAC, with OFFER/ACK responses from the
+// server until the pool is exhausted. The last 3 requests get DHCPNAK
+// (no available IPs) instead of an offer.
 func PCAPDHCPStarvation(runID string, count int) (string, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAPDHCPStarvation count=%d", count)
 
-	broadcastMAC := parseMACAddress("FF:FF:FF:FF:FF:FF")
 	if count > 200 {
-		count = 200 // cap PCAP size; syslog/netflow already reflect the full 500-MAC count
+		count = 200
 	}
+
+	// Find DHCP server — use switch IP as fallback
+	var serverIP string
+	var serverMAC [6]byte
+	for _, d := range getAllDevices() {
+		if d.DeviceType == "switch" || d.DeviceType == "router" {
+			serverIP = d.IPAddress
+			serverMAC = parseMACAddress(d.MACAddress)
+			break
+		}
+	}
+	if serverIP == "" {
+		serverIP = "10.0.1.1"
+		serverMAC = [6]byte{0x00, 0x11, 0x22, 0x33, 0x44, 0x01}
+	}
+
+	broadcastMAC := parseMACAddress("FF:FF:FF:FF:FF:FF")
+	exhaustedAt := count - 3 // last 3 requests get DHCPNAK
+
 	var frames [][]byte
 	for i := 0; i < count; i++ {
 		clientMAC := [6]byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, byte(i % 256)}
-		opts := buildDHCPOption(53, []byte{1}) // DHCP Discover
-		opts = append(opts, buildDHCPOption(61, append([]byte{0x01}, clientMAC[:]...))...)
-		opts = append(opts, buildDHCPOption(55, []byte{1, 3, 6, 15})...)
-		dhcp := buildDHCPPacket(1, uint32(0x10000+i), clientMAC, "0.0.0.0", "0.0.0.0", "0.0.0.0", "0.0.0.0", opts)
-		udp := buildUDPDatagram(68, 67, dhcp)
-		ip := buildIPv4Packet("0.0.0.0", "255.255.255.255", 17, udp)
-		frames = append(frames, buildEthernetFrame(clientMAC, broadcastMAC, ip))
+		xid := uint32(0x10000 + i)
+
+		// DHCP Discover — spoofed MAC broadcasts to find server
+		discOpts := buildDHCPOption(53, []byte{0x01}) // Discover
+		discOpts = append(discOpts, buildDHCPOption(61, append([]byte{0x01}, clientMAC[:]...))...)
+		discOpts = append(discOpts, buildDHCPOption(55, []byte{0x01, 0x03, 0x06, 0x0f})...)
+		discover := buildDHCPPacket(0x01, xid, clientMAC, "0.0.0.0", "0.0.0.0", "0.0.0.0", "0.0.0.0", discOpts)
+		discFrame := buildEthernetFrame(clientMAC, broadcastMAC, buildIPv4Packet("0.0.0.0", "255.255.255.255", 17, buildUDPDatagram(68, 67, discover)))
+		frames = append(frames, discFrame)
+
+		if i < exhaustedAt {
+			// Pool not yet exhausted — server sends DHCP Offer
+			offeredIP := fmt.Sprintf("10.0.1.%d", (i%200)+10)
+			offerOpts := buildDHCPOption(53, []byte{0x02})                                        // Offer
+			offerOpts = append(offerOpts, buildDHCPOption(51, []byte{0x00, 0x01, 0x51, 0x80})...) // Lease 86400s
+			offerOpts = append(offerOpts, buildDHCPOption(54, dhcpIPv4Bytes(serverIP))...)        // Server ID
+			offerOpts = append(offerOpts, buildDHCPOption(1, []byte{255, 255, 255, 0})...)        // Subnet mask
+			offerOpts = append(offerOpts, buildDHCPOption(3, dhcpIPv4Bytes(serverIP))...)         // Router
+			offer := buildDHCPPacket(0x02, xid, clientMAC, "0.0.0.0", offeredIP, serverIP, "0.0.0.0", offerOpts)
+			offerFrame := buildEthernetFrame(serverMAC, clientMAC, buildIPv4Packet(serverIP, "255.255.255.255", 17, buildUDPDatagram(67, 68, offer)))
+			frames = append(frames, offerFrame)
+
+			// DHCP Request — client requests the offered IP
+			reqOpts := buildDHCPOption(53, []byte{0x03})                                // Request
+			reqOpts = append(reqOpts, buildDHCPOption(50, dhcpIPv4Bytes(offeredIP))...) // Requested IP
+			reqOpts = append(reqOpts, buildDHCPOption(54, dhcpIPv4Bytes(serverIP))...)  // Server ID
+			request := buildDHCPPacket(0x01, xid, clientMAC, "0.0.0.0", "0.0.0.0", "0.0.0.0", "0.0.0.0", reqOpts)
+			reqFrame := buildEthernetFrame(clientMAC, broadcastMAC, buildIPv4Packet("0.0.0.0", "255.255.255.255", 17, buildUDPDatagram(68, 67, request)))
+			frames = append(frames, reqFrame)
+
+			// DHCP ACK — server confirms lease
+			ackOpts := buildDHCPOption(53, []byte{0x05}) // ACK
+			ackOpts = append(ackOpts, buildDHCPOption(51, []byte{0x00, 0x01, 0x51, 0x80})...)
+			ackOpts = append(ackOpts, buildDHCPOption(54, dhcpIPv4Bytes(serverIP))...)
+			ackOpts = append(ackOpts, buildDHCPOption(1, []byte{255, 255, 255, 0})...)
+			dhcpAck := buildDHCPPacket(0x02, xid, clientMAC, "0.0.0.0", offeredIP, serverIP, "0.0.0.0", ackOpts)
+			ackFrame := buildEthernetFrame(serverMAC, clientMAC, buildIPv4Packet(serverIP, "255.255.255.255", 17, buildUDPDatagram(67, 68, dhcpAck)))
+			frames = append(frames, ackFrame)
+		} else {
+			// Pool exhausted — server sends DHCPNAK (no available IPs)
+			nakOpts := buildDHCPOption(53, []byte{0x06}) // NAK
+			nakOpts = append(nakOpts, buildDHCPOption(54, dhcpIPv4Bytes(serverIP))...)
+			nakOpts = append(nakOpts, buildDHCPOption(56, []byte("No available IPs in pool"))...) // Message
+			nak := buildDHCPPacket(0x02, xid, clientMAC, "0.0.0.0", "0.0.0.0", serverIP, "0.0.0.0", nakOpts)
+			nakFrame := buildEthernetFrame(serverMAC, broadcastMAC, buildIPv4Packet(serverIP, "255.255.255.255", 17, buildUDPDatagram(67, 68, nak)))
+			frames = append(frames, nakFrame)
+		}
 	}
+
 	path, err := writePCAPFile(runID, "dhcp_starvation", frames, defaultDuration)
 	logInfo("Return from PCAPDHCPStarvation frames=%d path=%s", len(frames), path)
 	return path, err
 }
 
-// PCAPRogueDHCP simulates a rogue DHCP server: a victim's broadcast DISCOVER,
-// followed by the attacker's rogue OFFER advertising itself as the gateway —
-// racing the legitimate server's response.
+// PCAPRogueDHCP simulates a rogue DHCP server racing the legitimate server:
+// 1. Victim broadcasts DHCP Discover
+// 2. Attacker's rogue OFFER arrives first (attacker as router and DHCP server)
+// 3. Legitimate server's OFFER arrives second (too late)
+// 4. Victim accepts attacker's offer with DHCP Request
+// 5. Attacker sends DHCP ACK — victim now uses attacker as gateway
+// 6. Legitimate server sends NAK — its offer was not accepted
 func PCAPRogueDHCP(runID, attackerIP, fakeGateway string) (string, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAPRogueDHCP attacker=%s fakeGateway=%s", attackerIP, fakeGateway)
@@ -2053,22 +2184,81 @@ func PCAPRogueDHCP(runID, attackerIP, fakeGateway string) (string, error) {
 	victimMAC := [6]byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x99}
 	xid := uint32(0x99887766)
 
-	// Victim's DISCOVER (broadcast)
-	discOpts := buildDHCPOption(53, []byte{1})
+	// Find legitimate DHCP server
+	var legitServerIP string
+	var legitServerMAC [6]byte
+	for _, d := range getAllDevices() {
+		if d.DeviceType == "switch" || d.DeviceType == "router" {
+			legitServerIP = d.IPAddress
+			legitServerMAC = parseMACAddress(d.MACAddress)
+			break
+		}
+	}
+	if legitServerIP == "" {
+		legitServerIP = "10.0.0.1"
+		legitServerMAC = [6]byte{0x00, 0x11, 0x22, 0x33, 0x44, 0x01}
+	}
+
+	var frames [][]byte
+
+	// Frame 1: Victim broadcasts DHCP Discover
+	discOpts := buildDHCPOption(53, []byte{0x01}) // Discover
 	discOpts = append(discOpts, buildDHCPOption(61, append([]byte{0x01}, victimMAC[:]...))...)
-	disc := buildDHCPPacket(1, xid, victimMAC, "0.0.0.0", "0.0.0.0", "0.0.0.0", "0.0.0.0", discOpts)
+	discOpts = append(discOpts, buildDHCPOption(55, []byte{0x01, 0x03, 0x06, 0x0f})...)
+	disc := buildDHCPPacket(0x01, xid, victimMAC, "0.0.0.0", "0.0.0.0", "0.0.0.0", "0.0.0.0", discOpts)
 	discFrame := buildEthernetFrame(victimMAC, broadcastMAC, buildIPv4Packet("0.0.0.0", "255.255.255.255", 17, buildUDPDatagram(68, 67, disc)))
+	frames = append(frames, discFrame)
 
-	// Rogue OFFER from attacker, advertising fakeGateway as router (option 3)
-	offerOpts := buildDHCPOption(53, []byte{2}) // Offer
-	offerOpts = append(offerOpts, buildDHCPOption(54, dhcpIPv4Bytes(attackerIP))...)
-	offerOpts = append(offerOpts, buildDHCPOption(51, []byte{0x00, 0x01, 0x51, 0x80})...) // lease 86400s
-	offerOpts = append(offerOpts, buildDHCPOption(1, dhcpIPv4Bytes("255.255.255.0"))...)
-	offerOpts = append(offerOpts, buildDHCPOption(3, dhcpIPv4Bytes(fakeGateway))...) // rogue gateway
-	offer := buildDHCPPacket(2, xid, victimMAC, "0.0.0.0", "10.0.1.50", attackerIP, "0.0.0.0", offerOpts)
-	offerFrame := buildEthernetFrame(attackerMAC, broadcastMAC, buildIPv4Packet(attackerIP, "255.255.255.255", 17, buildUDPDatagram(67, 68, offer)))
+	// Frame 2: Attacker's rogue OFFER arrives first — attacker as router and DHCP server
+	rogueOfferOpts := buildDHCPOption(53, []byte{0x02})                                             // Offer
+	rogueOfferOpts = append(rogueOfferOpts, buildDHCPOption(54, dhcpIPv4Bytes(attackerIP))...)      // Server ID = attacker
+	rogueOfferOpts = append(rogueOfferOpts, buildDHCPOption(51, []byte{0x00, 0x01, 0x51, 0x80})...) // Lease 86400s
+	rogueOfferOpts = append(rogueOfferOpts, buildDHCPOption(1, dhcpIPv4Bytes("255.255.255.0"))...)  // Subnet mask
+	rogueOfferOpts = append(rogueOfferOpts, buildDHCPOption(3, dhcpIPv4Bytes(attackerIP))...)       // Router = attacker
+	rogueOfferOpts = append(rogueOfferOpts, buildDHCPOption(6, dhcpIPv4Bytes(attackerIP))...)       // DNS = attacker
+	rogueOffer := buildDHCPPacket(0x02, xid, victimMAC, "0.0.0.0", "10.0.1.50", attackerIP, "0.0.0.0", rogueOfferOpts)
+	rogueOfferFrame := buildEthernetFrame(attackerMAC, victimMAC, buildIPv4Packet(attackerIP, "255.255.255.255", 17, buildUDPDatagram(67, 68, rogueOffer)))
+	frames = append(frames, rogueOfferFrame)
 
-	frames := [][]byte{discFrame, offerFrame}
+	// Frame 3: Legitimate server's OFFER arrives second (too late)
+	legitOfferOpts := buildDHCPOption(53, []byte{0x02})                                           // Offer
+	legitOfferOpts = append(legitOfferOpts, buildDHCPOption(54, dhcpIPv4Bytes(legitServerIP))...) // Server ID = legit
+	legitOfferOpts = append(legitOfferOpts, buildDHCPOption(51, []byte{0x00, 0x01, 0x51, 0x80})...)
+	legitOfferOpts = append(legitOfferOpts, buildDHCPOption(1, dhcpIPv4Bytes("255.255.255.0"))...)
+	legitOfferOpts = append(legitOfferOpts, buildDHCPOption(3, dhcpIPv4Bytes(legitServerIP))...) // Router = legit
+	legitOfferOpts = append(legitOfferOpts, buildDHCPOption(6, dhcpIPv4Bytes(legitServerIP))...) // DNS = legit
+	legitOffer := buildDHCPPacket(0x02, xid, victimMAC, "0.0.0.0", "10.0.1.51", legitServerIP, "0.0.0.0", legitOfferOpts)
+	legitOfferFrame := buildEthernetFrame(legitServerMAC, victimMAC, buildIPv4Packet(legitServerIP, "255.255.255.255", 17, buildUDPDatagram(67, 68, legitOffer)))
+	frames = append(frames, legitOfferFrame)
+
+	// Frame 4: Victim sends DHCP Request accepting attacker's offer
+	reqOpts := buildDHCPOption(53, []byte{0x03})                                  // Request
+	reqOpts = append(reqOpts, buildDHCPOption(54, dhcpIPv4Bytes(attackerIP))...)  // Server ID = attacker (accepted)
+	reqOpts = append(reqOpts, buildDHCPOption(50, dhcpIPv4Bytes("10.0.1.50"))...) // Requested IP from attacker
+	reqOpts = append(reqOpts, buildDHCPOption(61, append([]byte{0x01}, victimMAC[:]...))...)
+	request := buildDHCPPacket(0x01, xid, victimMAC, "0.0.0.0", "0.0.0.0", "0.0.0.0", "0.0.0.0", reqOpts)
+	requestFrame := buildEthernetFrame(victimMAC, broadcastMAC, buildIPv4Packet("0.0.0.0", "255.255.255.255", 17, buildUDPDatagram(68, 67, request)))
+	frames = append(frames, requestFrame)
+
+	// Frame 5: Attacker sends DHCP ACK — victim now uses attacker as gateway
+	ackOpts := buildDHCPOption(53, []byte{0x05}) // ACK
+	ackOpts = append(ackOpts, buildDHCPOption(54, dhcpIPv4Bytes(attackerIP))...)
+	ackOpts = append(ackOpts, buildDHCPOption(51, []byte{0x00, 0x01, 0x51, 0x80})...)
+	ackOpts = append(ackOpts, buildDHCPOption(1, dhcpIPv4Bytes("255.255.255.0"))...)
+	ackOpts = append(ackOpts, buildDHCPOption(3, dhcpIPv4Bytes(attackerIP))...) // Router = attacker
+	ackOpts = append(ackOpts, buildDHCPOption(6, dhcpIPv4Bytes(attackerIP))...) // DNS = attacker
+	dhcpAck := buildDHCPPacket(0x02, xid, victimMAC, "0.0.0.0", "10.0.1.50", attackerIP, "0.0.0.0", ackOpts)
+	dhcpAckFrame := buildEthernetFrame(attackerMAC, victimMAC, buildIPv4Packet(attackerIP, "255.255.255.255", 17, buildUDPDatagram(67, 68, dhcpAck)))
+	frames = append(frames, dhcpAckFrame)
+
+	// Frame 6: Legitimate server sends NAK — its offer was not accepted
+	nakOpts := buildDHCPOption(53, []byte{0x06}) // NAK
+	nakOpts = append(nakOpts, buildDHCPOption(54, dhcpIPv4Bytes(legitServerIP))...)
+	nakOpts = append(nakOpts, buildDHCPOption(56, []byte("Request accepted by another server"))...)
+	nak := buildDHCPPacket(0x02, xid, victimMAC, "0.0.0.0", "0.0.0.0", legitServerIP, "0.0.0.0", nakOpts)
+	nakFrame := buildEthernetFrame(legitServerMAC, broadcastMAC, buildIPv4Packet(legitServerIP, "255.255.255.255", 17, buildUDPDatagram(67, 68, nak)))
+	frames = append(frames, nakFrame)
+
 	path, err := writePCAPFile(runID, "rogue_dhcp", frames, defaultDuration)
 	logInfo("Return from PCAPRogueDHCP frames=%d path=%s", len(frames), path)
 	return path, err
