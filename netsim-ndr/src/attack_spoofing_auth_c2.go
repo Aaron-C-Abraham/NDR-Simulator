@@ -217,14 +217,14 @@ func runMACSpoofing(req AttackRequest) (*AttackResult, error) {
 		eventID, _ := recordRunEvent(req.RunID, "syslog", swDev.Name, req.AttackerIP, "broadcast", "ETH", ev)
 		result.EventIDs = append(result.EventIDs, eventID)
 
-		// PCAP: target device sends normal TCP traffic, then attacker clones
-		// target's MAC and requests a different IP from DHCP server
+		// PCAP: target device TCP chatter interleaved with attacker's DHCP request
+		// Both happening simultaneously on the network
 		if attackerDev != nil {
 			clonedMAC := parseMACAddress(targetMAC)
 			dstMAC := parseMACAddress(swDev.MACAddress)
 			broadcastMAC := [6]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 
-			// Find the target device to get its real IP
+			// Find target device IP
 			var targetDevIP string
 			for _, d := range getAllDevices() {
 				if d.MACAddress == targetMAC {
@@ -233,10 +233,10 @@ func runMACSpoofing(req AttackRequest) (*AttackResult, error) {
 				}
 			}
 			if targetDevIP == "" {
-				targetDevIP = "10.0.1.10" // fallback
+				targetDevIP = "10.0.1.10"
 			}
 
-			// Find a few other devices on the network for target to send traffic to
+			// Find other devices for TCP chatter
 			var otherDevices []*Device
 			for _, d := range getDevicesByZone("internal") {
 				if d.MACAddress != targetMAC && d.DeviceType != "switch" && len(otherDevices) < 3 {
@@ -244,73 +244,82 @@ func runMACSpoofing(req AttackRequest) (*AttackResult, error) {
 				}
 			}
 
-			var frames [][]byte
-
-			// Phase 1: Target device sends normal TCP traffic to other computers
+			// Pre-build TCP chatter frames
+			type tcpConv struct{ syn, synAck, ack []byte }
+			var convs []tcpConv
 			for _, other := range otherDevices {
 				otherMAC := parseMACAddress(other.MACAddress)
-				// SYN
 				srcPort := randomPort()
 				seq := rand.Uint32()
-				syn := buildTCPSegment(srcPort, 80, 0x02, seq, 0, nil)
-				synFrame := buildEthernetFrame(clonedMAC, otherMAC, buildIPv4Packet(targetDevIP, other.IPAddress, 6, syn))
-				frames = append(frames, synFrame)
-				// SYN-ACK from other device
 				serverSeq := rand.Uint32()
-				synAck := buildTCPSegment(80, srcPort, 0x12, serverSeq, seq+1, nil)
-				synAckFrame := buildEthernetFrame(otherMAC, clonedMAC, buildIPv4Packet(other.IPAddress, targetDevIP, 6, synAck))
-				frames = append(frames, synAckFrame)
-				// ACK from target
-				ack := buildTCPSegment(srcPort, 80, 0x10, seq+1, serverSeq+1, nil)
-				ackFrame := buildEthernetFrame(clonedMAC, otherMAC, buildIPv4Packet(targetDevIP, other.IPAddress, 6, ack))
-				frames = append(frames, ackFrame)
+				syn := buildEthernetFrame(clonedMAC, otherMAC, buildIPv4Packet(targetDevIP, other.IPAddress, 6, buildTCPSegment(srcPort, 80, 0x02, seq, 0, nil)))
+				synAck := buildEthernetFrame(otherMAC, clonedMAC, buildIPv4Packet(other.IPAddress, targetDevIP, 6, buildTCPSegment(80, srcPort, 0x12, serverSeq, seq+1, nil)))
+				ack := buildEthernetFrame(clonedMAC, otherMAC, buildIPv4Packet(targetDevIP, other.IPAddress, 6, buildTCPSegment(srcPort, 80, 0x10, seq+1, serverSeq+1, nil)))
+				convs = append(convs, tcpConv{syn, synAck, ack})
 			}
 
-			// Phase 2: Attacker sends DHCP Discover using cloned MAC requesting different IP
+			// Pre-build DHCP frames
 			xid := rand.Uint32()
-			discoverOptions := []byte{}
-			discoverOptions = append(discoverOptions, buildDHCPOption(53, []byte{0x01})...)                   // DHCP Discover
-			discoverOptions = append(discoverOptions, buildDHCPOption(50, []byte{192, 168, 1, 99})...)        // Request different IP
-			discoverOptions = append(discoverOptions, buildDHCPOption(55, []byte{0x01, 0x03, 0x06, 0x0f})...) // Parameter request list
+			discoverOptions := buildDHCPOption(53, []byte{0x01})
+			discoverOptions = append(discoverOptions, buildDHCPOption(50, []byte{192, 168, 1, 99})...)
+			discoverOptions = append(discoverOptions, buildDHCPOption(55, []byte{0x01, 0x03, 0x06, 0x0f})...)
 			discover := buildDHCPPacket(0x01, xid, clonedMAC, "0.0.0.0", "0.0.0.0", "0.0.0.0", "0.0.0.0", discoverOptions)
 			discoverFrame := buildEthernetFrame(clonedMAC, broadcastMAC, buildIPv4Packet(attackerDev.IPAddress, "255.255.255.255", 17, buildUDPDatagram(68, 67, discover)))
-			frames = append(frames, discoverFrame)
 
-			// Phase 3: DHCP Offer from server — offers the requested different IP
-			offerOptions := []byte{}
-			offerOptions = append(offerOptions, buildDHCPOption(53, []byte{0x02})...)                   // DHCP Offer
-			offerOptions = append(offerOptions, buildDHCPOption(51, []byte{0x00, 0x01, 0x51, 0x80})...) // Lease time 86400s
-			offerOptions = append(offerOptions, buildDHCPOption(1, []byte{255, 255, 255, 0})...)        // Subnet mask
-			offerOptions = append(offerOptions, buildDHCPOption(3, []byte{10, 0, 1, 1})...)             // Router
+			offerOptions := buildDHCPOption(53, []byte{0x02})
+			offerOptions = append(offerOptions, buildDHCPOption(51, []byte{0x00, 0x01, 0x51, 0x80})...)
+			offerOptions = append(offerOptions, buildDHCPOption(1, []byte{255, 255, 255, 0})...)
+			offerOptions = append(offerOptions, buildDHCPOption(3, []byte{10, 0, 1, 1})...)
 			offer := buildDHCPPacket(0x02, xid, clonedMAC, "0.0.0.0", "192.168.1.99", swDev.IPAddress, "0.0.0.0", offerOptions)
 			offerFrame := buildEthernetFrame(dstMAC, clonedMAC, buildIPv4Packet(swDev.IPAddress, "255.255.255.255", 17, buildUDPDatagram(67, 68, offer)))
-			frames = append(frames, offerFrame)
 
-			// Phase 4: DHCP Request — attacker formally requests the offered IP
-			requestOptions := []byte{}
-			requestOptions = append(requestOptions, buildDHCPOption(53, []byte{0x03})...)                   // DHCP Request
-			requestOptions = append(requestOptions, buildDHCPOption(50, []byte{192, 168, 1, 99})...)        // Requested IP
-			requestOptions = append(requestOptions, buildDHCPOption(54, dhcpIPv4Bytes(swDev.IPAddress))...) // Server identifier
+			requestOptions := buildDHCPOption(53, []byte{0x03})
+			requestOptions = append(requestOptions, buildDHCPOption(50, []byte{192, 168, 1, 99})...)
+			requestOptions = append(requestOptions, buildDHCPOption(54, dhcpIPv4Bytes(swDev.IPAddress))...)
 			request := buildDHCPPacket(0x01, xid, clonedMAC, "0.0.0.0", "0.0.0.0", "0.0.0.0", "0.0.0.0", requestOptions)
 			requestFrame := buildEthernetFrame(clonedMAC, broadcastMAC, buildIPv4Packet(attackerDev.IPAddress, "255.255.255.255", 17, buildUDPDatagram(68, 67, request)))
-			frames = append(frames, requestFrame)
 
-			// Phase 5: DHCP ACK — server confirms the lease for the cloned MAC with new IP
-			ackOptions := []byte{}
-			ackOptions = append(ackOptions, buildDHCPOption(53, []byte{0x05})...)                   // DHCP ACK
-			ackOptions = append(ackOptions, buildDHCPOption(51, []byte{0x00, 0x01, 0x51, 0x80})...) // Lease time
-			ackOptions = append(ackOptions, buildDHCPOption(1, []byte{255, 255, 255, 0})...)        // Subnet mask
-			ackOptions = append(ackOptions, buildDHCPOption(3, []byte{10, 0, 1, 1})...)             // Router
+			ackOptions := buildDHCPOption(53, []byte{0x05})
+			ackOptions = append(ackOptions, buildDHCPOption(51, []byte{0x00, 0x01, 0x51, 0x80})...)
+			ackOptions = append(ackOptions, buildDHCPOption(1, []byte{255, 255, 255, 0})...)
+			ackOptions = append(ackOptions, buildDHCPOption(3, []byte{10, 0, 1, 1})...)
 			dhcpAck := buildDHCPPacket(0x02, xid, clonedMAC, "0.0.0.0", "192.168.1.99", swDev.IPAddress, "0.0.0.0", ackOptions)
 			dhcpAckFrame := buildEthernetFrame(dstMAC, clonedMAC, buildIPv4Packet(swDev.IPAddress, "255.255.255.255", 17, buildUDPDatagram(67, 68, dhcpAck)))
-			frames = append(frames, dhcpAckFrame)
+
+			// Interleave TCP chatter with DHCP — everything happening at once
+			var frames [][]byte
+			if len(convs) > 0 {
+				frames = append(frames, convs[0].syn) // target SYN to device 1
+			}
+			frames = append(frames, discoverFrame) // attacker DHCP Discover (cloned MAC)
+			if len(convs) > 0 {
+				frames = append(frames, convs[0].synAck) // device 1 SYN-ACK to target
+				frames = append(frames, convs[0].ack)    // target ACK
+			}
+			frames = append(frames, offerFrame) // DHCP Offer from server
+			if len(convs) > 1 {
+				frames = append(frames, convs[1].syn) // target SYN to device 2
+				frames = append(frames, convs[1].synAck)
+			}
+			frames = append(frames, requestFrame) // attacker DHCP Request
+			if len(convs) > 1 {
+				frames = append(frames, convs[1].ack)
+			}
+			if len(convs) > 2 {
+				frames = append(frames, convs[2].syn) // target SYN to device 3
+			}
+			frames = append(frames, dhcpAckFrame) // DHCP ACK — attacker gets new IP
+			if len(convs) > 2 {
+				frames = append(frames, convs[2].synAck)
+				frames = append(frames, convs[2].ack)
+			}
 
 			path, _ := writePCAPFile(req.RunID, "mac_spoof", frames, defaultDuration)
 			if path != "" {
 				result.PCAPFiles = append(result.PCAPFiles, path)
 			}
 
-			// Flow export — cloned MAC frames sent to switch
+			// Flow export
 			fw := getFirewall()
 			duration := getAttackParamInt(req.Params, "duration", 30)
 			macPkts := uint32(10 * duration / 30)
@@ -469,13 +478,13 @@ func runLDAPInjection(req AttackRequest) (*AttackResult, error) {
 		// Injected SearchRequest with malicious filter (|(uid=*)(password=*))
 		// Built manually with BER encoding to match real LDAP injection traffic
 		injFilter := []byte{
-			0xA1, 0x26, // OR filter [1]
-			0xA4, 0x0E, // equalityMatch [4] — uid=*
+			0xA1, 0x24, // OR filter [1] — 36 bytes
+			0xA3, 0x0F, // equalityMatch [3] — uid=admin\x00*
 			0x04, 0x03, 0x75, 0x69, 0x64, // attributeDesc: "uid"
-			0x04, 0x07, 0x61, 0x64, 0x6D, 0x69, 0x6E, 0x00, 0x2A, // assertionValue: "admin\x00*"
-			0xA4, 0x14, // equalityMatch [4] — password=*
+			0x04, 0x08, 0x27, 0x4F, 0x52, 0x20, 0x27, 0x31, 0x27, 0x3D, // assertionValue: "'OR '1'="
+			0xA3, 0x11, // equalityMatch [3] — password=*
 			0x04, 0x08, 0x70, 0x61, 0x73, 0x73, 0x77, 0x6F, 0x72, 0x64, // attributeDesc: "password"
-			0x04, 0x08, 0x27, 0x20, 0x4F, 0x52, 0x20, 0x27, 0x31, 0x27, // assertionValue: "' OR '1'"
+			0x04, 0x05, 0x27, 0x4F, 0x52, 0x27, 0x31, // assertionValue: "'OR'1"
 		}
 
 		// Build full SearchRequest with injected filter
