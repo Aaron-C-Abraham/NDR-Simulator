@@ -461,10 +461,82 @@ func runLDAPInjection(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
 
-		// PCAP
-		reqPayload := []byte("(|(uid=*)(password=*))")
-		respPayload := []byte("LDAP_RESULT: success")
-		path, _ := PCAPGenericTCPExchange(req.RunID, "ldap_injection", req.AttackerIP, dcIP, 389, reqPayload, respPayload)
+		// PCAP: proper BER-encoded LDAP injection
+		// Bind request first (anonymous bind to establish session)
+		bindReq := buildLDAPBindRequest("dc=corp,dc=local")
+		bindResp := buildLDAPBindResponse()
+
+		// Injected SearchRequest with malicious filter (|(uid=*)(password=*))
+		// Built manually with BER encoding to match real LDAP injection traffic
+		injFilter := []byte{
+			0xA1, 0x26, // OR filter [1]
+			0xA4, 0x0E, // equalityMatch [4] — uid=*
+			0x04, 0x03, 0x75, 0x69, 0x64, // attributeDesc: "uid"
+			0x04, 0x07, 0x61, 0x64, 0x6D, 0x69, 0x6E, 0x00, 0x2A, // assertionValue: "admin\x00*"
+			0xA4, 0x14, // equalityMatch [4] — password=*
+			0x04, 0x08, 0x70, 0x61, 0x73, 0x73, 0x77, 0x6F, 0x72, 0x64, // attributeDesc: "password"
+			0x04, 0x08, 0x27, 0x20, 0x4F, 0x52, 0x20, 0x27, 0x31, 0x27, // assertionValue: "' OR '1'"
+		}
+
+		// Build full SearchRequest with injected filter
+		var searchReq []byte
+		searchBody := make([]byte, 0, 80)
+		baseDN := []byte("dc=corp,dc=local")
+		searchBody = append(searchBody, 0x04, byte(len(baseDN)))
+		searchBody = append(searchBody, baseDN...)
+		searchBody = append(searchBody, 0x0A, 0x01, 0x02) // scope: wholeSubtree
+		searchBody = append(searchBody, 0x0A, 0x01, 0x00) // derefAliases
+		searchBody = append(searchBody, 0x02, 0x01, 0x00) // sizeLimit: 0
+		searchBody = append(searchBody, 0x02, 0x01, 0x00) // timeLimit: 0
+		searchBody = append(searchBody, 0x01, 0x01, 0x00) // typesOnly: false
+		searchBody = append(searchBody, injFilter...)
+		searchBody = append(searchBody, 0x30, 0x00) // attributes: empty (return all)
+
+		searchReq = append(searchReq, berTLV(0x63, searchBody)...)                    // SearchRequest [APPLICATION 3]
+		fullSearchReq := berTLV(0x30, append([]byte{0x02, 0x01, 0x02}, searchReq...)) // SEQUENCE { msgID=2, searchReq }
+
+		// SearchResultDone: success (resultCode=0)
+		searchDone := berTLV(0x30, append([]byte{0x02, 0x01, 0x02},
+			berTLV(0x65, []byte{ // SearchResultDone [APPLICATION 5]
+				0x0A, 0x01, 0x00, // resultCode: success (bypass succeeded)
+				0x04, 0x00, // matchedDN: ""
+				0x04, 0x00, // diagnosticMessage: ""
+			})...))
+
+		// Build PCAP: Bind → BindResponse → injected Search → SearchResultDone
+		srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+		dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+		srcPort := randomPort()
+		seq := rand.Uint32()
+		serverSeq := rand.Uint32()
+
+		var ldapFrames [][]byte
+
+		// TCP handshake
+		syn := buildTCPSegment(srcPort, 389, 0x02, seq, 0, nil)
+		ldapFrames = append(ldapFrames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, dcIP, 6, syn)))
+		synAck := buildTCPSegment(389, srcPort, 0x12, serverSeq, seq+1, nil)
+		ldapFrames = append(ldapFrames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(dcIP, req.AttackerIP, 6, synAck)))
+		ack := buildTCPSegment(srcPort, 389, 0x10, seq+1, serverSeq+1, nil)
+		ldapFrames = append(ldapFrames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, dcIP, 6, ack)))
+
+		// LDAP Bind Request
+		bindReqSeg := buildTCPSegment(srcPort, 389, 0x18, seq+1, serverSeq+1, bindReq)
+		ldapFrames = append(ldapFrames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, dcIP, 6, bindReqSeg)))
+
+		// LDAP Bind Response
+		bindRespSeg := buildTCPSegment(389, srcPort, 0x18, serverSeq+1, seq+uint32(len(bindReq))+1, bindResp)
+		ldapFrames = append(ldapFrames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(dcIP, req.AttackerIP, 6, bindRespSeg)))
+
+		// LDAP injected SearchRequest
+		searchSeg := buildTCPSegment(srcPort, 389, 0x18, seq+uint32(len(bindReq))+1, serverSeq+uint32(len(bindResp))+1, fullSearchReq)
+		ldapFrames = append(ldapFrames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, dcIP, 6, searchSeg)))
+
+		// LDAP SearchResultDone — success (injection bypassed auth)
+		searchDoneSeg := buildTCPSegment(389, srcPort, 0x18, serverSeq+uint32(len(bindResp))+1, seq+uint32(len(bindReq))+uint32(len(fullSearchReq))+1, searchDone)
+		ldapFrames = append(ldapFrames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(dcIP, req.AttackerIP, 6, searchDoneSeg)))
+
+		path, _ := writePCAPFile(req.RunID, "ldap_injection", ldapFrames, defaultDuration)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
