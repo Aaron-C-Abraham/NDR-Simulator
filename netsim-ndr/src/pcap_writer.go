@@ -2592,31 +2592,56 @@ func buildDoubleTaggedFrame(srcMAC, dstMAC [6]byte, outerVLAN, innerVLAN uint16,
 	return frame
 }
 
-// PCAPVLANHopping generates a double-tagged 802.1Q frame carrying a TCP SYN
-// toward a host on the target VLAN, plus the same frame's SYN-ACK response
-// shown untagged (the responding host is genuinely on the target VLAN and
-// has no reason to see or send VLAN tags itself — only the attacker's
-// outbound frame needs the double tag, since that's the actual exploit
-// mechanism: tricking the first switch into forwarding traffic the
-// attacker was never authorized to reach).
+// PCAPVLANHopping generates double-tagged 802.1Q frames carrying TCP traffic
+// toward multiple hosts on the target VLAN, demonstrating the attacker
+// accessing hosts they are not authorized to reach via VLAN hopping.
 func PCAPVLANHopping(runID, attackerIP, targetVLANGateway string, outerVLAN, innerVLAN uint16) (string, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAPVLANHopping attacker=%s outerVLAN=%d innerVLAN=%d", attackerIP, outerVLAN, innerVLAN)
 
 	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
 	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
-	srcPort := randomPort()
-	seq := rand.Uint32()
 
-	syn := buildTCPSegment(srcPort, 80, 0x02, seq, 0, nil)
-	synIP := buildIPv4Packet(attackerIP, targetVLANGateway, 6, syn)
-	synFrame := buildDoubleTaggedFrame(srcMAC, dstMAC, outerVLAN, innerVLAN, 0x0800, synIP)
+	// Multiple target hosts on the target VLAN — attacker shouldn't be
+	// able to reach any of these from their native VLAN
+	targetHosts := []struct {
+		ip   string
+		port uint16
+		mac  [6]byte
+	}{
+		{targetVLANGateway, 80, [6]byte{0x00, 0xBB, 0x11, 0x22, 0x33, 0x01}},
+		{incrementIP(targetVLANGateway, 1), 443, [6]byte{0x00, 0xBB, 0x11, 0x22, 0x33, 0x02}},
+		{incrementIP(targetVLANGateway, 2), 22, [6]byte{0x00, 0xBB, 0x11, 0x22, 0x33, 0x03}},
+		{incrementIP(targetVLANGateway, 3), 3389, [6]byte{0x00, 0xBB, 0x11, 0x22, 0x33, 0x04}},
+	}
 
-	synAck := buildTCPSegment(80, srcPort, 0x12, rand.Uint32(), seq+1, nil)
-	synAckIP := buildIPv4Packet(targetVLANGateway, attackerIP, 6, synAck)
-	synAckFrame := buildEthernetFrame(dstMAC, srcMAC, synAckIP) // untagged: the response host is natively on the target VLAN
+	var frames [][]byte
 
-	frames := [][]byte{synFrame, synAckFrame}
+	for _, target := range targetHosts {
+		srcPort := randomPort()
+		seq := rand.Uint32()
+
+		// Attacker sends double-tagged SYN — outer tag stripped by first switch,
+		// inner tag carries frame into target VLAN
+		syn := buildTCPSegment(srcPort, target.port, 0x02, seq, 0, nil)
+		synIP := buildIPv4Packet(attackerIP, target.ip, 6, syn)
+		synFrame := buildDoubleTaggedFrame(srcMAC, dstMAC, outerVLAN, innerVLAN, 0x0800, synIP)
+		frames = append(frames, synFrame)
+
+		// Target host responds untagged — it is natively on the target VLAN
+		serverSeq := rand.Uint32()
+		synAck := buildTCPSegment(target.port, srcPort, 0x12, serverSeq, seq+1, nil)
+		synAckIP := buildIPv4Packet(target.ip, attackerIP, 6, synAck)
+		synAckFrame := buildEthernetFrame(target.mac, srcMAC, synAckIP)
+		frames = append(frames, synAckFrame)
+
+		// Attacker completes handshake with ACK — now has unauthorized access
+		ack := buildTCPSegment(srcPort, target.port, 0x10, seq+1, serverSeq+1, nil)
+		ackIP := buildIPv4Packet(attackerIP, target.ip, 6, ack)
+		ackFrame := buildDoubleTaggedFrame(srcMAC, dstMAC, outerVLAN, innerVLAN, 0x0800, ackIP)
+		frames = append(frames, ackFrame)
+	}
+
 	path, err := writePCAPFile(runID, "vlan_hopping", frames, defaultDuration)
 	logInfo("Return from PCAPVLANHopping frames=%d path=%s", len(frames), path)
 	return path, err
@@ -3324,4 +3349,15 @@ func httpStatusText(code int) string {
 	default:
 		return "OK"
 	}
+}
+
+// incrementIP adds n to the last octet of a dotted-quad IP string.
+func incrementIP(ip string, n int) string {
+	var a, b, c, d int
+	fmt.Sscanf(ip, "%d.%d.%d.%d", &a, &b, &c, &d)
+	d += n
+	if d > 254 {
+		d = 254
+	}
+	return fmt.Sprintf("%d.%d.%d.%d", a, b, c, d)
 }
