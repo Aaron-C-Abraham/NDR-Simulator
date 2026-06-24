@@ -2617,34 +2617,60 @@ func PCAPVLANHopping(runID, attackerIP, targetVLANGateway string, outerVLAN, inn
 
 	var frames [][]byte
 
+	// Switch MAC — represents the trunk port forwarding the stripped frame
+	switchMAC := [6]byte{0x00, 0xCC, 0x11, 0x22, 0x33, 0x01}
+
 	for _, target := range targetHosts {
 		srcPort := randomPort()
 		seq := rand.Uint32()
+		serverSeq := rand.Uint32()
 
-		// Attacker sends double-tagged SYN — outer tag stripped by first switch,
-		// inner tag carries frame into target VLAN
+		// Step 1: Attacker → Switch: double-tagged SYN
+		// Outer tag = attacker's native VLAN (100), inner tag = target VLAN (200)
 		syn := buildTCPSegment(srcPort, target.port, 0x02, seq, 0, nil)
 		synIP := buildIPv4Packet(attackerIP, target.ip, 6, syn)
-		synFrame := buildDoubleTaggedFrame(srcMAC, dstMAC, outerVLAN, innerVLAN, 0x0800, synIP)
-		frames = append(frames, synFrame)
+		synDoubleTagged := buildDoubleTaggedFrame(srcMAC, dstMAC, outerVLAN, innerVLAN, 0x0800, synIP)
+		frames = append(frames, synDoubleTagged)
 
-		// Target host responds untagged — it is natively on the target VLAN
-		serverSeq := rand.Uint32()
+		// Step 2: Switch → Target: outer tag stripped, inner tag (VLAN 200) remains
+		// This is the exploit — switch forwards frame into target VLAN
+		synSingleTagged := buildSingleTaggedFrame(switchMAC, target.mac, innerVLAN, 0x0800, synIP)
+		frames = append(frames, synSingleTagged)
+
+		// Step 3: Target → Switch: untagged SYN-ACK (target is native on VLAN 200)
 		synAck := buildTCPSegment(target.port, srcPort, 0x12, serverSeq, seq+1, nil)
 		synAckIP := buildIPv4Packet(target.ip, attackerIP, 6, synAck)
-		synAckFrame := buildEthernetFrame(target.mac, srcMAC, synAckIP)
+		synAckFrame := buildEthernetFrame(target.mac, switchMAC, synAckIP)
 		frames = append(frames, synAckFrame)
 
-		// Attacker completes handshake with ACK — now has unauthorized access
+		// Step 4: Attacker → Switch: double-tagged ACK completing handshake
 		ack := buildTCPSegment(srcPort, target.port, 0x10, seq+1, serverSeq+1, nil)
 		ackIP := buildIPv4Packet(attackerIP, target.ip, 6, ack)
-		ackFrame := buildDoubleTaggedFrame(srcMAC, dstMAC, outerVLAN, innerVLAN, 0x0800, ackIP)
-		frames = append(frames, ackFrame)
-	}
+		ackDoubleTagged := buildDoubleTaggedFrame(srcMAC, dstMAC, outerVLAN, innerVLAN, 0x0800, ackIP)
+		frames = append(frames, ackDoubleTagged)
 
+		// Step 5: Switch → Target: outer tag stripped, ACK forwarded into target VLAN
+		ackSingleTagged := buildSingleTaggedFrame(switchMAC, target.mac, innerVLAN, 0x0800, ackIP)
+		frames = append(frames, ackSingleTagged)
+	}
 	path, err := writePCAPFile(runID, "vlan_hopping", frames, defaultDuration)
 	logInfo("Return from PCAPVLANHopping frames=%d path=%s", len(frames), path)
 	return path, err
+}
+
+// buildSingleTaggedFrame builds a single 802.1Q tagged Ethernet frame —
+// used to show the switch forwarding the inner-tagged frame after stripping
+// the outer tag during VLAN hopping.
+func buildSingleTaggedFrame(srcMAC, dstMAC [6]byte, vlanID uint16, etherType uint16, payload []byte) []byte {
+	frame := make([]byte, 0, 12+4+2+len(payload))
+	frame = append(frame, dstMAC[:]...)
+	frame = append(frame, srcMAC[:]...)
+	frame = append(frame, buildDot1QTag(vlanID, 0)...)
+	etBuf := make([]byte, 2)
+	binary.BigEndian.PutUint16(etBuf, etherType)
+	frame = append(frame, etBuf...)
+	frame = append(frame, payload...)
+	return frame
 }
 
 // ── BGP (RFC 4271) ────────────────────────────────────────────────────────────
