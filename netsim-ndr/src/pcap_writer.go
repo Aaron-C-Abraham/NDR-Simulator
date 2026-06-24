@@ -510,18 +510,42 @@ func PCAPHTTPFlood(runID, attackerIP, targetIP string, targetPort uint16, count 
 		clientSeq := rand.Uint32()
 		serverSeq := rand.Uint32()
 
-		payload := []byte(fmt.Sprintf(
-			"GET /?r=%s HTTP/1.1\r\nHost: %s\r\nUser-Agent: Mozilla/5.0\r\nConnection: keep-alive\r\n\r\n",
-			randomHexString(8), targetIP))
-		req := buildTCPSegment(srcPort, targetPort, 0x18, clientSeq, serverSeq, payload)
-		ip := buildIPv4Packet(attackerIP, targetIP, 6, req)
-		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, ip))
+		// TCP SYN
+		syn := buildTCPSegment(srcPort, targetPort, 0x02, clientSeq, 0, nil)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
+		clientSeq++
 
 		if idx < replyCount {
+			// Server still responding — full handshake + request + response
+			synAck := buildTCPSegment(targetPort, srcPort, 0x12, serverSeq, clientSeq, nil)
+			frames = append(frames, buildEthernetFrame(targetMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck)))
+			serverSeq++
+
+			ack := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
+			frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
+
+			payload := []byte(fmt.Sprintf(
+				"GET /?r=%s HTTP/1.1\r\nHost: %s\r\nUser-Agent: Mozilla/5.0\r\nConnection: keep-alive\r\n\r\n",
+				randomHexString(8), targetIP))
+			req := buildTCPSegment(srcPort, targetPort, 0x18, clientSeq, serverSeq, payload)
+			frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, req)))
+			clientSeq += uint32(len(payload))
+
 			respBody := []byte("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-			resp := buildTCPSegment(targetPort, srcPort, 0x18, serverSeq, clientSeq+uint32(len(payload)), respBody)
-			respIP := buildIPv4Packet(targetIP, attackerIP, 6, resp)
-			frames = append(frames, buildEthernetFrame(targetMAC, srcMAC, respIP))
+			resp := buildTCPSegment(targetPort, srcPort, 0x18, serverSeq, clientSeq, respBody)
+			frames = append(frames, buildEthernetFrame(targetMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, resp)))
+			serverSeq += uint32(len(respBody))
+
+			// FIN from server closing connection after 503
+			fin := buildTCPSegment(targetPort, srcPort, 0x11, serverSeq, clientSeq, nil)
+			frames = append(frames, buildEthernetFrame(targetMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, fin)))
+		} else {
+			// Server overwhelmed — SYN goes unanswered, attacker keeps flooding
+			payload := []byte(fmt.Sprintf(
+				"GET /?r=%s HTTP/1.1\r\nHost: %s\r\nUser-Agent: Mozilla/5.0\r\nConnection: keep-alive\r\n\r\n",
+				randomHexString(8), targetIP))
+			req := buildTCPSegment(srcPort, targetPort, 0x18, clientSeq, serverSeq, payload)
+			frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, req)))
 		}
 	}
 
