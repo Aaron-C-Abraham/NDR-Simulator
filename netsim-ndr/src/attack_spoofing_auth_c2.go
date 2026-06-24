@@ -264,7 +264,7 @@ func runMACSpoofing(req AttackRequest) (*AttackResult, error) {
 			discoverOptions = append(discoverOptions, buildDHCPOption(50, []byte{192, 168, 1, 99})...)
 			discoverOptions = append(discoverOptions, buildDHCPOption(55, []byte{0x01, 0x03, 0x06, 0x0f})...)
 			discover := buildDHCPPacket(0x01, xid, clonedMAC, "0.0.0.0", "0.0.0.0", "0.0.0.0", "0.0.0.0", discoverOptions)
-			discoverFrame := buildEthernetFrame(clonedMAC, broadcastMAC, buildIPv4Packet(attackerDev.IPAddress, "255.255.255.255", 17, buildUDPDatagram(68, 67, discover)))
+			discoverFrame := buildEthernetFrame(clonedMAC, broadcastMAC, buildIPv4Packet("0.0.0.0", "255.255.255.255", 17, buildUDPDatagram(68, 67, discover)))
 
 			offerOptions := buildDHCPOption(53, []byte{0x02})
 			offerOptions = append(offerOptions, buildDHCPOption(51, []byte{0x00, 0x01, 0x51, 0x80})...)
@@ -277,7 +277,7 @@ func runMACSpoofing(req AttackRequest) (*AttackResult, error) {
 			requestOptions = append(requestOptions, buildDHCPOption(50, []byte{192, 168, 1, 99})...)
 			requestOptions = append(requestOptions, buildDHCPOption(54, dhcpIPv4Bytes(swDev.IPAddress))...)
 			request := buildDHCPPacket(0x01, xid, clonedMAC, "0.0.0.0", "0.0.0.0", "0.0.0.0", "0.0.0.0", requestOptions)
-			requestFrame := buildEthernetFrame(clonedMAC, broadcastMAC, buildIPv4Packet(attackerDev.IPAddress, "255.255.255.255", 17, buildUDPDatagram(68, 67, request)))
+			requestFrame := buildEthernetFrame(clonedMAC, broadcastMAC, buildIPv4Packet("0.0.0.0", "255.255.255.255", 17, buildUDPDatagram(68, 67, request)))
 
 			ackOptions := buildDHCPOption(53, []byte{0x05})
 			ackOptions = append(ackOptions, buildDHCPOption(51, []byte{0x00, 0x01, 0x51, 0x80})...)
