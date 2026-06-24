@@ -514,7 +514,9 @@ func runBruteForceSNMP(req AttackRequest) (*AttackResult, error) {
 			}
 			frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 17, resp)))
 		}
-		path, _ := writePCAPFile(req.RunID, "bruteforce_snmp", frames, defaultDuration)
+		bgFrames := generateBackgroundTraffic(getAllDevices())
+		finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+		path, _ := writePCAPFile(req.RunID, "bruteforce_snmp", finalFrames, defaultDuration)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}

@@ -72,7 +72,9 @@ func runARPSpoofing(req AttackRequest) (*AttackResult, error) {
 	forgedFrame := buildEthernetFrameARP(srcMAC, victimMAC, forgedReply, 0x0806)
 	frames = append(frames, forgedFrame)
 
-	path, _ := writePCAPFile(req.RunID, "arp_spoof", frames, defaultDuration)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, _ := writePCAPFile(req.RunID, "arp_spoof", finalFrames, defaultDuration)
 	if path != "" {
 		result.PCAPFiles = append(result.PCAPFiles, path)
 	}
@@ -162,7 +164,9 @@ func runIPSourceSpoof(req AttackRequest) (*AttackResult, error) {
 				frames = append(frames, rstFrame)
 			}
 
-			path, _ := writePCAPFile(req.RunID, "ip_source_spoof", frames, defaultDuration)
+			bgFrames := generateBackgroundTraffic(getAllDevices())
+			finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+			path, _ := writePCAPFile(req.RunID, "ip_source_spoof", finalFrames, defaultDuration)
 			if path != "" {
 				result.PCAPFiles = append(result.PCAPFiles, path)
 			}
@@ -314,7 +318,9 @@ func runMACSpoofing(req AttackRequest) (*AttackResult, error) {
 				frames = append(frames, convs[2].ack)
 			}
 
-			path, _ := writePCAPFile(req.RunID, "mac_spoof", frames, defaultDuration)
+			bgFrames := generateBackgroundTraffic(getAllDevices())
+			finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+			path, _ := writePCAPFile(req.RunID, "mac_spoof", finalFrames, defaultDuration)
 			if path != "" {
 				result.PCAPFiles = append(result.PCAPFiles, path)
 			}
@@ -545,7 +551,9 @@ func runLDAPInjection(req AttackRequest) (*AttackResult, error) {
 		searchDoneSeg := buildTCPSegment(389, srcPort, 0x18, serverSeq+uint32(len(bindResp))+1, seq+uint32(len(bindReq))+uint32(len(fullSearchReq))+1, searchDone)
 		ldapFrames = append(ldapFrames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(dcIP, req.AttackerIP, 6, searchDoneSeg)))
 
-		path, _ := writePCAPFile(req.RunID, "ldap_injection", ldapFrames, defaultDuration)
+		bgFrames := generateBackgroundTraffic(getAllDevices())
+		finalFrames := interleaveBackgroundTraffic(ldapFrames, bgFrames)
+		path, _ := writePCAPFile(req.RunID, "ldap_injection", finalFrames, defaultDuration)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}

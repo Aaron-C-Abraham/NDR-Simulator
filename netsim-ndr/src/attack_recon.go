@@ -186,7 +186,9 @@ func runOSFingerprint(req AttackRequest) (*AttackResult, error) {
 			u1Probe, u1Response := buildU1Probe(req.AttackerIP, targetIP, randomPort(), closedPort, srcMAC, dstMAC)
 			frames = append(frames, u1Probe, u1Response)
 
-			path, _ := writePCAPFile(req.RunID, "os_fingerprint", frames, defaultDuration)
+			bgFrames := generateBackgroundTraffic(getAllDevices())
+			finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+			path, _ := writePCAPFile(req.RunID, "os_fingerprint", finalFrames, defaultDuration)
 			if path != "" {
 				result.PCAPFiles = append(result.PCAPFiles, path)
 			}
@@ -287,7 +289,9 @@ func runServiceEnum(req AttackRequest) (*AttackResult, error) {
 		frame_nr := buildEthernetFrame(dstMAC, srcMAC, ipPkt_nr)
 		frames = append(frames, frame_nr)
 
-		path, _ := writePCAPFile(req.RunID, "service_enumeration", frames, defaultDuration)
+		bgFrames := generateBackgroundTraffic(getAllDevices())
+		finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+		path, _ := writePCAPFile(req.RunID, "service_enumeration", finalFrames, defaultDuration)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
@@ -493,7 +497,9 @@ func runDNSRecon(req AttackRequest) (*AttackResult, error) {
 			ip := buildIPv4Packet(req.AttackerIP, dnsDev.IPAddress, 17, udp)
 			frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, ip))
 		}
-		path, _ := writePCAPFile(req.RunID, "dns_recon", frames, 50)
+		bgFrames := generateBackgroundTraffic(getAllDevices())
+		finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+		path, _ := writePCAPFile(req.RunID, "dns_recon", finalFrames, 50)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
@@ -615,7 +621,9 @@ func runNetDiscover(req AttackRequest) (*AttackResult, error) {
 			}
 		}
 
-		path, _ := writePCAPFile(req.RunID, "arp_scan", frames, defaultDuration)
+		bgFrames := generateBackgroundTraffic(getAllDevices())
+		finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+		path, _ := writePCAPFile(req.RunID, "arp_scan", finalFrames, defaultDuration)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
@@ -681,7 +689,9 @@ func runSNMPEnum(req AttackRequest) (*AttackResult, error) {
 			frame_r := buildEthernetFrame(dstMAC, srcMAC, ipPkt_r)
 			frames = append(frames, frame_r)
 		}
-		path, _ := writePCAPFile(req.RunID, "SNMP_enum", frames, defaultDuration)
+		bgFrames := generateBackgroundTraffic(getAllDevices())
+		finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+		path, _ := writePCAPFile(req.RunID, "SNMP_enum", finalFrames, defaultDuration)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
@@ -774,7 +784,9 @@ func runSMTPUserEnum(req AttackRequest) (*AttackResult, error) {
 		serverSeq++
 		frames = append(frames, create_TCP_frame(src_port, dst_port, 0x10, clientSeq, serverSeq, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
 
-		path, _ := writePCAPFile(req.RunID, "smtp_user_enum", frames, defaultDuration)
+		bgFrames := generateBackgroundTraffic(getAllDevices())
+		finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+		path, _ := writePCAPFile(req.RunID, "smtp_user_enum", finalFrames, defaultDuration)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
@@ -931,7 +943,9 @@ func runLDAPEnum(req AttackRequest) (*AttackResult, error) {
 		searchResp := buildLDAPSearchResponse(142)
 		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 6, buildTCPSegment(389, srcPort, 0x18, serverSeq, clientSeq, searchResp))))
 
-		path, _ := writePCAPFile(req.RunID, "ldap_enum", frames, defaultDuration)
+		bgFrames := generateBackgroundTraffic(getAllDevices())
+		finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+		path, _ := writePCAPFile(req.RunID, "ldap_enum", finalFrames, defaultDuration)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
@@ -976,7 +990,9 @@ func runNetBIOSEnum(req AttackRequest) (*AttackResult, error) {
 				queryFrame := buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 17, query))
 				response := buildUDPDatagram(137, srcPort, Get_NBNS_Response(targetIP))
 				responseFrame := buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 17, response))
-				nbPath, _ := writePCAPFile(req.RunID, "netbios_enum", [][]byte{queryFrame, responseFrame}, defaultDuration)
+				bgFrames := generateBackgroundTraffic(getAllDevices())
+				finalFrames := interleaveBackgroundTraffic([][]byte{queryFrame, responseFrame}, bgFrames)
+				nbPath, _ := writePCAPFile(req.RunID, "netbios_enum", finalFrames, defaultDuration)
 				if nbPath != "" {
 					result.PCAPFiles = append(result.PCAPFiles, nbPath)
 				}
@@ -1053,7 +1069,9 @@ func runSSLScan(req AttackRequest) (*AttackResult, error) {
 		alertResp := buildTLSAlertBadRecordMAC()
 		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 6, buildTCPSegment(uint16(targetPort), srcPort, 0x18, serverSeq, clientSeq, alertResp))))
 
-		path, _ := writePCAPFile(req.RunID, "ssl_scan", frames, defaultDuration)
+		bgFrames := generateBackgroundTraffic(getAllDevices())
+		finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+		path, _ := writePCAPFile(req.RunID, "ssl_scan", finalFrames, defaultDuration)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}

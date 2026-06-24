@@ -441,8 +441,10 @@ func PCAPSYNFlood(runID, targetIP string, targetPort uint16, sourceIPs []string,
 		}
 	}
 
-	path, err := writePCAPFile(runID, "syn_flood", frames, defaultDuration)
-	logInfo("Return from PCAPSYNFlood frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "syn_flood", finalFrames, defaultDuration)
+	logInfo("Return from PCAPSYNFlood frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -475,8 +477,10 @@ func PCAPUDPFlood(runID, targetIP string, targetPort uint16, sourceIPs []string)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, ip))
 	}
 
-	path, err := writePCAPFile(runID, "udp_flood", frames, defaultDuration)
-	logInfo("Return from PCAPUDPFlood frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "udp_flood", finalFrames, defaultDuration)
+	logInfo("Return from PCAPUDPFlood frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -521,8 +525,10 @@ func PCAPHTTPFlood(runID, attackerIP, targetIP string, targetPort uint16, count 
 		}
 	}
 
-	path, err := writePCAPFile(runID, "http_flood", frames, defaultDuration)
-	logInfo("Return from PCAPHTTPFlood frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "http_flood", finalFrames, defaultDuration)
+	logInfo("Return from PCAPHTTPFlood frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -553,8 +559,10 @@ func PCAPSlowloris(runID, attackerIP, targetIP string, connections int) (string,
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, drip2)))
 	}
 
-	path, err := writePCAPFile(runID, "slowloris", frames, defaultDuration)
-	logInfo("Return from PCAPSlowloris frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "slowloris", finalFrames, defaultDuration)
+	logInfo("Return from PCAPSlowloris frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -707,8 +715,10 @@ func PCAPBruteForce(runID, attackerIP, targetIP string, targetPort uint16, proto
 		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, rst)))
 	}
 
-	path, err := writePCAPFile(runID, "bruteforce_"+protocol, frames, defaultDuration)
-	logInfo("Return from PCAPBruteForce frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "bruteforce_", finalFrames, defaultDuration)
+	logInfo("Return from PCAPBruteforce frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -746,8 +756,10 @@ func PCAPExfil(runID, attackerIP, targetIP string, targetPort uint16, dataMB int
 		chunkSeq += uint32(len(chunk))
 	}
 
-	path, err := writePCAPFile(runID, "exfil_http", frames, defaultDuration)
-	logInfo("Return from PCAPExfil frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "exfil_http", finalFrames, defaultDuration)
+	logInfo("Return from PCAPExfil frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -781,8 +793,10 @@ func PCAPLateral(runID, attackerIP, targetIP string, targetPort uint16) (string,
 	tree := buildTCPSegment(srcPort, targetPort, 0x18, seq+uint32(1+len(smbNegotiatePDU)+len(ntlmHdr)), 1, treePayload)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, tree)))
 
-	path, err := writePCAPFile(runID, "lateral_smb", frames, defaultDuration)
-	logInfo("Return from PCAPLateral frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "lateral_smb", finalFrames, defaultDuration)
+	logInfo("Return from PCAPLateral frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -817,8 +831,10 @@ func PCAPARPSweep(runID, attackerIP string, subnet string, count int) (string, e
 		frames = append(frames, frame)
 	}
 
-	path, err := writePCAPFile(runID, "arp_scan", frames, defaultDuration)
-	logInfo("Return from PCAPARPSweep frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "arp_scan", finalFrames, defaultDuration)
+	logInfo("Return from PCAPARPSweep frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -912,8 +928,10 @@ func PCAPGenericTCPExchange(runID, attackName, attackerIP, targetIP string, targ
 		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, resp)))
 	}
 
-	path, err := writePCAPFile(runID, attackName, frames, defaultDuration)
-	logInfo("Return from PCAPGenericTCPExchange frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, attackName, finalFrames, defaultDuration)
+	logInfo("Return from PCAPGenericTCPExchange frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -941,10 +959,11 @@ func PCAPDNSQueryResponse(runID, attackName, clientIP, dnsIP string, domain stri
 		response[2] = 0x81
 		response[3] = 0x83 // RCODE=3 NXDOMAIN
 		responseFrame := buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(dnsIP, clientIP, 17, buildUDPDatagram(53, srcPort, response)))
-
 		frames := [][]byte{queryFrame, responseFrame}
-		path, err := writePCAPFile(runID, attackName, frames, defaultDuration)
-		logInfo("Return from PCAPDNSQueryResponse frames=%d path=%s", len(frames), path)
+		bgFrames := generateBackgroundTraffic(getAllDevices())
+		finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+		path, err := writePCAPFile(runID, attackName, finalFrames, defaultDuration)
+		logInfo("Return from PCAPDNSQueryResponse frames=%d path=%s", len(finalFrames), path)
 		return path, err
 	}
 
@@ -1017,8 +1036,10 @@ func PCAPDNSQueryResponse(runID, attackName, clientIP, dnsIP string, domain stri
 	legitFrame := buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(dnsIP, clientIP, 17, buildUDPDatagram(53, resolverPort, legitResponse)))
 	frames = append(frames, legitFrame)
 
-	path, err := writePCAPFile(runID, attackName, frames, defaultDuration)
-	logInfo("Return from PCAPDNSQueryResponse frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, attackName, finalFrames, defaultDuration)
+	logInfo("Return from PCAPDNSQueryResponse frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -1148,8 +1169,10 @@ func PCAPIPFragmentation(runID, attackerIP, targetIP string, targetPort uint16, 
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, ipFrag))
 	}
 
-	path, err := writePCAPFile(runID, "ip_fragmentation", frames, defaultDuration)
-	logInfo("Return from PCAPIPFragmentation frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "ip_fragmentation", finalFrames, defaultDuration)
+	logInfo("Return from PCAPIPFragmentation frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -1205,8 +1228,10 @@ func PCAPICMPFlood(runID, attackerIP, targetIP string, count int) (string, error
 		}
 	}
 
-	path, err := writePCAPFile(runID, "icmp_flood", frames, defaultDuration)
-	logInfo("Return from PCAPICMPFlood frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "icmp_flood", finalFrames, defaultDuration)
+	logInfo("Return from PCAPICMPFlood frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -1220,7 +1245,9 @@ func PCAPUDPAmplification(runID, srcIP, dstIP string, srcPort uint16, payloadSiz
 	rand.Read(payload)
 	udp := buildUDPDatagram(srcPort, randomPort(), payload)
 	frame := buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(srcIP, dstIP, 17, udp))
-	path, err := writePCAPFile(runID, "amplification", [][]byte{frame}, defaultDuration)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic([][]byte{frame}, bgFrames)
+	path, err := writePCAPFile(runID, "amplification", finalFrames, defaultDuration)
 	logInfo("Return from PCAPUDPAmplification path=%s", path)
 	return path, err
 }
@@ -1236,8 +1263,10 @@ func PCAPACKFlood(runID, targetIP string, targetPort uint16, sourceIPs []string)
 		ack := buildTCPSegment(randomPort(), targetPort, 0x10, rand.Uint32(), rand.Uint32(), nil)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(srcIP, targetIP, 6, ack)))
 	}
-	path, err := writePCAPFile(runID, "ack_flood", frames, defaultDuration)
-	logInfo("Return from PCAPACKFlood frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "ack_flood", finalFrames, defaultDuration)
+	logInfo("Return from PCAPACKFlood frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -1252,8 +1281,10 @@ func PCAPRSTFlood(runID, attackerIP, targetIP string, targetPort uint16, count i
 		rst := buildTCPSegment(randomPort(), targetPort, 0x04, rand.Uint32(), 0, nil)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, rst)))
 	}
-	path, err := writePCAPFile(runID, "rst_flood", frames, defaultDuration)
-	logInfo("Return from PCAPRSTFlood frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "rst_flood", finalFrames, defaultDuration)
+	logInfo("Return from PCAPRSTFlood frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -1866,8 +1897,10 @@ func PCAPSMBChannel(runID, attackerIP, targetIP, pipeName string) (string, error
 	finalAck := buildTCPSegment(445, srcPort, 0x10, serverSeq, clientSeq, nil)
 	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, finalAck)))
 
-	path, err := writePCAPFile(runID, "smb_channel", frames, defaultDuration)
-	logInfo("Return from PCAPSMBChannel frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "smb_channel", finalFrames, defaultDuration)
+	logInfo("Return from PCAPSMBChannel frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -1930,8 +1963,10 @@ func PCAPLateralWMI(runID, attackerIP, targetIP string, highPort uint16) (string
 	finalAck2 := buildTCPSegment(srcPort2, highPort, 0x10, clientSeq2, serverSeq2, nil)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, finalAck2)))
 
-	path, err := writePCAPFile(runID, "lateral_wmi", frames, defaultDuration)
-	logInfo("Return from PCAPLateralWMI frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "lateral_wmi", finalFrames, defaultDuration)
+	logInfo("Return from PCAPLateralWMI frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -1977,8 +2012,10 @@ func PCAPLateralDCOM(runID, attackerIP, targetIP string) (string, error) {
 	finalAck := buildTCPSegment(srcPort, 135, 0x10, clientSeq, serverSeq, nil)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, finalAck)))
 
-	path, err := writePCAPFile(runID, "lateral_dcom", frames, defaultDuration)
-	logInfo("Return from PCAPLateralDCOM frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "lateral_dcom", finalFrames, defaultDuration)
+	logInfo("Return from PCAPLateralDCOM frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -2024,8 +2061,10 @@ func PCAPLateralRDPHijack(runID, attackerIP, targetIP string) (string, error) {
 	hijackAck := buildTCPSegment(3389, srcPort, 0x10, serverSeq, clientSeq, nil)
 	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, hijackAck)))
 
-	path, err := writePCAPFile(runID, "lateral_rdp_hijack", frames, defaultDuration)
-	logInfo("Return from PCAPLateralRDPHijack frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "lateral_rdp_hijack", finalFrames, defaultDuration)
+	logInfo("Return from PCAPLateralRDPHijack frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -2163,8 +2202,10 @@ func PCAPDHCPStarvation(runID string, count int) (string, error) {
 		}
 	}
 
-	path, err := writePCAPFile(runID, "dhcp_starvation", frames, defaultDuration)
-	logInfo("Return from PCAPDHCPStarvation frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "dhcp_starvation", finalFrames, defaultDuration)
+	logInfo("Return from PCAPDHCPStarvation frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -2259,8 +2300,10 @@ func PCAPRogueDHCP(runID, attackerIP, fakeGateway string) (string, error) {
 	nakFrame := buildEthernetFrame(legitServerMAC, broadcastMAC, buildIPv4Packet(legitServerIP, "255.255.255.255", 17, buildUDPDatagram(67, 68, nak)))
 	frames = append(frames, nakFrame)
 
-	path, err := writePCAPFile(runID, "rogue_dhcp", frames, defaultDuration)
-	logInfo("Return from PCAPRogueDHCP frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "rogue_dhcp", finalFrames, defaultDuration)
+	logInfo("Return from PCAPRogueDHCP frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -2293,8 +2336,10 @@ func PCAPDNSExfilMulti(runID, attackerIP, dnsTargetIP, domain string, chunkCount
 		ip := buildIPv4Packet(attackerIP, dnsTargetIP, 17, buildUDPDatagram(uint16(50000+i%10000), 53, query))
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, ip))
 	}
-	path, err := writePCAPFile(runID, "dns_exfil", frames, defaultDuration)
-	logInfo("Return from PCAPDNSExfilMulti frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "dns_exfil", finalFrames, defaultDuration)
+	logInfo("Return from PCAPDNSExfilMulti frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -2346,8 +2391,10 @@ func buildICMPExchangePCAP(runID, attackName, attackerIP, c2IP string, count int
 			frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(c2IP, attackerIP, 1, echoReply)))
 		}
 	}
-	path, err := writePCAPFile(runID, attackName, frames, defaultDuration)
-	logInfo("Return from %s frames=%d path=%s", attackName, len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, attackName, finalFrames, defaultDuration)
+	logInfo("Return from %s frames=%d path=%s", attackName, len(finalFrames), path)
 	return path, err
 }
 
@@ -2476,8 +2523,10 @@ func PCAPASREPRoasting(runID, attackerIP, targetIP, realmName, userPrincipal str
 	repFrame := buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 17, buildUDPDatagram(88, srcPort, asRep)))
 
 	frames := [][]byte{reqFrame, repFrame}
-	path, err := writePCAPFile(runID, "asrep_roasting", frames, defaultDuration)
-	logInfo("Return from PCAPASREPRoasting frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "asrep_roasting", finalFrames, defaultDuration)
+	logInfo("Return from PCAPASREPRoasting frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -2515,8 +2564,10 @@ func PCAPGoldenTicket(runID, attackerIP, targetIP, realmName, userPrincipal stri
 	negResp := buildTCPSegment(445, smbSrcPort, 0x18, serverSeq, clientSeq, SMB2_Negotiate_Response)
 	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, negResp)))
 
-	path, err := writePCAPFile(runID, "golden_ticket", frames, defaultDuration)
-	logInfo("Return from PCAPGoldenTicket frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "golden_ticket", finalFrames, defaultDuration)
+	logInfo("Return from PCAPGoldenTicket frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -2554,8 +2605,10 @@ func PCAPPassTheTicket(runID, attackerIP, targetIP, realmName, userPrincipal str
 	negResp := buildTCPSegment(445, smbSrcPort, 0x18, serverSeq, clientSeq, SMB2_Negotiate_Response)
 	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, negResp)))
 
-	path, err := writePCAPFile(runID, "pass_the_ticket", frames, defaultDuration)
-	logInfo("Return from PCAPPassTheTicket frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "pass_the_ticket", finalFrames, defaultDuration)
+	logInfo("Return from PCAPPassTheTicket frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -2653,8 +2706,10 @@ func PCAPVLANHopping(runID, attackerIP, targetVLANGateway string, outerVLAN, inn
 		ackSingleTagged := buildSingleTaggedFrame(switchMAC, target.mac, innerVLAN, 0x0800, ackIP)
 		frames = append(frames, ackSingleTagged)
 	}
-	path, err := writePCAPFile(runID, "vlan_hopping", frames, defaultDuration)
-	logInfo("Return from PCAPVLANHopping frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "vlan_hopping", finalFrames, defaultDuration)
+	logInfo("Return from PCAPVLANHopping frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -2821,8 +2876,10 @@ func PCAPBGPHijack(runID, attackerIP, routerIP, prefixCIDR string, hijackAS uint
 	finalAck := buildTCPSegment(179, srcPort, 0x10, serverSeq, clientSeq, nil)
 	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(routerIP, attackerIP, 6, finalAck)))
 
-	path, err := writePCAPFile(runID, "bgp_hijack", frames, defaultDuration)
-	logInfo("Return from PCAPBGPHijack frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "bgp_hijack", finalFrames, defaultDuration)
+	logInfo("Return from PCAPBGPHijack frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -2973,8 +3030,10 @@ func PCAPTLSExchange(runID, attackName, attackerIP, targetIP string, targetPort 
 	finalAck := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, finalAck)))
 
-	path, err := writePCAPFile(runID, attackName, frames, defaultDuration)
-	logInfo("Return from PCAPTLSExchange frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, attackName, finalFrames, defaultDuration)
+	logInfo("Return from PCAPTLSExchange frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -3314,8 +3373,10 @@ func PCAPDNSMultiQuery(runID, attackName, clientIP, dnsIP string, domains []stri
 		frames = append(frames, responseFrame)
 	}
 
-	path, err := writePCAPFile(runID, attackName, frames, defaultDuration)
-	logInfo("Return from PCAPDNSMultiQuery frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, attackName, finalFrames, defaultDuration)
+	logInfo("Return from PCAPDNSMultiQuery frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -3357,8 +3418,10 @@ func PCAPHTTPMultiRequest(runID, attackName, clientIP, serverIP string, serverPo
 		serverSeq += uint32(len(resp))
 	}
 
-	path, err := writePCAPFile(runID, attackName, frames, defaultDuration)
-	logInfo("Return from PCAPHTTPMultiRequest frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, attackName, finalFrames, defaultDuration)
+	logInfo("Return from PCAPHTTPMultiRequest frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
@@ -3386,4 +3449,205 @@ func incrementIP(ip string, n int) string {
 		d = 254
 	}
 	return fmt.Sprintf("%d.%d.%d.%d", a, b, c, d)
+}
+
+// ── Background Traffic ────────────────────────────────────────────────────────
+
+// generateBackgroundTraffic builds a realistic mix of ARP, DNS, ICMP, HTTP,
+// and TCP keepalive frames between real topology devices. Interleaved into
+// attack PCAPs so captures don't look suspiciously traffic-free outside the
+// attack itself.
+func generateBackgroundTraffic(devices []*Device) [][]byte {
+	if len(devices) < 2 {
+		return nil
+	}
+
+	var frames [][]byte
+
+	commonDomains := []string{
+		"corp.local", "dc01.corp.local", "fileserver.corp.local",
+		"mail.corp.local", "updates.corp.local", "time.corp.local",
+		"printer.corp.local", "vpn.corp.local", "intranet.corp.local",
+	}
+
+	// Randomize total number of background events (10-35)
+	eventCount := 10 + rand.Intn(26)
+
+	// Weighted traffic type pool — ARP and DNS appear more often than HTTP/ICMP,
+	// matching real LAN traffic distributions where ARP/DNS dominate background noise
+	typePool := []int{
+		0, 0, 0, 0, // ARP — 4 slots
+		1, 1, 1, 1, 1, // DNS — 5 slots
+		2, 2, // ICMP — 2 slots
+		3, 3, // HTTP — 2 slots
+		4, // keepalive — 1 slot
+	}
+
+	for i := 0; i < eventCount; i++ {
+		// Pick two distinct random devices
+		srcIdx := rand.Intn(len(devices))
+		dstIdx := rand.Intn(len(devices))
+		for dstIdx == srcIdx {
+			dstIdx = rand.Intn(len(devices))
+		}
+		src := devices[srcIdx]
+		dst := devices[dstIdx]
+
+		srcMAC := parseMACAddress(src.MACAddress)
+		dstMAC := parseMACAddress(dst.MACAddress)
+
+		trafficType := typePool[rand.Intn(len(typePool))]
+
+		switch trafficType {
+
+		case 0: // ARP — occasionally skip the reply (unanswered ARP is realistic)
+			broadcastMAC := [6]byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
+			arpReq := buildARPRequest(srcMAC, src.IPAddress, dst.IPAddress)
+			reqFrame := make([]byte, 14+len(arpReq))
+			copy(reqFrame[0:6], broadcastMAC[:])
+			copy(reqFrame[6:12], srcMAC[:])
+			binary.BigEndian.PutUint16(reqFrame[12:14], 0x0806)
+			copy(reqFrame[14:], arpReq)
+			frames = append(frames, reqFrame)
+
+			if rand.Intn(4) != 0 { // 75% chance of reply
+				arpReply := buildARPReply(dstMAC, srcMAC, dst.IPAddress, src.IPAddress)
+				replyFrame := make([]byte, 14+len(arpReply))
+				copy(replyFrame[0:6], srcMAC[:])
+				copy(replyFrame[6:12], dstMAC[:])
+				binary.BigEndian.PutUint16(replyFrame[12:14], 0x0806)
+				copy(replyFrame[14:], arpReply)
+				frames = append(frames, replyFrame)
+			}
+
+		case 1: // DNS — vary query type and domain randomly
+			domain := commonDomains[rand.Intn(len(commonDomains))]
+			// Occasionally add a random subdomain prefix
+			if rand.Intn(3) == 0 {
+				prefixes := []string{"www", "api", "mail", "vpn", "dev"}
+				domain = prefixes[rand.Intn(len(prefixes))] + "." + domain
+			}
+			srcPort := randomPort()
+			qtype := uint16(0x0001) // A
+			if rand.Intn(5) == 0 {
+				qtype = 0x001c // AAAA occasionally
+			}
+			query := buildDNSQueryType(domain, qtype)
+			udpQ := buildUDPDatagram(srcPort, 53, query)
+			frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(src.IPAddress, dst.IPAddress, 17, udpQ)))
+
+			// Occasionally simulate NXDOMAIN instead of successful response
+			resp := make([]byte, len(query))
+			copy(resp, query)
+			resp[2] = 0x81
+			if rand.Intn(6) == 0 {
+				resp[3] = 0x83 // NXDOMAIN
+			} else {
+				resp[3] = 0x80
+				binary.BigEndian.PutUint16(resp[6:8], 0x0001)
+				answer := []byte{
+					0xC0, 0x0C,
+					0x00, 0x01,
+					0x00, 0x01,
+					0x00, 0x00, 0x01, 0x2C,
+					0x00, 0x04,
+					10, 0, byte(rand.Intn(5) + 1), byte(rand.Intn(200) + 10),
+				}
+				resp = append(resp, answer...)
+			}
+			udpR := buildUDPDatagram(53, srcPort, resp)
+			frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(dst.IPAddress, src.IPAddress, 17, udpR)))
+
+		case 2: // ICMP — vary payload size
+			id := uint16(rand.Intn(65535))
+			seq := uint16(rand.Intn(512) + 1)
+			payloadSize := []int{8, 16, 32, 56}[rand.Intn(4)]
+			echoPayload := make([]byte, payloadSize)
+			for j := range echoPayload {
+				echoPayload[j] = byte('a' + j%26)
+			}
+			echoReq := buildICMPSegment(8, 0, 0, id, seq, echoPayload)
+			frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(src.IPAddress, dst.IPAddress, 1, echoReq)))
+
+			if rand.Intn(5) != 0 { // 80% chance of reply
+				echoReply := buildICMPSegment(0, 0, 0, id, seq, echoPayload)
+				frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(dst.IPAddress, src.IPAddress, 1, echoReply)))
+			}
+
+		case 3: // HTTP — vary paths, ports, and response codes
+			srcPort := randomPort()
+			clientSeq := rand.Uint32()
+			serverSeq := rand.Uint32()
+			paths := []string{"/", "/index.html", "/api/health", "/favicon.ico", "/robots.txt", "/api/status", "/login", "/static/app.js"}
+			reqPath := paths[rand.Intn(len(paths))]
+			httpPort := []uint16{80, 8080, 8443}[rand.Intn(3)]
+			responseCodes := []string{"200 OK", "204 No Content", "301 Moved Permanently", "304 Not Modified"}
+			responseCode := responseCodes[rand.Intn(len(responseCodes))]
+
+			syn := buildTCPSegment(srcPort, httpPort, 0x02, clientSeq, 0, nil)
+			frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(src.IPAddress, dst.IPAddress, 6, syn)))
+			clientSeq++
+
+			synAck := buildTCPSegment(httpPort, srcPort, 0x12, serverSeq, clientSeq, nil)
+			frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(dst.IPAddress, src.IPAddress, 6, synAck)))
+			serverSeq++
+
+			getPayload := []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nConnection: keep-alive\r\nUser-Agent: Mozilla/5.0\r\n\r\n", reqPath, dst.IPAddress))
+			get := buildTCPSegment(srcPort, httpPort, 0x18, clientSeq, serverSeq, getPayload)
+			frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(src.IPAddress, dst.IPAddress, 6, get)))
+			clientSeq += uint32(len(getPayload))
+
+			respBody := []byte(fmt.Sprintf("HTTP/1.1 %s\r\nContent-Type: text/html\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n", responseCode))
+			resp := buildTCPSegment(httpPort, srcPort, 0x18, serverSeq, clientSeq, respBody)
+			frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(dst.IPAddress, src.IPAddress, 6, resp)))
+
+		case 4: // TCP keepalive — vary port
+			srcPort := randomPort()
+			ports := []uint16{80, 443, 22, 3389, 8080}
+			dstPort := ports[rand.Intn(len(ports))]
+			seq := rand.Uint32()
+			ackVal := rand.Uint32()
+			keepalive := buildTCPSegment(srcPort, dstPort, 0x10, seq-1, ackVal, nil)
+			frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(src.IPAddress, dst.IPAddress, 6, keepalive)))
+
+			if rand.Intn(3) != 0 { // 67% chance of keepalive-ack
+				keepaliveAck := buildTCPSegment(dstPort, srcPort, 0x10, ackVal, seq, nil)
+				frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(dst.IPAddress, src.IPAddress, 6, keepaliveAck)))
+			}
+		}
+	}
+
+	return frames
+}
+
+// interleaveBackgroundTraffic spreads bgFrames evenly between attackFrames
+// so background traffic lands at ~35% of the final frame count.
+// Attack frame order is preserved exactly.
+func interleaveBackgroundTraffic(attackFrames [][]byte, bgFrames [][]byte) [][]byte {
+	if len(bgFrames) == 0 {
+		return attackFrames
+	}
+	if len(attackFrames) == 0 {
+		return bgFrames
+	}
+
+	result := make([][]byte, 0, len(attackFrames)+len(bgFrames))
+	bgStep := float64(len(attackFrames)) / float64(len(bgFrames))
+	bgIdx := 0
+	bgThreshold := bgStep / 2
+
+	for i, f := range attackFrames {
+		for bgIdx < len(bgFrames) && float64(i) >= bgThreshold {
+			result = append(result, bgFrames[bgIdx])
+			bgIdx++
+			bgThreshold += bgStep
+		}
+		result = append(result, f)
+	}
+	for bgIdx < len(bgFrames) {
+		result = append(result, bgFrames[bgIdx])
+		bgIdx++
+	}
+
+	return result
 }
