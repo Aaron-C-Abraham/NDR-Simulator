@@ -303,8 +303,10 @@ func PCAPPortScan(attackerDev, targetDev *Device, ports []uint16, port_mapping m
 
 		}
 	}
-	path, err := writePCAPFile("scan", "portscan", frames, defaultDuration)
-	logInfo("Return from PCAPPortScan frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTrafficN(getAllDevices(), len(frames)/3)
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile("scan", "portscan", finalFrames, defaultDuration)
+	logInfo("Return from PCAPPortScan frames=%d path=%s", len(finalFrames), path)
 	return nil, path, err
 }
 
@@ -332,8 +334,10 @@ func PCAPBeaconing(infectedDev *Device, c2IP string, count int) ([]byte, string,
 		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, ipResp))
 	}
 
-	path, err := writePCAPFile("beacon", "beaconing", frames, defaultDuration)
-	logInfo("Return from PCAPBeaconing frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile("beacon", "beaconing", finalFrames, defaultDuration)
+	logInfo("Return from PCAPBeaconing frames=%d path=%s", len(finalFrames), path)
 	return nil, path, err
 }
 
@@ -355,8 +359,10 @@ func PCAPDNSTunnel(infectedDev, dnsDev *Device, domain string, count int) ([]byt
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, ipPkt))
 	}
 
-	path, err := writePCAPFile("dnstunn", "dns_tunnel", frames, defaultDuration)
-	logInfo("Return from PCAPDNSTunnel frames=%d path=%s", len(frames), path)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile("dnstunn", "dns_tunnel", finalFrames, defaultDuration)
+	logInfo("Return from PCAPDNSTunnel frames=%d path=%s", len(finalFrames), path)
 	return nil, path, err
 }
 
@@ -441,7 +447,7 @@ func PCAPSYNFlood(runID, targetIP string, targetPort uint16, sourceIPs []string,
 		}
 	}
 
-	bgFrames := generateBackgroundTraffic(getAllDevices())
+	bgFrames := generateBackgroundTrafficN(getAllDevices(), len(frames)/3)
 	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
 	path, err := writePCAPFile(runID, "syn_flood", finalFrames, defaultDuration)
 	logInfo("Return from PCAPSYNFlood frames=%d path=%s", len(finalFrames), path)
@@ -477,7 +483,7 @@ func PCAPUDPFlood(runID, targetIP string, targetPort uint16, sourceIPs []string)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, ip))
 	}
 
-	bgFrames := generateBackgroundTraffic(getAllDevices())
+	bgFrames := generateBackgroundTrafficN(getAllDevices(), len(frames)/3)
 	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
 	path, err := writePCAPFile(runID, "udp_flood", finalFrames, defaultDuration)
 	logInfo("Return from PCAPUDPFlood frames=%d path=%s", len(finalFrames), path)
@@ -549,7 +555,7 @@ func PCAPHTTPFlood(runID, attackerIP, targetIP string, targetPort uint16, count 
 		}
 	}
 
-	bgFrames := generateBackgroundTraffic(getAllDevices())
+	bgFrames := generateBackgroundTrafficN(getAllDevices(), len(frames)/3)
 	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
 	path, err := writePCAPFile(runID, "http_flood", finalFrames, defaultDuration)
 	logInfo("Return from PCAPHTTPFlood frames=%d path=%s", len(finalFrames), path)
@@ -1252,7 +1258,7 @@ func PCAPICMPFlood(runID, attackerIP, targetIP string, count int) (string, error
 		}
 	}
 
-	bgFrames := generateBackgroundTraffic(getAllDevices())
+	bgFrames := generateBackgroundTrafficN(getAllDevices(), len(frames)/3)
 	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
 	path, err := writePCAPFile(runID, "icmp_flood", finalFrames, defaultDuration)
 	logInfo("Return from PCAPICMPFlood frames=%d path=%s", len(finalFrames), path)
@@ -3674,4 +3680,126 @@ func interleaveBackgroundTraffic(attackFrames [][]byte, bgFrames [][]byte) [][]b
 	}
 
 	return result
+}
+
+// generateBackgroundTrafficN is generateBackgroundTraffic with an explicit
+// event count, for high-frame-count attacks (port scan, floods) where the
+// default 10-35 events would be lost in thousands of attack frames.
+func generateBackgroundTrafficN(devices []*Device, n int) [][]byte {
+	if n < 10 {
+		n = 10
+	}
+	if n > 500 {
+		n = 500 // cap to avoid huge PCAPs
+	}
+
+	// Temporarily override the event count by calling the core logic directly
+	// with n iterations instead of the default random 10-35 range.
+	if len(devices) < 2 {
+		return nil
+	}
+
+	var frames [][]byte
+
+	commonDomains := []string{
+		"corp.local", "dc01.corp.local", "fileserver.corp.local",
+		"mail.corp.local", "updates.corp.local", "time.corp.local",
+		"printer.corp.local", "vpn.corp.local", "intranet.corp.local",
+	}
+
+	typePool := []int{
+		0, 0, 0, 0,
+		1, 1, 1, 1, 1,
+		2, 2,
+		3, 3,
+		4,
+	}
+
+	for i := 0; i < n; i++ {
+		srcIdx := rand.Intn(len(devices))
+		dstIdx := rand.Intn(len(devices))
+		for dstIdx == srcIdx {
+			dstIdx = rand.Intn(len(devices))
+		}
+		src := devices[srcIdx]
+		dst := devices[dstIdx]
+		srcMAC := parseMACAddress(src.MACAddress)
+		dstMAC := parseMACAddress(dst.MACAddress)
+		trafficType := typePool[rand.Intn(len(typePool))]
+
+		switch trafficType {
+		case 0:
+			broadcastMAC := [6]byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
+			arpReq := buildARPRequest(srcMAC, src.IPAddress, dst.IPAddress)
+			reqFrame := make([]byte, 14+len(arpReq))
+			copy(reqFrame[0:6], broadcastMAC[:])
+			copy(reqFrame[6:12], srcMAC[:])
+			binary.BigEndian.PutUint16(reqFrame[12:14], 0x0806)
+			copy(reqFrame[14:], arpReq)
+			frames = append(frames, reqFrame)
+			if rand.Intn(4) != 0 {
+				arpReply := buildARPReply(dstMAC, srcMAC, dst.IPAddress, src.IPAddress)
+				replyFrame := make([]byte, 14+len(arpReply))
+				copy(replyFrame[0:6], srcMAC[:])
+				copy(replyFrame[6:12], dstMAC[:])
+				binary.BigEndian.PutUint16(replyFrame[12:14], 0x0806)
+				copy(replyFrame[14:], arpReply)
+				frames = append(frames, replyFrame)
+			}
+		case 1:
+			domain := commonDomains[rand.Intn(len(commonDomains))]
+			if rand.Intn(3) == 0 {
+				prefixes := []string{"www", "api", "mail", "vpn", "dev"}
+				domain = prefixes[rand.Intn(len(prefixes))] + "." + domain
+			}
+			srcPort := randomPort()
+			query := buildDNSQueryType(domain, 0x0001)
+			frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(src.IPAddress, dst.IPAddress, 17, buildUDPDatagram(srcPort, 53, query))))
+			resp := make([]byte, len(query))
+			copy(resp, query)
+			resp[2] = 0x81
+			resp[3] = 0x80
+			binary.BigEndian.PutUint16(resp[6:8], 0x0001)
+			answer := []byte{0xC0, 0x0C, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x01, 0x2C, 0x00, 0x04, 10, 0, byte(rand.Intn(5) + 1), byte(rand.Intn(200) + 10)}
+			resp = append(resp, answer...)
+			frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(dst.IPAddress, src.IPAddress, 17, buildUDPDatagram(53, srcPort, resp))))
+		case 2:
+			id := uint16(rand.Intn(65535))
+			seq := uint16(rand.Intn(512) + 1)
+			echoPayload := make([]byte, []int{8, 16, 32, 56}[rand.Intn(4)])
+			echoReq := buildICMPSegment(8, 0, 0, id, seq, echoPayload)
+			frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(src.IPAddress, dst.IPAddress, 1, echoReq)))
+			if rand.Intn(5) != 0 {
+				echoReply := buildICMPSegment(0, 0, 0, id, seq, echoPayload)
+				frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(dst.IPAddress, src.IPAddress, 1, echoReply)))
+			}
+		case 3:
+			srcPort := randomPort()
+			clientSeq := rand.Uint32()
+			serverSeq := rand.Uint32()
+			paths := []string{"/", "/index.html", "/api/health", "/favicon.ico", "/robots.txt"}
+			httpPort := []uint16{80, 8080, 8443}[rand.Intn(3)]
+			syn := buildTCPSegment(srcPort, httpPort, 0x02, clientSeq, 0, nil)
+			frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(src.IPAddress, dst.IPAddress, 6, syn)))
+			clientSeq++
+			synAck := buildTCPSegment(httpPort, srcPort, 0x12, serverSeq, clientSeq, nil)
+			frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(dst.IPAddress, src.IPAddress, 6, synAck)))
+			serverSeq++
+			getPayload := []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nConnection: keep-alive\r\n\r\n", paths[rand.Intn(len(paths))], dst.IPAddress))
+			frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(src.IPAddress, dst.IPAddress, 6, buildTCPSegment(srcPort, httpPort, 0x18, clientSeq, serverSeq, getPayload))))
+			clientSeq += uint32(len(getPayload))
+			respBody := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+			frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(dst.IPAddress, src.IPAddress, 6, buildTCPSegment(httpPort, srcPort, 0x18, serverSeq, clientSeq, respBody))))
+		case 4:
+			srcPort := randomPort()
+			dstPort := []uint16{80, 443, 22, 3389, 8080}[rand.Intn(5)]
+			seq := rand.Uint32()
+			ackVal := rand.Uint32()
+			frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(src.IPAddress, dst.IPAddress, 6, buildTCPSegment(srcPort, dstPort, 0x10, seq-1, ackVal, nil))))
+			if rand.Intn(3) != 0 {
+				frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(dst.IPAddress, src.IPAddress, 6, buildTCPSegment(dstPort, srcPort, 0x10, ackVal, seq, nil))))
+			}
+		}
+	}
+	return frames
 }
