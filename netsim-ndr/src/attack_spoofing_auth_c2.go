@@ -379,11 +379,16 @@ func runSQLInjection(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
 
-		// PCAP: one representative request/response pair
-		reqPayload := []byte(fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\nusername=%s&password=x",
-			endpoint, targetIP, payloads[0]))
-		respPayload := []byte("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n")
-		path, _ := PCAPGenericTCPExchange(req.RunID, "sql_injection", req.AttackerIP, targetIP, 80, reqPayload, respPayload)
+		// PCAP: one HTTP connection with all 4 injection payloads
+		var requests [][]byte
+		var responses [][]byte
+		for _, payload := range payloads {
+			reqPayload := []byte(fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: %d\r\n\r\nusername=%s&password=x",
+				endpoint, targetIP, len(payload)+13, payload))
+			requests = append(requests, reqPayload)
+			responses = append(responses, []byte("HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/html\r\nContent-Length: 0\r\n\r\n"))
+		}
+		path, _ := PCAPHTTPMultiRequest(req.RunID, "sql_injection", req.AttackerIP, targetIP, 80, requests, responses)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
