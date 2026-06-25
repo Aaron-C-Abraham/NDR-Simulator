@@ -1221,7 +1221,9 @@ func writeICMPTunnelPCAP(runID, attackerIP, c2IP string) (string, error) {
 	echoReply := buildICMPSegment(0, 0, 0, identifier, 1, payload)
 	replyFrame := buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(c2IP, attackerIP, 1, echoReply))
 
-	return writePCAPFile(runID, "protocol_tunnel_icmp", [][]byte{reqFrame, replyFrame}, defaultDuration)
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic([][]byte{reqFrame, replyFrame}, bgFrames)
+	return writePCAPFile(runID, "protocol_tunnel_icmp", finalFrames, defaultDuration)
 }
 
 // PCAPICMPFlood generates a burst of ICMP echo requests representing a
@@ -2898,7 +2900,9 @@ func PCAPBGPHijack(runID, attackerIP, routerIP, prefixCIDR string, hijackAS uint
 	updateMsg, err := bgpUpdate(prefixCIDR, []uint16{hijackAS}, attackerIP)
 	if err != nil {
 		logError("PCAPBGPHijack bgpUpdate: %v", err)
-		path, werr := writePCAPFile(runID, "bgp_hijack", frames, defaultDuration)
+		bgFrames := generateBackgroundTraffic(getAllDevices())
+		finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+		path, werr := writePCAPFile(runID, "bgp_hijack", finalFrames, defaultDuration)
 		return path, werr
 	}
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, routerIP, 6, buildTCPSegment(srcPort, 179, 0x18, clientSeq, serverSeq, updateMsg))))
