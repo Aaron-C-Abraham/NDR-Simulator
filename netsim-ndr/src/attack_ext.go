@@ -307,8 +307,9 @@ func runNoSQLInjection(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
-		nosqlPayload := []byte(fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\n\r\n{\"username\":\"admin\",\"password\":{\"$ne\":\"\"}}", endpoint, targetIP))
-		nosqlResp := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+		nosqlPayload := []byte(fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nContent-Length: 42\r\n\r\n{\"username\":\"admin\",\"password\":{\"$ne\":\"\"}}",
+			endpoint, targetIP))
+		nosqlResp := []byte("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{\"auth\":\"bypass\"}")
 		nosqlPath, nosqlErr := PCAPGenericTCPExchange(req.RunID, "nosql_injection", req.AttackerIP, targetIP, 80, nosqlPayload, nosqlResp)
 		if nosqlErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, nosqlPath)
@@ -343,8 +344,9 @@ func runHeaderInjection(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
-		headerPayload := []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: evil.com\r\nX-Forwarded-For: 127.0.0.1\r\n\r\n", endpoint))
-		headerResp := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+		headerPayload := []byte(fmt.Sprintf("GET %s?next=http://evil.com%%0d%%0aX-Injected-Header:%%20malicious HTTP/1.1\r\nHost: %s\r\nX-Forwarded-For: 127.0.0.1\r\nX-Forwarded-Host: evil.com\r\n\r\n",
+			endpoint, targetIP))
+		headerResp := []byte("HTTP/1.1 200 OK\r\nX-Injected-Header: malicious\r\nContent-Length: 0\r\n\r\n")
 		headerPath, headerErr := PCAPGenericTCPExchange(req.RunID, "header_injection", req.AttackerIP, targetIP, 80, headerPayload, headerResp)
 		if headerErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, headerPath)
