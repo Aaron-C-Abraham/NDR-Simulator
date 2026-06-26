@@ -562,7 +562,6 @@ func PCAPHTTPFlood(runID, attackerIP, targetIP string, targetPort uint16, count 
 	return path, err
 }
 
-// PCAPSlowloris generates PCAP frames representing Slowloris partial HTTP headers.
 func PCAPSlowloris(runID, attackerIP, targetIP string, connections int) (string, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAPSlowloris attacker=%s target=%s connections=%d", attackerIP, targetIP, connections)
@@ -570,26 +569,44 @@ func PCAPSlowloris(runID, attackerIP, targetIP string, connections int) (string,
 	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, 0x55}
 	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
 	var frames [][]byte
+
 	for idx := 0; idx < connections; idx++ {
 		srcPort := randomPort()
-		seq := rand.Uint32()
+		clientSeq := rand.Uint32()
+		serverSeq := rand.Uint32()
 
 		// SYN
-		syn := buildTCPSegment(srcPort, 80, 0x02, seq, 0, nil)
+		syn := buildTCPSegment(srcPort, 80, 0x02, clientSeq, 0, nil)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
+		clientSeq++
 
-		// Partial header (never a complete request)
+		// SYN-ACK from server (server accepts the connection)
+		synAck := buildTCPSegment(80, srcPort, 0x12, serverSeq, clientSeq, nil)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck)))
+		serverSeq++
+
+		// ACK completing handshake
+		ack := buildTCPSegment(srcPort, 80, 0x10, clientSeq, serverSeq, nil)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
+
+		// Partial HTTP header — never a complete request, intentionally missing final \r\n
 		partial := []byte(fmt.Sprintf("GET /?%s HTTP/1.1\r\nHost: %s\r\n", randomHexString(8), targetIP))
-		psh := buildTCPSegment(srcPort, 80, 0x18, seq+1, 1, partial)
+		psh := buildTCPSegment(srcPort, 80, 0x18, clientSeq, serverSeq, partial)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, psh)))
+		clientSeq += uint32(len(partial))
 
-		// Keep-alive header drip
+		// Keep-alive header drip — slow trickle to keep connection open
 		drip := []byte("X-a: b\r\n")
-		drip2 := buildTCPSegment(srcPort, 80, 0x18, seq+uint32(1+len(partial)), 1, drip)
+		drip2 := buildTCPSegment(srcPort, 80, 0x18, clientSeq, serverSeq, drip)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, drip2)))
+		clientSeq += uint32(len(drip))
+
+		// Second drip to show the slow trickle pattern
+		drip3 := buildTCPSegment(srcPort, 80, 0x18, clientSeq, serverSeq, drip)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, drip3)))
 	}
 
-	bgFrames := generateBackgroundTraffic(getAllDevices())
+	bgFrames := generateBackgroundTrafficN(getAllDevices(), len(frames)/3)
 	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
 	path, err := writePCAPFile(runID, "slowloris", finalFrames, defaultDuration)
 	logInfo("Return from PCAPSlowloris frames=%d path=%s", len(finalFrames), path)
