@@ -1090,18 +1090,85 @@ func PCAPDNSQueryResponse(runID, attackName, clientIP, dnsIP string, domain stri
 	return path, err
 }
 
-// PCAP80211Beacon generates a minimal raw 802.11 Beacon management frame
-// (used for rogue AP detection). Uses LINKTYPE_IEEE802_11 (105), not
-// Ethernet — this is genuinely a different link layer, so it must go
-// through writePCAPFileLinkType rather than writePCAPFile.
+// PCAP80211Beacon generates a realistic rogue AP / evil twin capture.
+// Sequence of events mirrors what a real wireless attack looks like:
+//  1. Both legit and rogue APs beacon simultaneously (same SSID, different BSSID)
+//  2. Clients probe for the SSID — both APs respond (client gets confused)
+//  3. Rogue AP sends deauth to clients associated with legit AP (forcing reconnect)
+//  4. Client associates with rogue AP (fell for the evil twin)
+//  5. More beacons continue — attack is sustained
 func PCAP80211Beacon(runID, attackName string, apMAC [6]byte, ssid string) (string, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAP80211Beacon ssid=%s", ssid)
 
 	broadcastMAC := [6]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
-	frame := build80211Beacon(apMAC, broadcastMAC, ssid)
-	path, err := writePCAPFileLinkType(runID, attackName, [][]byte{frame}, defaultDuration, 105)
-	logInfo("Return from PCAP80211Beacon path=%s", path)
+
+	// Rogue AP — attacker controlled, visually distinct OUI from legit
+	rogueMAC := apMAC // e.g. 00:aa:bb:cc:dd:ff
+
+	// Legit AP — different OUI entirely, not just last-byte flip
+	legitMAC := [6]byte{0x00, 0x1A, 0x2B, 0x3C, 0x4D, 0x5E} // Cisco-like OUI
+
+	// Three client devices probing/associating
+	clients := [][6]byte{
+		{0x00, 0x11, 0x22, 0x33, 0x44, 0x01},
+		{0x00, 0x11, 0x22, 0x33, 0x44, 0x02},
+		{0x00, 0x11, 0x22, 0x33, 0x44, 0x03},
+	}
+
+	var frames [][]byte
+	var rogueSeq, legitSeq uint16
+
+	// --- Phase 1: Initial beacons from both APs (20 cycles) ---
+	// Wireshark shows two BSSIDs advertising same SSID simultaneously
+	for i := 0; i < 20; i++ {
+		frames = append(frames, build80211Beacon(rogueMAC, broadcastMAC, ssid, rogueSeq))
+		rogueSeq++
+		frames = append(frames, build80211Beacon(legitMAC, broadcastMAC, ssid, legitSeq))
+		legitSeq++
+	}
+
+	// --- Phase 2: Clients probe for the SSID, both APs respond ---
+	// Shows client confusion — two probe responses for same SSID
+	for _, clientMAC := range clients {
+		frames = append(frames, build80211ProbeReq(clientMAC, broadcastMAC, ssid))
+		frames = append(frames, build80211ProbeResp(legitMAC, clientMAC, ssid)) // legit responds
+		frames = append(frames, build80211ProbeResp(rogueMAC, clientMAC, ssid)) // rogue also responds
+	}
+
+	// --- Phase 3: More beacons while attack escalates (20 cycles) ---
+	for i := 0; i < 20; i++ {
+		frames = append(frames, build80211Beacon(rogueMAC, broadcastMAC, ssid, rogueSeq))
+		rogueSeq++
+		frames = append(frames, build80211Beacon(legitMAC, broadcastMAC, ssid, legitSeq))
+		legitSeq++
+	}
+
+	// --- Phase 4: Rogue AP deauths clients from legit AP ---
+	// Spoofs legit AP's MAC as src, forces clients to disassociate
+	for _, clientMAC := range clients {
+		// Send multiple deauths per client — single deauth can be ignored
+		for d := 0; d < 5; d++ {
+			frames = append(frames, build80211Deauth(legitMAC, clientMAC)) // spoofed as legit AP
+		}
+	}
+
+	// --- Phase 5: Clients associate with rogue AP (took the bait) ---
+	for _, clientMAC := range clients {
+		frames = append(frames, build80211AssocReq(clientMAC, rogueMAC, ssid))
+		frames = append(frames, build80211AssocResp(rogueMAC, clientMAC))
+	}
+
+	// --- Phase 6: Sustained beacon flood continues ---
+	for i := 0; i < 60; i++ {
+		frames = append(frames, build80211Beacon(rogueMAC, broadcastMAC, ssid, rogueSeq))
+		rogueSeq++
+		frames = append(frames, build80211Beacon(legitMAC, broadcastMAC, ssid, legitSeq))
+		legitSeq++
+	}
+
+	path, err := writePCAPFileLinkType(runID, attackName, frames, defaultDuration, 105)
+	logInfo("Return from PCAP80211Beacon frames=%d path=%s", len(frames), path)
 	return path, err
 }
 
@@ -1121,19 +1188,99 @@ func PCAP80211Deauth(runID, attackName string, apMAC, clientMAC [6]byte, count i
 	return path, err
 }
 
+// build80211ProbeReq builds a minimal 802.11 Probe Request frame.
+// Sent by clients scanning for a specific SSID.
+func build80211ProbeReq(clientMAC, dstMAC [6]byte, ssid string) []byte {
+	hdr := make([]byte, 24)
+	hdr[0] = 0x40 // Type/Subtype: Management/Probe Request
+	hdr[1] = 0x00
+	copy(hdr[4:10], dstMAC[:])
+	copy(hdr[10:16], clientMAC[:])
+	copy(hdr[16:22], dstMAC[:])
+	ssidIE := append([]byte{0x00, byte(len(ssid))}, []byte(ssid)...)
+	return append(hdr, ssidIE...)
+}
+
+// build80211ProbeResp builds a minimal 802.11 Probe Response frame.
+// Sent by APs in response to a client's Probe Request.
+func build80211ProbeResp(apMAC, clientMAC [6]byte, ssid string) []byte {
+	hdr := make([]byte, 24)
+	hdr[0] = 0x50 // Type/Subtype: Management/Probe Response
+	hdr[1] = 0x00
+	copy(hdr[4:10], clientMAC[:])
+	copy(hdr[10:16], apMAC[:])
+	copy(hdr[16:22], apMAC[:])
+
+	fixed := make([]byte, 12)
+	binary.LittleEndian.PutUint64(fixed[0:8], uint64(time.Now().UnixMicro()))
+	binary.LittleEndian.PutUint16(fixed[8:10], 100)
+	binary.LittleEndian.PutUint16(fixed[10:12], 0x0411)
+
+	ssidIE := append([]byte{0x00, byte(len(ssid))}, []byte(ssid)...)
+	frame := append(hdr, fixed...)
+	return append(frame, ssidIE...)
+}
+
+// build80211AssocReq builds a minimal 802.11 Association Request frame.
+// Sent by a client to associate with an AP after probe/auth exchange.
+func build80211AssocReq(clientMAC, apMAC [6]byte, ssid string) []byte {
+	hdr := make([]byte, 24)
+	hdr[0] = 0x00 // Type/Subtype: Management/Association Request
+	hdr[1] = 0x00
+	copy(hdr[4:10], apMAC[:])
+	copy(hdr[10:16], clientMAC[:])
+	copy(hdr[16:22], apMAC[:])
+
+	// Capability + listen interval
+	body := []byte{0x11, 0x04, 0x01, 0x00}
+	ssidIE := append([]byte{0x00, byte(len(ssid))}, []byte(ssid)...)
+	frame := append(hdr, body...)
+	return append(frame, ssidIE...)
+}
+
+// build80211AssocResp builds a minimal 802.11 Association Response frame.
+// Sent by AP confirming client association — status 0x0000 = success.
+func build80211AssocResp(apMAC, clientMAC [6]byte) []byte {
+	hdr := make([]byte, 24)
+	hdr[0] = 0x10 // Type/Subtype: Management/Association Response
+	hdr[1] = 0x00
+	copy(hdr[4:10], clientMAC[:])
+	copy(hdr[10:16], apMAC[:])
+	copy(hdr[16:22], apMAC[:])
+
+	// Capability info (2) + status code (2, 0x0000=success) + AID (2, 0xC001=AID 1)
+	body := []byte{
+		0x11, 0x04, // Capability info: ESS + privacy
+		0x00, 0x00, // Status code: success
+		0x01, 0xC0, // Association ID (AID=1, upper 2 bits always set per 802.11)
+	}
+	// Supported rates IE — required, Wireshark flags malformed without it
+	ratesIE := []byte{
+		0x01, 0x08, // IE ID=1 (Supported Rates), length=8
+		0x82, 0x84, 0x8B, 0x96, // 1, 2, 5.5, 11 Mbps (basic rates, MSB set)
+		0x24, 0x30, 0x48, 0x6C, // 18, 24, 36, 54 Mbps
+	}
+	frame := append(hdr, body...)
+	return append(frame, ratesIE...)
+}
+
 // build80211Beacon builds a minimal 802.11 Beacon frame: 24-byte MAC header
 // (frame control, duration, addr1/2/3, seq) followed by a fixed-length
 // timestamp/interval/capability block and an SSID information element.
 // This is a simplified, non-RFC-exhaustive beacon — enough to identify as
 // a Beacon frame type/subtype with the right SSID in a packet analyzer, not
 // a full 802.11 standard-compliant frame (no rate sets, no other IEs).
-func build80211Beacon(apMAC, dstMAC [6]byte, ssid string) []byte {
+// build80211Beacon builds a minimal 802.11 Beacon frame with an explicit
+// sequence number so callers can increment SN across frames.
+// 802.11 seq field: bits[15:4] = sequence number, bits[3:0] = fragment (0).
+func build80211Beacon(apMAC, dstMAC [6]byte, ssid string, seqNum uint16) []byte {
 	hdr := make([]byte, 24)
 	hdr[0] = 0x80 // Type/Subtype: Management/Beacon
 	hdr[1] = 0x00
 	copy(hdr[4:10], dstMAC[:])
 	copy(hdr[10:16], apMAC[:])
-	copy(hdr[16:22], apMAC[:]) // BSSID = AP MAC
+	copy(hdr[16:22], apMAC[:])                           // BSSID = AP MAC
+	binary.LittleEndian.PutUint16(hdr[22:24], seqNum<<4) // seq in upper 12 bits, frag=0
 
 	fixed := make([]byte, 12)
 	binary.LittleEndian.PutUint64(fixed[0:8], uint64(time.Now().UnixMicro()))
@@ -1141,7 +1288,6 @@ func build80211Beacon(apMAC, dstMAC [6]byte, ssid string) []byte {
 	binary.LittleEndian.PutUint16(fixed[10:12], 0x0411) // capability info: ESS + privacy
 
 	ssidIE := append([]byte{0x00, byte(len(ssid))}, []byte(ssid)...)
-
 	frame := append(hdr, fixed...)
 	frame = append(frame, ssidIE...)
 	return frame
