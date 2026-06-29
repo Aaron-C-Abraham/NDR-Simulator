@@ -1093,21 +1093,23 @@ func runRogueAP(req AttackRequest) (*AttackResult, error) {
 	logInfo("Entering runRogueAP attacker=%s", req.AttackerIP)
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	ssid := getAttackParam(req.Params, "ssid", "Corp-WiFi")
-
 	rogueMAC := [6]byte{0x00, 0xaa, 0xbb, 0xcc, 0xdd, 0xff}
+
 	for _, apDev := range getWirelessAPs() {
 		msg := fmt.Sprintf("Rogue AP detected: SSID '%s' MAC 00:aa:bb:cc:dd:ff RSSI -65dBm on channel 6 — evil twin suspected", ssid)
 		ev := sendSyslog(apDev, msg, 2)
 		result.SyslogCount++
 		eventID, _ := recordRunEvent(req.RunID, "syslog", apDev.Name, req.AttackerIP, apDev.IPAddress, "802.11", ev)
 		result.EventIDs = append(result.EventIDs, eventID)
-
-		// PCAP: rogue AP's beacon frame advertising the spoofed SSID
-		path, _ := PCAP80211Beacon(req.RunID, "rogue_ap_beacon", rogueMAC, ssid)
-		if path != "" {
-			result.PCAPFiles = append(result.PCAPFiles, path)
-		}
 	}
+
+	// Single PCAP showing beacon flood — rogue and legit AP beacons interleaved
+	// showing two BSSIDs advertising same SSID (evil twin pattern)
+	path, _ := PCAP80211Beacon(req.RunID, "rogue_ap_beacon", rogueMAC, ssid)
+	if path != "" {
+		result.PCAPFiles = append(result.PCAPFiles, path)
+	}
+
 	logInfo("Return from runRogueAP syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -1134,8 +1136,13 @@ func runDeauth(req AttackRequest) (*AttackResult, error) {
 		}
 
 		// PCAP: deauth frames targeting one synthesized client
-		clientMAC := parseMACAddress(fmt.Sprintf("aa:bb:cc:%02x:%02x:%02x", rand.Intn(256), rand.Intn(256), rand.Intn(256)))
-		path, _ := PCAP80211Deauth(req.RunID, "deauth_flood", apMAC, clientMAC, 10)
+		// Multiple clients being deauthed — shows broadcast + targeted deauth pattern
+		clients := [][6]byte{
+			parseMACAddress(fmt.Sprintf("aa:bb:cc:%02x:%02x:%02x", rand.Intn(256), rand.Intn(256), rand.Intn(256))),
+			parseMACAddress(fmt.Sprintf("aa:bb:cc:%02x:%02x:%02x", rand.Intn(256), rand.Intn(256), rand.Intn(256))),
+			parseMACAddress(fmt.Sprintf("aa:bb:cc:%02x:%02x:%02x", rand.Intn(256), rand.Intn(256), rand.Intn(256))),
+		}
+		path, _ := PCAP80211Deauth(req.RunID, "deauth_flood", apMAC, clients)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}

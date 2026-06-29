@@ -1236,7 +1236,8 @@ func runPMKIDAttack(req AttackRequest) (*AttackResult, error) {
 	}
 
 	apMAC := [6]byte{0x00, 0xaa, 0xbb, 0xcc, 0xdd, 0x01}
-	path, _ := PCAP80211Beacon(req.RunID, "pmkid_attack", apMAC, apName)
+	attackerMAC := [6]byte{0x00, 0x11, 0x22, 0x33, 0x44, 0x55}
+	path, _ := PCAPPMKIDAttack(req.RunID, "pmkid_attack", apMAC, attackerMAC, apName)
 	if path != "" {
 		result.PCAPFiles = append(result.PCAPFiles, path)
 	}
