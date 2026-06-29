@@ -1284,42 +1284,75 @@ func PCAPICMPFlood(runID, attackerIP, targetIP string, count int) (string, error
 	return path, err
 }
 
-// PCAPUDPAmplification generates the correct Memcached/UDP amplification
-// pattern: a small spoofed request appearing to come from the victim
-// (src=victimIP, dst=reflectorIP, dport=11211), followed by a large
-// amplified response back to the victim (src=reflectorIP, dst=victimIP).
-// The attacker's real IP never appears — only the spoofed victim src does.
-func PCAPUDPAmplification(runID, reflectorIP, victimIP string, reflectorPort uint16, responsePayloadSize int) (string, error) {
+// PCAPUDPAmplification generates a Memcached UDP amplification attack.
+//
+// Correct 3-party topology:
+//
+//	Attacker (external, attackerIP) — sends spoofed UDP request to reflector
+//	  Ethernet src = attackerMAC  (attacker's real MAC on the wire)
+//	  IP src       = victimIP     (SPOOFED — so reflector replies to victim)
+//	  IP dst       = reflectorIP:11211
+//	  Payload      = "stats\r\n"  (7 bytes)
+//
+//	Reflector (public internet, reflectorIP) — blasts response to victim
+//	  Ethernet src = reflectorMAC
+//	  IP src       = reflectorIP:11211
+//	  IP dst       = victimIP     (victim gets flooded, never asked for this)
+//	  Payload      = STAT dump    (~1400 bytes, ~200x amplification)
+func PCAPUDPAmplification(runID, attackerIP, reflectorIP, victimIP string, reflectorPort uint16, responsePayloadSize int) (string, error) {
 	defer panicHandler(traceFunc(), nil)
-	logInfo("Entering PCAPUDPAmplification reflector=%s victim=%s port=%d", reflectorIP, victimIP, reflectorPort)
+	logInfo("Entering PCAPUDPAmplification attacker=%s reflector=%s victim=%s port=%d", attackerIP, reflectorIP, victimIP, reflectorPort)
 
+	// Attacker: external host, random public-looking MAC
+	attackerMAC := [6]byte{0x00, 0x16, 0x3E, byte(rand.Intn(255)), byte(rand.Intn(255)), byte(rand.Intn(255))} // Xen OUI — looks external
+	// Reflector: open Memcached server on the internet
 	reflectorMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
-	victimMAC := [6]byte{0x00, 0x11, 0x22, 0x33, 0x44, 0x55}
+	// Victim: internal host receiving the amplified flood
+	victimMAC := [6]byte{0x00, 0x50, 0x56, 0xAA, 0xBB, 0xCC} // VMware OUI — internal workstation
+	// Gateway: where attacker's spoofed packets enter the network
 	gatewayMAC := [6]byte{0x00, 0xDE, 0xAD, 0xBE, 0xEF, 0x01}
 
-	var frames [][]byte
-	victimEphemeral := randomPort()
+	memcachedResponse := []byte(
+		"STAT pid 12345\r\n" +
+			"STAT uptime 864000\r\n" +
+			"STAT time 1700000000\r\n" +
+			"STAT version 1.6.12\r\n" +
+			"STAT pointer_size 64\r\n" +
+			"STAT curr_connections 512\r\n" +
+			"STAT total_connections 100000\r\n" +
+			"STAT bytes_read 1073741824\r\n" +
+			"STAT bytes_written 107374182400\r\n" +
+			"STAT limit_maxbytes 67108864\r\n" +
+			"STAT curr_items 50000\r\n" +
+			"STAT total_items 1000000\r\n" +
+			"STAT evictions 9999\r\n" +
+			"STAT bytes 33554432\r\n" +
+			"END\r\n",
+	)
+	if len(memcachedResponse) < responsePayloadSize {
+		padding := make([]byte, responsePayloadSize-len(memcachedResponse))
+		memcachedResponse = append(memcachedResponse, padding...)
+	}
 
-	// Memcached stats request payload — "stats\r\n" is the canonical trigger
-	// for large amplification responses from open Memcached servers.
 	memcachedRequest := []byte("stats\r\n")
+	victimEphemeral := randomPort()
+	var frames [][]byte
 
-	// Repeat the amplification pattern multiple times to show the flood
 	for i := 0; i < 20; i++ {
-		// --- Spoofed request: appears to come FROM victim TO reflector ---
-		// Attacker sends this with victim's IP as source (IP spoofing).
-		// Wireshark shows: victimIP:ephemeral → reflectorIP:11211
+		// --- Spoofed request ---
+		// Ethernet src = attackerMAC (real attacker on the wire)
+		// IP src       = victimIP    (forged — reflector will reply here)
+		// IP dst       = reflectorIP:11211
 		reqUDP := buildUDPDatagram(victimEphemeral, reflectorPort, memcachedRequest)
-		reqFrame := buildEthernetFrame(victimMAC, gatewayMAC,
+		reqFrame := buildEthernetFrame(attackerMAC, gatewayMAC,
 			buildIPv4Packet(victimIP, reflectorIP, 17, reqUDP))
 		frames = append(frames, reqFrame)
 
-		// --- Amplified response: reflector blasts large payload TO victim ---
-		// This is the damage: ~1400 bytes back for 7 bytes in (~200x factor).
-		// Wireshark shows: reflectorIP:11211 → victimIP:ephemeral
-		respPayload := make([]byte, responsePayloadSize)
-		rand.Read(respPayload)
-		respUDP := buildUDPDatagram(reflectorPort, victimEphemeral, respPayload)
+		// --- Amplified response ---
+		// Ethernet src = reflectorMAC
+		// IP src       = reflectorIP:11211
+		// IP dst       = victimIP (victim gets ~200x the traffic it never requested)
+		respUDP := buildUDPDatagram(reflectorPort, victimEphemeral, memcachedResponse)
 		respFrame := buildEthernetFrame(reflectorMAC, victimMAC,
 			buildIPv4Packet(reflectorIP, victimIP, 17, respUDP))
 		frames = append(frames, respFrame)

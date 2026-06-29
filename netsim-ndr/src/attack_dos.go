@@ -298,7 +298,7 @@ func runAmplification(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", amplifier, targetIP, "UDP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
-		ampPath, ampErr := PCAPUDPAmplification(req.RunID, amplifier, targetIP, 53, 3000)
+		ampPath, ampErr := PCAPUDPAmplification(req.RunID, req.AttackerIP, amplifier, targetIP, 53, 3000)
 		if ampErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, ampPath)
 		}
@@ -417,7 +417,7 @@ func runMemcachedAmp(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", reflector, targetIP, "UDP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
-		mcPath, mcErr := PCAPUDPAmplification(req.RunID, reflector, targetIP, 11211, 1400)
+		mcPath, mcErr := PCAPUDPAmplification(req.RunID, req.AttackerIP, reflector, targetIP, 11211, 1400)
 		if mcErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, mcPath)
 		}
