@@ -332,7 +332,7 @@ func runHTTP2Reset(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
-		h2Path, h2Err := PCAPGenericTCPExchange(req.RunID, "http2_reset", req.AttackerIP, targetIP, 443, []byte("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"), nil)
+		h2Path, h2Err := PCAPHTTP2Reset(req.RunID, req.AttackerIP, targetIP, streams)
 		if h2Err == nil {
 			result.PCAPFiles = append(result.PCAPFiles, h2Path)
 		}
@@ -372,7 +372,11 @@ func runSSLExhaustion(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
-		sslPath, sslErr := PCAPGenericTCPExchange(req.RunID, "ssl_exhaustion", req.AttackerIP, targetIP, uint16(targetPort), buildMinimalTLSClientHello(), nil)
+		renegCount := 50 * duration / 30 // scale renegotiations with duration, ~50 baseline
+		if renegCount < 10 {
+			renegCount = 10
+		}
+		sslPath, sslErr := PCAPSSLRenegotiationExhaustion(req.RunID, req.AttackerIP, targetIP, uint16(targetPort), renegCount)
 		if sslErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, sslPath)
 		}
@@ -451,8 +455,16 @@ func runRUDY(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
-		rudyPath, rudyErr := PCAPGenericTCPExchange(req.RunID, "rudy", req.AttackerIP, targetIP, 80,
-			[]byte("POST /login HTTP/1.1\r\nHost: target\r\nContent-Length: 10000\r\n\r\nX"), nil)
+		duration := getAttackParamInt(req.Params, "duration", 600)
+		dripsPerConn := duration / 10 // 1 drip per 10s — RUDY's defining rate
+		if dripsPerConn < 3 {
+			dripsPerConn = 3
+		}
+		pcapConns := connections
+		if pcapConns > 5 {
+			pcapConns = 5 // cap at 5 connections in PCAP — enough to show the pattern without huge files
+		}
+		rudyPath, rudyErr := PCAPRUDYAttack(req.RunID, req.AttackerIP, targetIP, pcapConns, dripsPerConn)
 		if rudyErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, rudyPath)
 		}
@@ -523,7 +535,11 @@ func runRSTFlood(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
-		rstPath, rstErr := PCAPRSTFlood(req.RunID, req.AttackerIP, targetIP, targetPort, 20)
+		rstCount := 200 * duration / 30 // ~200 RSTs baseline, scales with duration
+		if rstCount < 50 {
+			rstCount = 50
+		}
+		rstPath, rstErr := PCAPRSTFlood(req.RunID, req.AttackerIP, targetIP, targetPort, rstCount)
 		if rstErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, rstPath)
 		}

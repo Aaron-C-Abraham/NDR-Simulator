@@ -1284,53 +1284,134 @@ func PCAPICMPFlood(runID, attackerIP, targetIP string, count int) (string, error
 	return path, err
 }
 
-// PCAPUDPAmplification generates a single large UDP response packet from a reflector to a spoofed victim.
-func PCAPUDPAmplification(runID, srcIP, dstIP string, srcPort uint16, payloadSize int) (string, error) {
+// PCAPUDPAmplification generates the correct Memcached/UDP amplification
+// pattern: a small spoofed request appearing to come from the victim
+// (src=victimIP, dst=reflectorIP, dport=11211), followed by a large
+// amplified response back to the victim (src=reflectorIP, dst=victimIP).
+// The attacker's real IP never appears — only the spoofed victim src does.
+func PCAPUDPAmplification(runID, reflectorIP, victimIP string, reflectorPort uint16, responsePayloadSize int) (string, error) {
 	defer panicHandler(traceFunc(), nil)
-	logInfo("Entering PCAPUDPAmplification src=%s dst=%s", srcIP, dstIP)
-	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
-	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
-	payload := make([]byte, payloadSize)
-	rand.Read(payload)
-	udp := buildUDPDatagram(srcPort, randomPort(), payload)
-	frame := buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(srcIP, dstIP, 17, udp))
-	bgFrames := generateBackgroundTraffic(getAllDevices())
-	finalFrames := interleaveBackgroundTraffic([][]byte{frame}, bgFrames)
-	path, err := writePCAPFile(runID, "amplification", finalFrames, defaultDuration)
-	logInfo("Return from PCAPUDPAmplification path=%s", path)
+	logInfo("Entering PCAPUDPAmplification reflector=%s victim=%s port=%d", reflectorIP, victimIP, reflectorPort)
+
+	reflectorMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	victimMAC := [6]byte{0x00, 0x11, 0x22, 0x33, 0x44, 0x55}
+	gatewayMAC := [6]byte{0x00, 0xDE, 0xAD, 0xBE, 0xEF, 0x01}
+
+	var frames [][]byte
+	victimEphemeral := randomPort()
+
+	// Memcached stats request payload — "stats\r\n" is the canonical trigger
+	// for large amplification responses from open Memcached servers.
+	memcachedRequest := []byte("stats\r\n")
+
+	// Repeat the amplification pattern multiple times to show the flood
+	for i := 0; i < 20; i++ {
+		// --- Spoofed request: appears to come FROM victim TO reflector ---
+		// Attacker sends this with victim's IP as source (IP spoofing).
+		// Wireshark shows: victimIP:ephemeral → reflectorIP:11211
+		reqUDP := buildUDPDatagram(victimEphemeral, reflectorPort, memcachedRequest)
+		reqFrame := buildEthernetFrame(victimMAC, gatewayMAC,
+			buildIPv4Packet(victimIP, reflectorIP, 17, reqUDP))
+		frames = append(frames, reqFrame)
+
+		// --- Amplified response: reflector blasts large payload TO victim ---
+		// This is the damage: ~1400 bytes back for 7 bytes in (~200x factor).
+		// Wireshark shows: reflectorIP:11211 → victimIP:ephemeral
+		respPayload := make([]byte, responsePayloadSize)
+		rand.Read(respPayload)
+		respUDP := buildUDPDatagram(reflectorPort, victimEphemeral, respPayload)
+		respFrame := buildEthernetFrame(reflectorMAC, victimMAC,
+			buildIPv4Packet(reflectorIP, victimIP, 17, respUDP))
+		frames = append(frames, respFrame)
+	}
+
+	bgFrames := generateBackgroundTrafficN(getAllDevices(), 15)
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "memcached_amplification", finalFrames, defaultDuration)
+	logInfo("Return from PCAPUDPAmplification frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
-// PCAPACKFlood generates bare ACK packets (no preceding handshake) from spoofed sources.
+// PCAPACKFlood generates a sustained flood of bare ACK packets from spoofed
+// sources. Each source IP sends multiple ACKs cycling through varying seq/ack
+// numbers — no prior handshake — overwhelming the target's connection table.
 func PCAPACKFlood(runID, targetIP string, targetPort uint16, sourceIPs []string) (string, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAPACKFlood target=%s port=%d sources=%d", targetIP, targetPort, len(sourceIPs))
+
 	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
 	var frames [][]byte
-	for _, srcIP := range sourceIPs {
-		srcMAC := [6]byte{0x00, byte(rand.Intn(255)), byte(rand.Intn(255)), byte(rand.Intn(255)), byte(rand.Intn(255)), byte(rand.Intn(255))}
-		ack := buildTCPSegment(randomPort(), targetPort, 0x10, rand.Uint32(), rand.Uint32(), nil)
-		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(srcIP, targetIP, 6, ack)))
+
+	// Pre-assign a stable ephemeral port and seq base per source so packets
+	// look like they belong to an established (but never set up) session.
+	type srcState struct {
+		mac     [6]byte
+		srcPort uint16
+		seq     uint32
+		ack     uint32
 	}
-	bgFrames := generateBackgroundTraffic(getAllDevices())
+	states := make([]srcState, len(sourceIPs))
+	for i := range sourceIPs {
+		states[i] = srcState{
+			mac:     [6]byte{0x00, byte(rand.Intn(255)), byte(rand.Intn(255)), byte(rand.Intn(255)), byte(rand.Intn(255)), byte(rand.Intn(255))},
+			srcPort: randomPort(),
+			seq:     rand.Uint32(),
+			ack:     rand.Uint32(),
+		}
+	}
+
+	// 300 ACKs total — 10 packets per source for 30 sources.
+	// Enough to show a clear flood pattern in Wireshark without
+	// making the PCAP file unwieldy.
+	acksPerSource := 10
+	for round := 0; round < acksPerSource; round++ {
+		for i, srcIP := range sourceIPs {
+			s := &states[i]
+			ackSeg := buildTCPSegment(s.srcPort, targetPort, 0x10, s.seq, s.ack, nil)
+			frames = append(frames, buildEthernetFrame(s.mac, dstMAC,
+				buildIPv4Packet(srcIP, targetIP, 6, ackSeg)))
+			s.seq += uint32(rand.Intn(500) + 1) // advance seq to look like ongoing session
+		}
+	}
+
+	bgFrames := generateBackgroundTrafficN(getAllDevices(), 30)
 	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
 	path, err := writePCAPFile(runID, "ack_flood", finalFrames, defaultDuration)
 	logInfo("Return from PCAPACKFlood frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
 
-// PCAPRSTFlood generates forged TCP RST packets targeting an established-looking session.
+// PCAPRSTFlood generates a sustained flood of forged TCP RST packets targeting
+// established-looking sessions. Uses varying spoofed source IPs and realistic
+// seq numbers to show the session-teardown pattern in Wireshark.
 func PCAPRSTFlood(runID, attackerIP, targetIP string, targetPort uint16, count int) (string, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAPRSTFlood attacker=%s target=%s port=%d count=%d", attackerIP, targetIP, targetPort, count)
-	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+
 	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+
+	// Generate a pool of spoofed attacker IPs derived from the base attacker IP.
+	// RST floods are typically sent from many sources to bypass simple filters.
+	baseOctets := [4]byte{}
+	fmt.Sscanf(attackerIP, "%d.%d.%d.%d", &baseOctets[0], &baseOctets[1], &baseOctets[2], &baseOctets[3])
+	spoofedSrcs := make([]string, 10)
+	for i := range spoofedSrcs {
+		spoofedSrcs[i] = fmt.Sprintf("%d.%d.%d.%d",
+			baseOctets[0], baseOctets[1],
+			rand.Intn(254)+1, rand.Intn(254)+1)
+	}
+
 	var frames [][]byte
 	for idx := 0; idx < count; idx++ {
+		srcIP := spoofedSrcs[idx%len(spoofedSrcs)]
+		srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, byte(idx >> 8), byte(idx)}
+		// RST with plausible seq — looks like it's resetting a real session
 		rst := buildTCPSegment(randomPort(), targetPort, 0x04, rand.Uint32(), 0, nil)
-		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, rst)))
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC,
+			buildIPv4Packet(srcIP, targetIP, 6, rst)))
 	}
-	bgFrames := generateBackgroundTraffic(getAllDevices())
+
+	bgFrames := generateBackgroundTrafficN(getAllDevices(), count/10+10)
 	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
 	path, err := writePCAPFile(runID, "rst_flood", finalFrames, defaultDuration)
 	logInfo("Return from PCAPRSTFlood frames=%d path=%s", len(finalFrames), path)
@@ -3088,6 +3169,68 @@ func PCAPTLSExchange(runID, attackName, attackerIP, targetIP string, targetPort 
 	return path, err
 }
 
+// PCAPSSLRenegotiationExhaustion generates a TLS session followed by repeated
+// ClientHello renegotiation requests — the CPU-exhaustion pattern where the
+// attacker forces the server to perform expensive key exchange repeatedly.
+func PCAPSSLRenegotiationExhaustion(runID, attackerIP, targetIP string, targetPort uint16, renegotiations int) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPSSLRenegotiationExhaustion attacker=%s target=%s reneg=%d", attackerIP, targetIP, renegotiations)
+
+	srcMAC := parseMACAddress("00:AA:11:22:33:44")
+	dstMAC := parseMACAddress("00:AA:BB:CC:DD:01")
+	srcPort := randomPort()
+	var seq, ack uint32 = 1000, 0
+	var frames [][]byte
+
+	// --- Initial TCP handshake ---
+	// SYN
+	syn := buildTCPSegment(srcPort, targetPort, 0x02, seq, 0, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
+	seq++
+	// SYN-ACK (server)
+	synAck := buildTCPSegment(targetPort, srcPort, 0x12, 5000, seq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck)))
+	ack = 5001
+	// ACK
+	ackSeg := buildTCPSegment(srcPort, targetPort, 0x10, seq, ack, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ackSeg)))
+
+	// --- Initial ClientHello ---
+	hello := buildMinimalTLSClientHello()
+	tlsPush := buildTCPSegment(srcPort, targetPort, 0x18, seq, ack, hello) // PSH+ACK
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, tlsPush)))
+	seq += uint32(len(hello))
+
+	// Minimal ServerHello ACK back
+	srvHello := buildMinimalTLSServerHello()
+	srvPush := buildTCPSegment(targetPort, srcPort, 0x18, ack, seq, srvHello)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, srvPush)))
+	ack += uint32(len(srvHello))
+
+	// Client ACKs the ServerHello
+	ackSeg2 := buildTCPSegment(srcPort, targetPort, 0x10, seq, ack, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ackSeg2)))
+
+	// --- Renegotiation loop: attacker hammers repeated ClientHellos ---
+	// Each one forces a full key-exchange on the server side — that's the attack.
+	for i := 0; i < renegotiations; i++ {
+		reHello := buildMinimalTLSClientHello()
+		rePush := buildTCPSegment(srcPort, targetPort, 0x18, seq, ack, reHello)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, rePush)))
+		seq += uint32(len(reHello))
+
+		// Server sends an ACK back (acknowledging receipt, starting expensive key exchange)
+		srvAck := buildTCPSegment(targetPort, srcPort, 0x10, ack, seq, nil)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, srvAck)))
+	}
+
+	bgFrames := generateBackgroundTrafficN(getAllDevices(), renegotiations/2+10)
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "ssl_renegotiation_exhaustion", finalFrames, defaultDuration)
+	logInfo("Return from PCAPSSLRenegotiationExhaustion frames=%d path=%s", len(finalFrames), path)
+	return path, err
+}
+
 func buildLDAPBindRequest(baseDN string) []byte {
 	buf := make([]byte, 0, 30)
 	// SEQUENCE { messageID, BindRequest }
@@ -3823,4 +3966,198 @@ func generateBackgroundTrafficN(devices []*Device, n int) [][]byte {
 		}
 	}
 	return frames
+}
+
+// PCAPHTTP2Reset generates a realistic HTTP/2 Rapid Reset attack PCAP
+// (CVE-2023-44487): TLS handshake on port 443, HTTP/2 connection preface,
+// SETTINGS exchange, then rapid HEADERS+RST_STREAM pairs representing the
+// attack — each stream is opened and immediately reset before the server
+// can respond, exhausting worker threads.
+func PCAPHTTP2Reset(runID, attackerIP, targetIP string, streamCount int) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPHTTP2Reset attacker=%s target=%s streams=%d", attackerIP, targetIP, streamCount)
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	srcPort := randomPort()
+	clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
+	var frames [][]byte
+
+	// TCP handshake
+	syn := buildTCPSegment(srcPort, 443, 0x02, clientSeq, 0, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
+	clientSeq++
+	synAck := buildTCPSegment(443, srcPort, 0x12, serverSeq, clientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck)))
+	serverSeq++
+	ack := buildTCPSegment(srcPort, 443, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
+
+	// TLS handshake
+	clientHello := buildTLSClientHelloSNI(targetIP)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 443, 0x18, clientSeq, serverSeq, clientHello))))
+	clientSeq += uint32(len(clientHello))
+	serverHello := buildMinimalTLSServerHello()
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(443, srcPort, 0x18, serverSeq, clientSeq, serverHello))))
+	serverSeq += uint32(len(serverHello))
+	tlsAck := buildTCPSegment(srcPort, 443, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, tlsAck)))
+
+	// HTTP/2 connection preface (client)
+	// "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" followed by SETTINGS frame
+	preface := []byte("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+	// SETTINGS frame: length=0, type=0x4, flags=0x0, stream_id=0
+	settingsFrame := []byte{0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00}
+	clientPrefacePayload := append(preface, settingsFrame...)
+	prefaceData := buildTLSApplicationData(clientPrefacePayload)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 443, 0x18, clientSeq, serverSeq, prefaceData))))
+	clientSeq += uint32(len(prefaceData))
+
+	// Server SETTINGS + SETTINGS ACK
+	serverSettings := []byte{0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00}    // SETTINGS
+	serverSettingsAck := []byte{0x00, 0x00, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00} // SETTINGS ACK
+	serverSettingsPayload := buildTLSApplicationData(append(serverSettings, serverSettingsAck...))
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(443, srcPort, 0x18, serverSeq, clientSeq, serverSettingsPayload))))
+	serverSeq += uint32(len(serverSettingsPayload))
+
+	// Client SETTINGS ACK
+	clientSettingsAck := []byte{0x00, 0x00, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00}
+	clientSettingsAckData := buildTLSApplicationData(clientSettingsAck)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 443, 0x18, clientSeq, serverSeq, clientSettingsAckData))))
+	clientSeq += uint32(len(clientSettingsAckData))
+
+	// Cap stream count for PCAP size
+	if streamCount > 100 {
+		streamCount = 100
+	}
+
+	// Rapid HEADERS + RST_STREAM pairs — the actual attack
+	// Each iteration opens a new stream (odd stream IDs: 1, 3, 5, ...)
+	// and immediately resets it with RST_STREAM before server responds
+	for i := 0; i < streamCount; i++ {
+		streamID := uint32(i*2 + 1) // HTTP/2 client streams are odd-numbered
+
+		// HEADERS frame: length=varies, type=0x1, flags=0x4 (END_HEADERS), stream_id
+		headersPayload := []byte(fmt.Sprintf(":method: GET\r\n:path: /\r\n:scheme: https\r\n:authority: %s\r\n", targetIP))
+		headersFrame := make([]byte, 9+len(headersPayload))
+		headersFrame[0] = byte(len(headersPayload) >> 16)
+		headersFrame[1] = byte(len(headersPayload) >> 8)
+		headersFrame[2] = byte(len(headersPayload))
+		headersFrame[3] = 0x01 // type HEADERS
+		headersFrame[4] = 0x04 // END_HEADERS flag
+		binary.BigEndian.PutUint32(headersFrame[5:9], streamID)
+		copy(headersFrame[9:], headersPayload)
+		headersData := buildTLSApplicationData(headersFrame)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 443, 0x18, clientSeq, serverSeq, headersData))))
+		clientSeq += uint32(len(headersData))
+
+		// RST_STREAM frame: length=4, type=0x3, flags=0x0, stream_id, error_code=0x8 (CANCEL)
+		rstFrame := make([]byte, 13)
+		rstFrame[0] = 0x00
+		rstFrame[1] = 0x00
+		rstFrame[2] = 0x04 // length=4
+		rstFrame[3] = 0x03 // type RST_STREAM
+		rstFrame[4] = 0x00 // flags=0
+		binary.BigEndian.PutUint32(rstFrame[5:9], streamID)
+		binary.BigEndian.PutUint32(rstFrame[9:13], 0x08) // CANCEL error code
+		rstData := buildTLSApplicationData(rstFrame)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 443, 0x18, clientSeq, serverSeq, rstData))))
+		clientSeq += uint32(len(rstData))
+	}
+
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "http2_reset", finalFrames, defaultDuration)
+	logInfo("Return from PCAPHTTP2Reset frames=%d path=%s", len(finalFrames), path)
+	return path, err
+}
+
+// PCAPRUDYAttack generates a R.U.D.Y. (R-U-Dead-Yet) slow POST attack.
+// Key distinction from regular HTTP: all connections are opened simultaneously,
+// all send POST headers with Content-Length: 1000000, then drip one byte at a
+// time ROUND-ROBIN across all connections. In Wireshark this shows as many
+// parallel streams (stream 0,1,2,3,4) all frozen mid-body simultaneously —
+// unmistakably different from normal HTTP which completes one request at a time.
+// No connection ever sends a FIN.
+func PCAPRUDYAttack(runID, attackerIP, targetIP string, connections, dripsPerConn int) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPRUDYAttack attacker=%s target=%s conns=%d drips=%d", attackerIP, targetIP, connections, dripsPerConn)
+
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+
+	type connState struct {
+		srcMAC  [6]byte
+		srcPort uint16
+		seq     uint32
+		ack     uint32
+		srvSeq  uint32
+	}
+	states := make([]connState, connections)
+	for c := 0; c < connections; c++ {
+		states[c] = connState{
+			srcMAC:  [6]byte{0x00, 0x11, 0x22, 0x33, byte(c >> 8), byte(c)},
+			srcPort: uint16(49152 + c),
+			seq:     rand.Uint32(),
+			srvSeq:  rand.Uint32(),
+		}
+	}
+
+	var frames [][]byte
+
+	// --- Phase 1: Handshake ALL connections simultaneously ---
+	// Wireshark shows streams 0,1,2,3,4 all opening at the same time.
+	for c := 0; c < connections; c++ {
+		s := &states[c]
+		syn := buildTCPSegment(s.srcPort, 80, 0x02, s.seq, 0, nil)
+		frames = append(frames, buildEthernetFrame(s.srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
+		s.seq++
+
+		synAck := buildTCPSegment(80, s.srcPort, 0x12, s.srvSeq, s.seq, nil)
+		frames = append(frames, buildEthernetFrame(dstMAC, s.srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck)))
+		s.srvSeq++
+		s.ack = s.srvSeq
+
+		ackSeg := buildTCPSegment(s.srcPort, 80, 0x10, s.seq, s.ack, nil)
+		frames = append(frames, buildEthernetFrame(s.srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ackSeg)))
+	}
+
+	// --- Phase 2: Send POST headers on ALL connections simultaneously ---
+	// Every connection declares Content-Length: 1000000 — server threads all
+	// block waiting for bodies that will never fully arrive.
+	for c := 0; c < connections; c++ {
+		s := &states[c]
+		headers := []byte(fmt.Sprintf(
+			"POST /login HTTP/1.1\r\nHost: %s\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 1000000\r\nConnection: keep-alive\r\n\r\n",
+			targetIP,
+		))
+		headerPush := buildTCPSegment(s.srcPort, 80, 0x18, s.seq, s.ack, headers)
+		frames = append(frames, buildEthernetFrame(s.srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, headerPush)))
+		s.seq += uint32(len(headers))
+
+		srvAck := buildTCPSegment(80, s.srcPort, 0x10, s.srvSeq, s.seq, nil)
+		frames = append(frames, buildEthernetFrame(dstMAC, s.srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, srvAck)))
+	}
+
+	// --- Phase 3: Drip one byte ROUND-ROBIN across all connections ---
+	// This is what makes RUDY unmistakable: stream 0 sends 'A', then stream 1
+	// sends 'A', then stream 2... then back to stream 0 sending 'B', etc.
+	// Every stream is permanently mid-body. No stream ever finishes.
+	for d := 0; d < dripsPerConn; d++ {
+		for c := 0; c < connections; c++ {
+			s := &states[c]
+			drip := buildTCPSegment(s.srcPort, 80, 0x18, s.seq, s.ack, []byte{byte('A' + d%26)})
+			frames = append(frames, buildEthernetFrame(s.srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, drip)))
+			s.seq++
+
+			srvDripAck := buildTCPSegment(80, s.srcPort, 0x10, s.srvSeq, s.seq, nil)
+			frames = append(frames, buildEthernetFrame(dstMAC, s.srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, srvDripAck)))
+		}
+	}
+	// No FIN on any connection — all server threads permanently blocked
+
+	bgFrames := generateBackgroundTrafficN(getAllDevices(), connections*dripsPerConn/5)
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "rudy_attack", finalFrames, defaultDuration)
+	logInfo("Return from PCAPRUDYAttack frames=%d path=%s", len(finalFrames), path)
+	return path, err
 }
