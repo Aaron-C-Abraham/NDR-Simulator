@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"math/rand"
+	"strings"
 	"time"
 )
 
@@ -389,7 +390,13 @@ func runMemcachedAmp(req AttackRequest) (*AttackResult, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering runMemcachedAmp attacker=%s", req.AttackerIP)
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
-	reflector := getAttackParam(req.Params, "reflector_ip", "10.0.0.100")
+	reflectorParam := getAttackParam(req.Params, "reflector_ip", "")
+	reflector := reflectorParam
+	if reflector == "" || strings.HasPrefix(reflector, "10.") || strings.HasPrefix(reflector, "192.168.") || strings.HasPrefix(reflector, "172.") {
+		// Default to a realistic public Memcached reflector IP — open Memcached
+		// servers are internet-facing by definition, never RFC1918 addresses.
+		reflector = fmt.Sprintf("203.%d.%d.%d", rand.Intn(254)+1, rand.Intn(254)+1, rand.Intn(254)+1)
+	}
 	fw := getFirewall()
 	for _, targetIP := range req.TargetIPs {
 		msgs := []string{
