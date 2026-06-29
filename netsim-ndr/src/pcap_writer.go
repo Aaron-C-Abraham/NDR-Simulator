@@ -4402,3 +4402,136 @@ func PCAPRUDYAttack(runID, attackerIP, targetIP string, connections, dripsPerCon
 	logInfo("Return from PCAPRUDYAttack frames=%d path=%s", len(finalFrames), path)
 	return path, err
 }
+
+// PCAPPMKIDAttack generates a PMKID attack capture.
+// Unlike traditional WPA2 cracking, PMKID attack doesn't need a client —
+// the attacker associates directly with the AP and extracts the PMKID
+// from the first EAPOL frame. Tool (hcxdumptool) retries association
+// multiple times to ensure PMKID capture.
+func PCAPPMKIDAttack(runID, attackName string, apMAC, attackerMAC [6]byte, ssid string) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPPMKIDAttack ssid=%s", ssid)
+
+	broadcastMAC := [6]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
+	var frames [][]byte
+	var seq uint16
+
+	// --- Phase 1: AP beaconing while attacker scans ---
+	for i := 0; i < 20; i++ {
+		frames = append(frames, build80211Beacon(apMAC, broadcastMAC, ssid, seq))
+		seq++
+	}
+
+	// --- Phase 2: Probe Request / Response ---
+	frames = append(frames, build80211ProbeReq(attackerMAC, broadcastMAC, ssid))
+	frames = append(frames, build80211ProbeResp(apMAC, attackerMAC, ssid))
+
+	// --- Phases 3-6: Repeated association+EAPOL capture attempts ---
+	// hcxdumptool retries several times to guarantee PMKID extraction
+	for attempt := 0; attempt < 5; attempt++ {
+
+		// Auth Request (attacker → AP)
+		authReq := make([]byte, 24)
+		authReq[0] = 0xB0
+		authReq[1] = 0x00
+		copy(authReq[4:10], apMAC[:])
+		copy(authReq[10:16], attackerMAC[:])
+		copy(authReq[16:22], apMAC[:])
+		binary.LittleEndian.PutUint16(authReq[22:24], seq<<4)
+		seq++
+		authReq = append(authReq, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00)
+		frames = append(frames, authReq)
+
+		// Auth Response (AP → attacker)
+		authResp := make([]byte, 24)
+		authResp[0] = 0xB0
+		authResp[1] = 0x00
+		copy(authResp[4:10], attackerMAC[:])
+		copy(authResp[10:16], apMAC[:])
+		copy(authResp[16:22], apMAC[:])
+		binary.LittleEndian.PutUint16(authResp[22:24], seq<<4)
+		seq++
+		authResp = append(authResp, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00)
+		frames = append(frames, authResp)
+
+		// Association Request / Response
+		frames = append(frames, build80211AssocReq(attackerMAC, apMAC, ssid))
+		frames = append(frames, build80211AssocResp(apMAC, attackerMAC))
+
+		// EAPOL Message 1 — AP sends ANonce + PMKID
+		// MIC is all zeros in Message 1 (only set in Msg 2 and 4)
+		anonce := make([]byte, 32)
+		rand.Read(anonce)
+		pmkid := make([]byte, 16)
+		rand.Read(pmkid)
+
+		// PMKID KDE: OUI(3) + type(1) + PMKID(16)
+		pmkidKDE := []byte{0x00, 0x0F, 0xAC, 0x04}
+		pmkidKDE = append(pmkidKDE, pmkid...)
+		rsnIE := []byte{0xDD, byte(len(pmkidKDE))}
+		rsnIE = append(rsnIE, pmkidKDE...)
+
+		eapolKeyData := []byte{
+			0x02,       // Key descriptor type: RSN
+			0x00, 0x8A, // Key info: KeyDescVersion=2, KeyType=1(Pairwise), ACK=1
+			0x00, 0x10, // Key length: 16
+		}
+		// Replay counter (8 bytes)
+		eapolKeyData = append(eapolKeyData,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, byte(attempt+1))
+		// ANonce (32 bytes)
+		eapolKeyData = append(eapolKeyData, anonce...)
+		// Key IV (16 bytes, zeros)
+		eapolKeyData = append(eapolKeyData, make([]byte, 16)...)
+		// Key RSC (8 bytes, zeros)
+		eapolKeyData = append(eapolKeyData, make([]byte, 8)...)
+		// Key ID (8 bytes, zeros)
+		eapolKeyData = append(eapolKeyData, make([]byte, 8)...)
+		// MIC (16 bytes, zeros — MIC is zero in Message 1)
+		eapolKeyData = append(eapolKeyData, make([]byte, 16)...)
+		// Key data length + PMKID KDE
+		keyDataLen := uint16(len(rsnIE))
+		eapolKeyData = append(eapolKeyData, byte(keyDataLen>>8), byte(keyDataLen))
+		eapolKeyData = append(eapolKeyData, rsnIE...)
+
+		// EAPOL header with correct length
+		eapolBody := []byte{
+			0x02, // EAPOL version 2
+			0x03, // EAPOL type: Key
+			byte(len(eapolKeyData) >> 8), byte(len(eapolKeyData)),
+		}
+		eapolBody = append(eapolBody, eapolKeyData...)
+
+		// 802.11 QoS Data frame, FromDS=1 (AP → attacker)
+		dataHdr := make([]byte, 26)         // 24 MAC hdr + 2 QoS ctrl
+		dataHdr[0] = 0x88                   // QoS Data
+		dataHdr[1] = 0x02                   // Flags: FromDS=1
+		copy(dataHdr[4:10], attackerMAC[:]) // addr1 = receiver (attacker)
+		copy(dataHdr[10:16], apMAC[:])      // addr2 = transmitter (AP)
+		copy(dataHdr[16:22], apMAC[:])      // addr3 = BSSID
+		binary.LittleEndian.PutUint16(dataHdr[22:24], seq<<4)
+		dataHdr[24] = 0x00 // QoS ctrl byte 1
+		dataHdr[25] = 0x00 // QoS ctrl byte 2
+		seq++
+
+		// LLC/SNAP header for EAPOL ethertype 0x888E
+		llcSnap := []byte{0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00, 0x88, 0x8E}
+		eapolFrame := append([]byte{}, dataHdr...)
+		eapolFrame = append(eapolFrame, llcSnap...)
+		eapolFrame = append(eapolFrame, eapolBody...)
+		frames = append(frames, eapolFrame)
+
+		// Deauth after each capture — attacker disconnects and retries
+		frames = append(frames, build80211Deauth(attackerMAC, apMAC))
+
+		// A few beacons between attempts — attacker waits before retrying
+		for i := 0; i < 5; i++ {
+			frames = append(frames, build80211Beacon(apMAC, broadcastMAC, ssid, seq))
+			seq++
+		}
+	}
+
+	path, err := writePCAPFileLinkType(runID, attackName, frames, defaultDuration, 105)
+	logInfo("Return from PCAPPMKIDAttack frames=%d path=%s", len(frames), path)
+	return path, err
+}
