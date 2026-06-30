@@ -161,8 +161,10 @@ func runXXEInjection(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
-		xxePayload := []byte(fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/xml\r\n\r\n<!DOCTYPE foo [<!ENTITY xxe SYSTEM 'file:///etc/passwd'>]><foo>&xxe;</foo>", endpoint, targetIP))
-		xxeResp := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+		xxeBody := "<!DOCTYPE foo [<!ENTITY xxe SYSTEM 'file:///etc/passwd'>]><foo>&xxe;</foo>"
+		xxePayload := []byte(fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/xml\r\nContent-Length: %d\r\n\r\n%s",
+			endpoint, targetIP, len(xxeBody), xxeBody))
+		xxeResp := []byte("HTTP/1.1 200 OK\r\nContent-Type: application/xml\r\nContent-Length: 0\r\n\r\n")
 		xxePath, xxeErr := PCAPGenericTCPExchange(req.RunID, "xxe_injection", req.AttackerIP, targetIP, 80, xxePayload, xxeResp)
 		if xxeErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, xxePath)

