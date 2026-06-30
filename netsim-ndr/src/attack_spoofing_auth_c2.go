@@ -418,7 +418,12 @@ func runCommandInjection(req AttackRequest) (*AttackResult, error) {
 
 		// PCAP
 		reqPayload := []byte(fmt.Sprintf("GET /ping?host=8.8.8.8;cat%%20/etc/passwd HTTP/1.1\r\nHost: %s\r\n\r\n", targetIP))
-		respPayload := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+		respBody := "PING 8.8.8.8 (8.8.8.8) 56(84) bytes of data.\n" +
+			"64 bytes from 8.8.8.8: icmp_seq=1 ttl=118 time=12.3 ms\n\n" +
+			"root:x:0:0:root:/root:/bin/bash\n" +
+			"daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\n" +
+			"www-data:x:33:33:www-data:/var/www:/usr/sbin/nologin\n"
+		respPayload := []byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s", len(respBody), respBody))
 		path, _ := PCAPGenericTCPExchange(req.RunID, "command_injection", req.AttackerIP, targetIP, 80, reqPayload, respPayload)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
@@ -758,9 +763,7 @@ func runKerberoasting(req AttackRequest) (*AttackResult, error) {
 		result.EventIDs = append(result.EventIDs, fids...)
 
 		// PCAP: TGS-REQ/TGS-REP exchange (port 88, Kerberos), text approximation
-		reqPayload := []byte(fmt.Sprintf("TGS-REQ: sname=%s realm=CORP.LOCAL", spns[0]))
-		respPayload := []byte("TGS-REP: ticket=<RC4-HMAC encrypted blob>")
-		path, _ := PCAPGenericTCPExchange(req.RunID, "kerberoasting", req.AttackerIP, dcIP, 88, reqPayload, respPayload)
+		path, _ := PCAPKerberoasting(req.RunID, req.AttackerIP, dcIP, spns)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
@@ -784,9 +787,7 @@ func runPassTheHash(req AttackRequest) (*AttackResult, error) {
 
 		// PCAP: NTLM auth exchange over SMB (port 445), text approximation
 		hash := getAttackParam(req.Params, "hash", "aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0")
-		reqPayload := []byte(fmt.Sprintf("NTLMSSP_AUTH: hash=%s", hash))
-		respPayload := []byte("SMB2_SESSION_SETUP: STATUS_SUCCESS")
-		path, _ := PCAPGenericTCPExchange(req.RunID, "pass_the_hash", req.AttackerIP, targetIP, 445, reqPayload, respPayload)
+		path, _ := PCAPPassTheHash(req.RunID, req.AttackerIP, targetIP, hash)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}

@@ -164,7 +164,10 @@ func runXXEInjection(req AttackRequest) (*AttackResult, error) {
 		xxeBody := "<!DOCTYPE foo [<!ENTITY xxe SYSTEM 'file:///etc/passwd'>]><foo>&xxe;</foo>"
 		xxePayload := []byte(fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/xml\r\nContent-Length: %d\r\n\r\n%s",
 			endpoint, targetIP, len(xxeBody), xxeBody))
-		xxeResp := []byte("HTTP/1.1 200 OK\r\nContent-Type: application/xml\r\nContent-Length: 0\r\n\r\n")
+		xxeRespBody := "<?xml version=\"1.0\"?>\n<foo>root:x:0:0:root:/root:/bin/bash\n" +
+			"daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\n" +
+			"www-data:x:33:33:www-data:/var/www:/usr/sbin/nologin\n</foo>"
+		xxeResp := []byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: application/xml\r\nContent-Length: %d\r\n\r\n%s", len(xxeRespBody), xxeRespBody))
 		xxePath, xxeErr := PCAPGenericTCPExchange(req.RunID, "xxe_injection", req.AttackerIP, targetIP, 80, xxePayload, xxeResp)
 		if xxeErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, xxePath)
@@ -235,7 +238,13 @@ func runLFIAttack(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
 		lfiPayload := []byte(fmt.Sprintf("GET %s%s HTTP/1.1\r\nHost: %s\r\n\r\n", endpoint, paths[0], targetIP))
-		lfiResp := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+		lfiBody := "root:x:0:0:root:/root:/bin/bash\n" +
+			"daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\n" +
+			"bin:x:2:2:bin:/bin:/usr/sbin/nologin\n" +
+			"sys:x:3:3:sys:/dev:/usr/sbin/nologin\n" +
+			"www-data:x:33:33:www-data:/var/www:/usr/sbin/nologin\n" +
+			"mysql:x:105:111:MySQL Server,,,:/nonexistent:/bin/false\n"
+		lfiResp := []byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s", len(lfiBody), lfiBody))
 		lfiPath, lfiErr := PCAPGenericTCPExchange(req.RunID, "lfi_attack", req.AttackerIP, targetIP, 80, lfiPayload, lfiResp)
 		if lfiErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, lfiPath)
@@ -274,7 +283,11 @@ func runSSRFAttack(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
 		ssrfPayload := []byte(fmt.Sprintf("GET /fetch?url=%s HTTP/1.1\r\nHost: %s\r\n\r\n", targetURL, targetIP))
-		ssrfResp := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+		ssrfBody := "ami-id\nami-launch-index\nami-manifest-path\nhostname\n" +
+			"instance-action\ninstance-id\ninstance-type\nlocal-hostname\n" +
+			"local-ipv4\nmac\nnetwork\nplacement\nprofile\npublic-hostname\n" +
+			"public-ipv4\npublic-keys\nreservation-id\nsecurity-groups\n"
+		ssrfResp := []byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s", len(ssrfBody), ssrfBody))
 		ssrfPath, ssrfErr := PCAPGenericTCPExchange(req.RunID, "ssrf_attack", req.AttackerIP, targetIP, 80, ssrfPayload, ssrfResp)
 		if ssrfErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, ssrfPath)
@@ -509,14 +522,10 @@ func runBruteForceSNMP(req AttackRequest) (*AttackResult, error) {
 			srcPort := randomPort()
 			query := buildUDPDatagram(srcPort, 161, SNMPQuery(c))
 			frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 17, query)))
-
-			var resp []byte
 			if c == "public" {
-				resp = buildUDPDatagram(161, srcPort, SNMPresponse(c))
-			} else {
-				resp = buildUDPDatagram(161, srcPort, SNMPresponse(c)) // same helper; real SNMP auth failures often just time out rather than reply, but a same-shape response keeps this consistent with existing SNMPenum precedent rather than inventing a new error PDU
+				resp := buildUDPDatagram(161, srcPort, SNMPresponse(c))
+				frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 17, resp)))
 			}
-			frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 17, resp)))
 		}
 		bgFrames := generateBackgroundTraffic(getAllDevices())
 		finalFrames := interleaveBackgroundTraffic(frames, bgFrames)

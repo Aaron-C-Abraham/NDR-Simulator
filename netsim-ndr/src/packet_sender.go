@@ -121,8 +121,8 @@ func sendRealHTTPCovert(dstIP string, dstPort, count int) {
 		}
 		// Data hidden in otherwise-normal-looking headers
 		req.Header.Set("User-Agent", "Mozilla/5.0")
-		req.Header.Set("X-Request-ID", randomHexString(32))                // exfil chunk
-		req.Header.Set("X-Forwarded-For", randomHexString(16))             // covert channel
+		req.Header.Set("X-Request-ID", randomHexString(32))                     // exfil chunk
+		req.Header.Set("X-Forwarded-For", randomHexString(16))                  // covert channel
 		req.Header.Set("Accept-Language", "en-US,"+randomHexString(8)+";q=0.9") // data in lang tag
 
 		resp, err := GlobalRealHTTPClient.Do(req)
@@ -462,12 +462,23 @@ var rdpClientPDU = []byte{
 }
 
 // smbNegotiatePDU is a minimal SMB Negotiate Protocol Request.
+// ByteCount + Dialect string so it's a structurally complete SMB1
+// Negotiate Request, not just a truncated header):
 var smbNegotiatePDU = []byte{
-	0x00, 0x00, 0x00, 0x54, // NetBIOS session header (length=84)
-	0xff, 0x53, 0x4d, 0x42, // SMB magic
-	0x72,                   // Command: Negotiate (0x72)
-	0x00, 0x00, 0x00, 0x00, // NT Status
-	0x18, 0x01, 0xc8, 0x00, // Flags
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Reserved
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // TreeID, ProcessID, UserID, MultiplexID
+	0x00, 0x00, 0x00, 0x2f, // NetBIOS header, length=47
+	0xff, 0x53, 0x4d, 0x42, // Protocol
+	0x72,                   // Command: Negotiate
+	0x00, 0x00, 0x00, 0x00, // Status
+	0x18,       // Flags
+	0xc8, 0x00, // Flags2
+	0x00, 0x00, // PIDHigh
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // SecurityFeatures
+	0x00, 0x00, // Reserved
+	0x00, 0x00, // TID
+	0x00, 0x00, // PIDLow
+	0x00, 0x00, // UID
+	0x00, 0x00, // MID
+	0x00,       // Word Count: 0
+	0x0c, 0x00, // Byte Count: 12
+	0x02, 'N', 'T', ' ', 'L', 'M', ' ', '0', '.', '1', '2', 0x00,
 }
