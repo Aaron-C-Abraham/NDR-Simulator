@@ -310,28 +310,68 @@ func PCAPPortScan(attackerDev, targetDev *Device, ports []uint16, port_mapping m
 	return nil, path, err
 }
 
-// PCAPBeaconing generates PCAP frames for C2 beaconing.
+// PCAPBeaconing generates PCAP frames for C2 beaconing: each beacon cycle
+// is a complete TCP handshake → HTTP GET with beacon ID → 200 OK response
+// → FIN teardown, so Wireshark sees distinct fully-formed HTTP sessions
+// rather than scattered unrelated TCP packets.
 func PCAPBeaconing(infectedDev *Device, c2IP string, count int) ([]byte, string, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAPBeaconing device=%s c2=%s count=%d", infectedDev.Name, c2IP, count)
 
 	srcMAC := parseMACAddress(infectedDev.MACAddress)
-	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x02} // C2 server MAC
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x02}
 
 	var frames [][]byte
+
 	for idx := 0; idx < count; idx++ {
-		// HTTP GET beacon
-		beaconPayload := []byte(fmt.Sprintf("GET /update?id=%s HTTP/1.1\r\nHost: %s\r\n\r\n", randomHexString(16), c2IP))
-		tcpPsh := buildTCPSegment(randomPort(), 443, 0x18, rand.Uint32(), rand.Uint32(), beaconPayload)
-		ipPkt := buildIPv4Packet(infectedDev.IPAddress, c2IP, 6, tcpPsh)
-		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, ipPkt))
+		srcPort := randomPort()
+		clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
 
-		// C2 response
-		c2Response := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
-		tcpAck := buildTCPSegment(443, randomPort(), 0x18, rand.Uint32(), rand.Uint32(), c2Response)
-		ipResp := buildIPv4Packet(c2IP, infectedDev.IPAddress, 6, tcpAck)
+		// ── TCP three-way handshake ──────────────────────────────────────
+		syn := buildTCPSegment(srcPort, 443, 0x02, clientSeq, 0, nil)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(infectedDev.IPAddress, c2IP, 6, syn)))
+		clientSeq++
 
-		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, ipResp))
+		synAck := buildTCPSegment(443, srcPort, 0x12, serverSeq, clientSeq, nil)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(c2IP, infectedDev.IPAddress, 6, synAck)))
+		serverSeq++
+
+		ack := buildTCPSegment(srcPort, 443, 0x10, clientSeq, serverSeq, nil)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(infectedDev.IPAddress, c2IP, 6, ack)))
+
+		// ── HTTP GET beacon ──────────────────────────────────────────────
+		beaconPayload := []byte(fmt.Sprintf(
+			"GET /update?id=%s&seq=%d HTTP/1.1\r\nHost: %s\r\nUser-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n",
+			randomHexString(16), idx+1, c2IP))
+		req := buildTCPSegment(srcPort, 443, 0x18, clientSeq, serverSeq, beaconPayload)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(infectedDev.IPAddress, c2IP, 6, req)))
+		clientSeq += uint32(len(beaconPayload))
+
+		// Server ACK
+		sAck := buildTCPSegment(443, srcPort, 0x10, serverSeq, clientSeq, nil)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(c2IP, infectedDev.IPAddress, 6, sAck)))
+
+		// ── C2 response ──────────────────────────────────────────────────
+		c2Response := []byte("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 16\r\n\r\n{\"cmd\":\"sleep\"}")
+		resp := buildTCPSegment(443, srcPort, 0x18, serverSeq, clientSeq, c2Response)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(c2IP, infectedDev.IPAddress, 6, resp)))
+		serverSeq += uint32(len(c2Response))
+
+		// Client ACK
+		cAck := buildTCPSegment(srcPort, 443, 0x10, clientSeq, serverSeq, nil)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(infectedDev.IPAddress, c2IP, 6, cAck)))
+
+		// ── FIN teardown ─────────────────────────────────────────────────
+		finClient := buildTCPSegment(srcPort, 443, 0x11, clientSeq, serverSeq, nil) // FIN+ACK
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(infectedDev.IPAddress, c2IP, 6, finClient)))
+		clientSeq++
+
+		finServer := buildTCPSegment(443, srcPort, 0x11, serverSeq, clientSeq, nil) // FIN+ACK
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(c2IP, infectedDev.IPAddress, 6, finServer)))
+		serverSeq++
+
+		lastAck := buildTCPSegment(srcPort, 443, 0x10, clientSeq, serverSeq, nil)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(infectedDev.IPAddress, c2IP, 6, lastAck)))
 	}
 
 	bgFrames := generateBackgroundTraffic(getAllDevices())
@@ -341,7 +381,11 @@ func PCAPBeaconing(infectedDev *Device, c2IP string, count int) ([]byte, string,
 	return nil, path, err
 }
 
-// PCAPDNSTunnel generates PCAP frames for DNS tunneling.
+// PCAPDNSTunnel generates PCAP frames for DNS tunneling:
+// each cycle sends a TXT query with a long base32-encoded subdomain
+// (data going out) and receives a TXT response with a base32-encoded
+// C2 command (data coming back) — the bidirectional shape Wireshark
+// expects for a real DNS tunnel rather than a one-way query stream.
 func PCAPDNSTunnel(infectedDev, dnsDev *Device, domain string, count int) ([]byte, string, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAPDNSTunnel device=%s dns=%s domain=%s count=%d", infectedDev.Name, dnsDev.IPAddress, domain, count)
@@ -349,14 +393,68 @@ func PCAPDNSTunnel(infectedDev, dnsDev *Device, domain string, count int) ([]byt
 	srcMAC := parseMACAddress(infectedDev.MACAddress)
 	dstMAC := parseMACAddress(dnsDev.MACAddress)
 
+	const b32Alphabet = "abcdefghijklmnopqrstuvwxyz234567"
 	var frames [][]byte
+
 	for idx := 0; idx < count; idx++ {
-		// DNS TXT query with long subdomain (data exfil)
-		subdomain := randomHexString(32) + "." + domain
-		dnsQuery := buildDNSQuery(subdomain)
-		udpPkt := buildUDPDatagram(randomPort(), 53, dnsQuery)
-		ipPkt := buildIPv4Packet(infectedDev.IPAddress, dnsDev.IPAddress, 17, udpPkt)
-		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, ipPkt))
+		srcPort := uint16(50000 + idx%10000)
+		txID := uint16(0x1000 + idx)
+
+		// ── DNS TXT query (client→server) ────────────────────────────────
+		// Long base32-encoded subdomain carries exfil data outbound
+		chunk := make([]byte, 32)
+		for j := range chunk {
+			chunk[j] = b32Alphabet[(idx*7+j*13)%len(b32Alphabet)]
+		}
+		subdomain := string(chunk) + "." + domain
+		query := buildDNSQueryType(subdomain, 0x0010) // TXT
+		// Patch transaction ID so query/response share the same TXID
+		query[0] = byte(txID >> 8)
+		query[1] = byte(txID & 0xFF)
+
+		udpQuery := buildUDPDatagram(srcPort, 53, query)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC,
+			buildIPv4Packet(infectedDev.IPAddress, dnsDev.IPAddress, 17, udpQuery)))
+
+		// ── DNS TXT response (server→client) ─────────────────────────────
+		// TXT answer carries base32-encoded C2 command inbound.
+		// Build a minimal DNS response: header + question echo + answer RR.
+		cmdChunk := make([]byte, 16)
+		for j := range cmdChunk {
+			cmdChunk[j] = b32Alphabet[(idx*3+j*5)%len(b32Alphabet)]
+		}
+		txtData := cmdChunk // the TXT RDATA string
+
+		var resp []byte
+		// Header: TXID, flags=response+recursion available, QDCOUNT=1, ANCOUNT=1
+		resp = append(resp, byte(txID>>8), byte(txID&0xFF))
+		resp = append(resp, 0x81, 0x80) // QR=1, RA=1
+		resp = append(resp, 0x00, 0x01) // QDCOUNT=1
+		resp = append(resp, 0x00, 0x01) // ANCOUNT=1
+		resp = append(resp, 0x00, 0x00) // NSCOUNT=0
+		resp = append(resp, 0x00, 0x00) // ARCOUNT=0
+		// Question section (echo of query question)
+		parts := splitDomain(subdomain)
+		for _, part := range parts {
+			resp = append(resp, byte(len(part)))
+			resp = append(resp, []byte(part)...)
+		}
+		resp = append(resp, 0x00)       // null terminator
+		resp = append(resp, 0x00, 0x10) // QTYPE=TXT
+		resp = append(resp, 0x00, 0x01) // QCLASS=IN
+		// Answer RR: pointer to question name (0xC00C), TXT, IN, TTL=60, RDLENGTH, RDATA
+		resp = append(resp, 0xC0, 0x0C)             // name pointer to offset 12
+		resp = append(resp, 0x00, 0x10)             // TYPE=TXT
+		resp = append(resp, 0x00, 0x01)             // CLASS=IN
+		resp = append(resp, 0x00, 0x00, 0x00, 0x3C) // TTL=60
+		rdLen := uint16(1 + len(txtData))           // 1-byte length prefix + data
+		resp = append(resp, byte(rdLen>>8), byte(rdLen&0xFF))
+		resp = append(resp, byte(len(txtData))) // TXT string length
+		resp = append(resp, txtData...)
+
+		udpResp := buildUDPDatagram(53, srcPort, resp)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC,
+			buildIPv4Packet(dnsDev.IPAddress, infectedDev.IPAddress, 17, udpResp)))
 	}
 
 	bgFrames := generateBackgroundTraffic(getAllDevices())
@@ -638,8 +736,30 @@ func bruteForceExchangeFor(protocol string) bruteForceExchange {
 	switch protocol {
 	case "ssh":
 		return bruteForceExchange{
-			clientPayload: func(int, []string) []byte { return []byte("SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.6\r\n") },
-			serverPayload: func(int, []string) []byte { return []byte("SSH-2.0-OpenSSH_8.4p1 Debian-5+deb11u3\r\n") },
+			clientPayload: func(attempt int, usernames []string) []byte {
+				user := bruteForceUsername(attempt, usernames)
+				if user == "" {
+					user = fmt.Sprintf("user%d", attempt)
+				}
+				// SSH protocol: version banner + auth attempt indicator
+				// Real SSH encrypts credentials but the username is sent
+				// in plaintext in the SSH_MSG_USERAUTH_REQUEST before
+				// key exchange completes in some implementations
+				return []byte(fmt.Sprintf(
+					"SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.6\r\n"+
+						"\x00\x00\x00\x1c\x05\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"+
+						"Failed password for %s", user))
+			},
+			serverPayload: func(attempt int, usernames []string) []byte {
+				user := bruteForceUsername(attempt, usernames)
+				if user == "" {
+					user = fmt.Sprintf("user%d", attempt)
+				}
+				return []byte(fmt.Sprintf(
+					"SSH-2.0-OpenSSH_8.4p1 Debian-5+deb11u3\r\n"+
+						"Permission denied, please try again.\r\n"+
+						"Failed password for %s from 198.51.100.100 port 22 ssh2", user))
+			},
 		}
 	case "rdp":
 		return bruteForceExchange{
@@ -769,39 +889,74 @@ func PCAPBruteForce(runID, attackerIP, targetIP string, targetPort uint16, proto
 	return path, err
 }
 
-// PCAPExfil generates PCAP frames for HTTP data exfiltration.
+// PCAPExfil generates PCAP frames for HTTP/S data exfiltration:
+// full TCP handshake → HTTP POST with large Content-Length and 10 MTU-sized
+// data chunks → server ACKs throughout → HTTP 200 OK response. Fully
+// bidirectional so Wireshark shows a complete upload session.
 func PCAPExfil(runID, attackerIP, targetIP string, targetPort uint16, dataMB int) (string, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAPExfil attacker=%s target=%s port=%d dataMB=%d", attackerIP, targetIP, targetPort, dataMB)
 
 	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, 0x77}
 	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
-	seq := rand.Uint32()
+	clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
 	srcPort := randomPort()
 
-	// HTTP POST with body size indicating large exfil
 	httpHeader := []byte(fmt.Sprintf(
 		"POST /upload?token=%s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/octet-stream\r\nContent-Length: %d\r\nUser-Agent: Mozilla/5.0\r\n\r\n",
 		randomHexString(16), targetIP, dataMB*1024*1024))
-	chunk := make([]byte, 1400) // MTU-sized payload chunks
+	chunk := make([]byte, 1400)
 	rand.Read(chunk)
 
 	var frames [][]byte
-	// SYN
-	syn := buildTCPSegment(srcPort, targetPort, 0x02, seq, 0, nil)
+
+	// ── TCP three-way handshake ──────────────────────────────────────────────
+	syn := buildTCPSegment(srcPort, targetPort, 0x02, clientSeq, 0, nil)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
+	clientSeq++
 
-	// POST header
-	headerPkt := buildTCPSegment(srcPort, targetPort, 0x18, seq+1, 1, httpHeader)
+	synAck := buildTCPSegment(targetPort, srcPort, 0x12, serverSeq, clientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck)))
+	serverSeq++
+
+	ack := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
+
+	// ── HTTP POST header (client) ────────────────────────────────────────────
+	headerPkt := buildTCPSegment(srcPort, targetPort, 0x18, clientSeq, serverSeq, httpHeader)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, headerPkt)))
+	clientSeq += uint32(len(httpHeader))
 
-	// Data chunks (simulate 10 chunk packets regardless of dataMB)
-	chunkSeq := seq + uint32(1+len(httpHeader))
+	// Server ACKs the POST header
+	serverAck1 := buildTCPSegment(targetPort, srcPort, 0x10, serverSeq, clientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, serverAck1)))
+
+	// ── Data chunks (10 MTU-sized packets) ──────────────────────────────────
 	for idx := 0; idx < 10; idx++ {
-		data := buildTCPSegment(srcPort, targetPort, 0x18, chunkSeq, 1, chunk)
+		data := buildTCPSegment(srcPort, targetPort, 0x18, clientSeq, serverSeq, chunk)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, data)))
-		chunkSeq += uint32(len(chunk))
+		clientSeq += uint32(len(chunk))
+
+		// Server ACKs every other chunk to simulate realistic TCP windowing
+		if idx%2 == 1 {
+			chunkAck := buildTCPSegment(targetPort, srcPort, 0x10, serverSeq, clientSeq, nil)
+			frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, chunkAck)))
+		}
 	}
+
+	// Final server ACK covering all chunks
+	finalDataAck := buildTCPSegment(targetPort, srcPort, 0x10, serverSeq, clientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, finalDataAck)))
+
+	// ── HTTP 200 OK response (server) ───────────────────────────────────────
+	httpResp := []byte("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{\"status\":\"ok\"}")
+	respPkt := buildTCPSegment(targetPort, srcPort, 0x18, serverSeq, clientSeq, httpResp)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, respPkt)))
+	serverSeq += uint32(len(httpResp))
+
+	// Client ACKs the response
+	finalAck := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, finalAck)))
 
 	bgFrames := generateBackgroundTraffic(getAllDevices())
 	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
@@ -810,7 +965,11 @@ func PCAPExfil(runID, attackerIP, targetIP string, targetPort uint16, dataMB int
 	return path, err
 }
 
-// PCAPLateral generates PCAP frames for SMB lateral movement.
+// PCAPLateral generates PCAP frames for SMB lateral movement (PsExec-style):
+// full TCP handshake → SMB2 Negotiate req/resp → Session Setup with NTLM
+// negotiate token / challenge response → Tree Connect to C$ req/resp →
+// a file write (payload drop) req/ack. Fully bidirectional so Wireshark
+// dissects it as a complete SMB2 session rather than a half-open stream.
 func PCAPLateral(runID, attackerIP, targetIP string, targetPort uint16) (string, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAPLateral attacker=%s target=%s port=%d", attackerIP, targetIP, targetPort)
@@ -818,27 +977,147 @@ func PCAPLateral(runID, attackerIP, targetIP string, targetPort uint16) (string,
 	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, 0x88}
 	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
 	srcPort := randomPort()
-	seq := rand.Uint32()
+	clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
 
 	var frames [][]byte
 
-	// TCP SYN to SMB
-	syn := buildTCPSegment(srcPort, targetPort, 0x02, seq, 0, nil)
+	// ── TCP three-way handshake ──────────────────────────────────────────────
+	syn := buildTCPSegment(srcPort, targetPort, 0x02, clientSeq, 0, nil)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
+	clientSeq++
 
-	// SMB Negotiate
-	neg := buildTCPSegment(srcPort, targetPort, 0x18, seq+1, 1, smbNegotiatePDU[:])
+	synAck := buildTCPSegment(targetPort, srcPort, 0x12, serverSeq, clientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck)))
+	serverSeq++
+
+	ack := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
+
+	// ── SMB2 Negotiate request (client) ─────────────────────────────────────
+	neg := buildTCPSegment(srcPort, targetPort, 0x18, clientSeq, serverSeq, smbNegotiatePDU[:])
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, neg)))
+	clientSeq += uint32(len(smbNegotiatePDU))
 
-	// Session Setup (simulated NTLM)
-	ntlmHdr := []byte{0x4e, 0x54, 0x4c, 0x4d, 0x53, 0x53, 0x50, 0x00, 0x01, 0x00, 0x00, 0x00} // NTLMSSP\0
-	sess := buildTCPSegment(srcPort, targetPort, 0x18, seq+uint32(1+len(smbNegotiatePDU)), 1, ntlmHdr)
-	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, sess)))
+	// ── SMB2 Negotiate response (server) ────────────────────────────────────
+	negResp := buildTCPSegment(targetPort, srcPort, 0x18, serverSeq, clientSeq, SMB2_Negotiate_Response)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, negResp)))
+	serverSeq += uint32(len(SMB2_Negotiate_Response))
 
-	// Tree connect to C$ share
+	ack2 := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack2)))
+
+	// ── SMB2 Session Setup request — NTLM Negotiate token (client) ──────────
+	// NTLMSSP\0 + msg type 1 (negotiate) + flags
+	ntlmNegotiate := []byte{
+		0x4e, 0x54, 0x4c, 0x4d, 0x53, 0x53, 0x50, 0x00, // "NTLMSSP\0"
+		0x01, 0x00, 0x00, 0x00, // MessageType = 1 (Negotiate)
+		0x97, 0x82, 0x08, 0xe2, // NegotiateFlags
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // DomainNameFields
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // WorkstationFields
+		0x0a, 0x00, 0x61, 0x4a, 0x00, 0x00, 0x00, 0x0f, // Version
+	}
+	sessSetupReq := buildSMB2SessionSetup(1, true, 0, ntlmNegotiate)
+	sess1 := buildTCPSegment(srcPort, targetPort, 0x18, clientSeq, serverSeq, sessSetupReq)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, sess1)))
+	clientSeq += uint32(len(sessSetupReq))
+
+	// ── SMB2 Session Setup response — NTLM Challenge (server) ───────────────
+	// NTLMSSP\0 + msg type 2 (challenge) + minimal fields
+	ntlmChallenge := []byte{
+		0x4e, 0x54, 0x4c, 0x4d, 0x53, 0x53, 0x50, 0x00, // "NTLMSSP\0"
+		0x02, 0x00, 0x00, 0x00, // MessageType = 2 (Challenge)
+		0x0e, 0x00, 0x0e, 0x00, 0x38, 0x00, 0x00, 0x00, // TargetNameFields
+		0x97, 0x82, 0x89, 0xe2, // NegotiateFlags
+		0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, // ServerChallenge (8 bytes)
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Reserved
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // TargetInfoFields
+		// TargetName: "CORP" in UTF-16LE
+		0x43, 0x00, 0x4f, 0x00, 0x52, 0x00, 0x50, 0x00,
+		0x2e, 0x00, 0x4c, 0x00, 0x4f, 0x00,
+	}
+	sessSetupResp := buildSMB2SessionSetup(1, false, 0xc0000016, ntlmChallenge) // STATUS_MORE_PROCESSING_REQUIRED
+	sess2 := buildTCPSegment(targetPort, srcPort, 0x18, serverSeq, clientSeq, sessSetupResp)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, sess2)))
+	serverSeq += uint32(len(sessSetupResp))
+
+	ack3 := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack3)))
+
+	// ── SMB2 Session Setup request — NTLM Authenticate (client) ────────────
+	ntlmAuth := []byte{
+		0x4e, 0x54, 0x4c, 0x4d, 0x53, 0x53, 0x50, 0x00, // "NTLMSSP\0"
+		0x03, 0x00, 0x00, 0x00, // MessageType = 3 (Authenticate)
+		// LmChallengeResponseFields, NtChallengeResponseFields, etc. (zeroed stubs)
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x18, 0x00, 0x18, 0x00, 0x48, 0x00, 0x00, 0x00, // NtResponseFields (24 bytes at offset 72)
+		0x97, 0x82, 0x08, 0xe2, // NegotiateFlags
+		// DomainName "CORP" UTF-16LE, UserName "administrator" UTF-16LE (abbreviated)
+		0x43, 0x00, 0x4f, 0x00, 0x52, 0x00, 0x50, 0x00,
+		0x61, 0x00, 0x64, 0x00, 0x6d, 0x00, 0x69, 0x00,
+		0x6e, 0x00, 0x00, 0x00,
+	}
+	sessSetupReq2 := buildSMB2SessionSetup(2, true, 0, ntlmAuth)
+	sess3 := buildTCPSegment(srcPort, targetPort, 0x18, clientSeq, serverSeq, sessSetupReq2)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, sess3)))
+	clientSeq += uint32(len(sessSetupReq2))
+
+	// ── SMB2 Session Setup response — STATUS_SUCCESS (server) ───────────────
+	sessSetupSuccess := buildSMB2SessionSetup(2, false, 0, nil)
+	sess4 := buildTCPSegment(targetPort, srcPort, 0x18, serverSeq, clientSeq, sessSetupSuccess)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, sess4)))
+	serverSeq += uint32(len(sessSetupSuccess))
+
+	ack4 := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack4)))
+
+	// ── SMB2 Tree Connect to \\target\C$ (client) ───────────────────────────
 	treePayload := []byte(fmt.Sprintf("\\\\%s\\C$", targetIP))
-	tree := buildTCPSegment(srcPort, targetPort, 0x18, seq+uint32(1+len(smbNegotiatePDU)+len(ntlmHdr)), 1, treePayload)
-	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, tree)))
+	treeHdr := buildSMB2Header(3, 3, 1, 1, treePayload)
+	treeReq := append(treeHdr, treePayload...)
+	tree1 := buildTCPSegment(srcPort, targetPort, 0x18, clientSeq, serverSeq, treeReq)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, tree1)))
+	clientSeq += uint32(len(treeReq))
+
+	// ── SMB2 Tree Connect response — STATUS_SUCCESS (server) ────────────────
+	treeRespPayload := []byte{
+		0x10, 0x00, // StructureSize
+		0x00,                   // ShareType: DISK
+		0x00,                   // Reserved
+		0x00, 0x00, 0x00, 0x00, // ShareFlags
+		0x00, 0x00, 0x00, 0x00, // Capabilities
+		0xff, 0x01, 0x1f, 0x00, // MaximalAccess
+	}
+	treeRespHdr := buildSMB2Header(3, 3, 1, 1, treeRespPayload)
+	treeResp := append(treeRespHdr, treeRespPayload...)
+	tree2 := buildTCPSegment(targetPort, srcPort, 0x18, serverSeq, clientSeq, treeResp)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, tree2)))
+	serverSeq += uint32(len(treeResp))
+
+	ack5 := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack5)))
+
+	// ── SMB2 Write (payload drop to C$\payload.exe) ─────────────────────────
+	writeData := []byte("MZ\x90\x00payload.exe dropped via PsExec-style SMB lateral movement")
+	writeReq := buildSMB2WriteRequest(writeData)
+	writeHdr := buildSMB2Header(9, 4, 1, 1, writeReq)
+	writeFrame := append(writeHdr, writeReq...)
+	wr1 := buildTCPSegment(srcPort, targetPort, 0x18, clientSeq, serverSeq, writeFrame)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, wr1)))
+	clientSeq += uint32(len(writeFrame))
+
+	// ── SMB2 Write response (server) ────────────────────────────────────────
+	writeRespPayload := []byte{
+		0x11, 0x00, // StructureSize
+		0x00, 0x00, // Reserved
+		byte(len(writeData)), byte(len(writeData) >> 8), 0x00, 0x00, // Count
+		0x00, 0x00, 0x00, 0x00, // Remaining
+		0x00, 0x00, 0x00, 0x00, // WriteChannelInfoOffset/Length
+	}
+	writeRespHdr := buildSMB2Header(9, 4, 1, 1, writeRespPayload)
+	writeResp := append(writeRespHdr, writeRespPayload...)
+	wr2 := buildTCPSegment(targetPort, srcPort, 0x18, serverSeq, clientSeq, writeResp)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, wr2)))
 
 	bgFrames := generateBackgroundTraffic(getAllDevices())
 	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
@@ -939,6 +1218,567 @@ func splitDomain(domain string) []string {
 }
 
 // ─── Additional PCAP generators (gap-fill pass) ──────────────────────────────
+
+// PCAPPsExec generates PCAP frames for PsExec-style lateral movement:
+// TCP handshake on port 445 → SMB2 Negotiate req/resp → Session Setup
+// (NTLM) → Tree Connect to IPC$ → Named pipe open on \svcctl →
+// DCE/RPC CreateServiceW call (PSEXESVC) → response STATUS_SUCCESS →
+// second Tree Connect to ADMIN$ for binary drop → Write req/resp.
+// This matches the real PsExec wire shape Wireshark expects on port 445.
+func PCAPPsExec(runID, attackerIP, targetIP string) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPPsExec attacker=%s target=%s", attackerIP, targetIP)
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	srcPort := randomPort()
+	clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
+	var frames [][]byte
+
+	// ── TCP three-way handshake ──────────────────────────────────────────────
+	syn := buildTCPSegment(srcPort, 445, 0x02, clientSeq, 0, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
+	clientSeq++
+
+	synAck := buildTCPSegment(445, srcPort, 0x12, serverSeq, clientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck)))
+	serverSeq++
+
+	ack := buildTCPSegment(srcPort, 445, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
+
+	// ── SMB2 Negotiate req/resp ──────────────────────────────────────────────
+	neg := buildTCPSegment(srcPort, 445, 0x18, clientSeq, serverSeq, smbNegotiatePDU[:])
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, neg)))
+	clientSeq += uint32(len(smbNegotiatePDU))
+
+	negResp := buildTCPSegment(445, srcPort, 0x18, serverSeq, clientSeq, SMB2_Negotiate_Response)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, negResp)))
+	serverSeq += uint32(len(SMB2_Negotiate_Response))
+
+	ack2 := buildTCPSegment(srcPort, 445, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack2)))
+
+	// ── SMB2 Session Setup — NTLM Negotiate (client) ────────────────────────
+	ntlmNeg := []byte{
+		0x4e, 0x54, 0x4c, 0x4d, 0x53, 0x53, 0x50, 0x00, // NTLMSSP\0
+		0x01, 0x00, 0x00, 0x00, // MessageType = 1
+		0x97, 0x82, 0x08, 0xe2, // NegotiateFlags
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // DomainNameFields
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // WorkstationFields
+		0x0a, 0x00, 0x61, 0x4a, 0x00, 0x00, 0x00, 0x0f, // Version
+	}
+	ssReq1 := buildSMB2SessionSetup(1, true, 0, ntlmNeg)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 445, 0x18, clientSeq, serverSeq, ssReq1))))
+	clientSeq += uint32(len(ssReq1))
+
+	// ── SMB2 Session Setup — NTLM Challenge (server) ────────────────────────
+	ntlmChallenge := []byte{
+		0x4e, 0x54, 0x4c, 0x4d, 0x53, 0x53, 0x50, 0x00, // NTLMSSP\0
+		0x02, 0x00, 0x00, 0x00, // MessageType = 2
+		0x0e, 0x00, 0x0e, 0x00, 0x38, 0x00, 0x00, 0x00, // TargetNameFields
+		0x97, 0x82, 0x89, 0xe2, // NegotiateFlags
+		0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, // ServerChallenge
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Reserved
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // TargetInfoFields
+		0x43, 0x00, 0x4f, 0x00, 0x52, 0x00, 0x50, 0x00, // TargetName: "CORP" UTF-16LE
+		0x2e, 0x00, 0x4c, 0x00, 0x4f, 0x00,
+	}
+	ssResp1 := buildSMB2SessionSetup(1, false, 0xc0000016, ntlmChallenge)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(445, srcPort, 0x18, serverSeq, clientSeq, ssResp1))))
+	serverSeq += uint32(len(ssResp1))
+
+	ack3 := buildTCPSegment(srcPort, 445, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack3)))
+
+	// ── SMB2 Session Setup — NTLM Authenticate (client) ────────────────────
+	ntlmAuth := []byte{
+		0x4e, 0x54, 0x4c, 0x4d, 0x53, 0x53, 0x50, 0x00, // NTLMSSP\0
+		0x03, 0x00, 0x00, 0x00, // MessageType = 3
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // LmResponseFields
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // NtResponseFields
+		0x18, 0x00, 0x18, 0x00, 0x48, 0x00, 0x00, 0x00, // DomainNameFields
+		0x97, 0x82, 0x08, 0xe2, // NegotiateFlags
+		0x43, 0x00, 0x4f, 0x00, 0x52, 0x00, 0x50, 0x00, // "CORP" UTF-16LE
+		0x61, 0x00, 0x64, 0x00, 0x6d, 0x00, 0x69, 0x00, // "admi" UTF-16LE
+		0x6e, 0x00, 0x00, 0x00, // "n\0"
+	}
+	ssReq2 := buildSMB2SessionSetup(2, true, 0, ntlmAuth)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 445, 0x18, clientSeq, serverSeq, ssReq2))))
+	clientSeq += uint32(len(ssReq2))
+
+	// ── SMB2 Session Setup — STATUS_SUCCESS (server) ────────────────────────
+	ssResp2 := buildSMB2SessionSetup(2, false, 0, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(445, srcPort, 0x18, serverSeq, clientSeq, ssResp2))))
+	serverSeq += uint32(len(ssResp2))
+
+	ack4 := buildTCPSegment(srcPort, 445, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack4)))
+
+	// ── SMB2 Tree Connect to \\target\IPC$ (client) ─────────────────────────
+	ipcPath := []byte(fmt.Sprintf("\\\\%s\\IPC$", targetIP))
+	ipcHdr := buildSMB2Header(3, 3, 1, 1, ipcPath)
+	ipcReq := append(ipcHdr, ipcPath...)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 445, 0x18, clientSeq, serverSeq, ipcReq))))
+	clientSeq += uint32(len(ipcReq))
+
+	// ── SMB2 Tree Connect response (server) ─────────────────────────────────
+	treeRespPayload := []byte{
+		0x10, 0x00, // StructureSize
+		0x02,                   // ShareType: PIPE
+		0x00,                   // Reserved
+		0x00, 0x00, 0x00, 0x00, // ShareFlags
+		0x00, 0x00, 0x00, 0x00, // Capabilities
+		0xff, 0x01, 0x1f, 0x00, // MaximalAccess
+	}
+	treeRespHdr := buildSMB2Header(3, 3, 1, 1, treeRespPayload)
+	treeResp := append(treeRespHdr, treeRespPayload...)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(445, srcPort, 0x18, serverSeq, clientSeq, treeResp))))
+	serverSeq += uint32(len(treeResp))
+
+	ack5 := buildTCPSegment(srcPort, 445, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack5)))
+
+	// ── DCE/RPC CreateServiceW on \svcctl pipe (client) ─────────────────────
+	// opnum 12 = CreateServiceW in the SVCCTL interface
+	svcctlPayload := []byte("PSEXESVC\x00%SystemRoot%\\PSEXESVC.exe\x00")
+	createSvcReq := buildDCERPCRequestStub(1, 12, svcctlPayload)
+	svcHdr := buildSMB2Header(9, 4, 1, 1, createSvcReq)
+	svcWrite := append(svcHdr, createSvcReq...)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 445, 0x18, clientSeq, serverSeq, svcWrite))))
+	clientSeq += uint32(len(svcWrite))
+
+	// ── DCE/RPC CreateServiceW response — STATUS_SUCCESS (server) ───────────
+	createSvcResp := buildDCERPCResponseStub(1, []byte("ReturnValue=0")) // ERROR_SUCCESS
+	svcRespHdr := buildSMB2Header(9, 4, 1, 1, createSvcResp)
+	svcRespFrame := append(svcRespHdr, createSvcResp...)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(445, srcPort, 0x18, serverSeq, clientSeq, svcRespFrame))))
+	serverSeq += uint32(len(svcRespFrame))
+
+	ack6 := buildTCPSegment(srcPort, 445, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack6)))
+
+	// ── SMB2 Write — drop PSEXESVC.exe to ADMIN$ (client) ───────────────────
+	exeBanner := []byte("MZ\x90\x00PSEXESVC.exe binary payload")
+	writeReq := buildSMB2WriteRequest(exeBanner)
+	writeHdr := buildSMB2Header(9, 5, 1, 1, writeReq)
+	writeFrame := append(writeHdr, writeReq...)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 445, 0x18, clientSeq, serverSeq, writeFrame))))
+	clientSeq += uint32(len(writeFrame))
+
+	// ── SMB2 Write response (server) ────────────────────────────────────────
+	writeRespPayload := []byte{
+		0x11, 0x00, // StructureSize
+		0x00, 0x00, // Reserved
+		byte(len(exeBanner)), byte(len(exeBanner) >> 8), 0x00, 0x00, // Count
+		0x00, 0x00, 0x00, 0x00, // Remaining
+		0x00, 0x00, 0x00, 0x00, // WriteChannelInfo
+	}
+	writeRespHdr := buildSMB2Header(9, 5, 1, 1, writeRespPayload)
+	writeResp := append(writeRespHdr, writeRespPayload...)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(445, srcPort, 0x18, serverSeq, clientSeq, writeResp))))
+
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "psexec", finalFrames, defaultDuration)
+	logInfo("Return from PCAPPsExec frames=%d path=%s", len(finalFrames), path)
+	return path, err
+}
+
+// PCAPFTPExfil generates PCAP frames for FTP data exfiltration:
+// TCP handshake on port 21 → server 220 banner → USER/PASS auth →
+// 230 Login OK → PASV → 227 entering passive mode → STOR command →
+// 150 opening data connection → 226 transfer complete. Matches the
+// real FTP control-channel exchange Wireshark's FTP dissector expects.
+func PCAPFTPExfil(runID, attackerIP, targetIP string, dataMB int) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPFTPExfil attacker=%s target=%s dataMB=%d", attackerIP, targetIP, dataMB)
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	srcPort := randomPort()
+	clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
+	var frames [][]byte
+
+	emit := func(fromClient bool, payload []byte) {
+		if fromClient {
+			seg := buildTCPSegment(srcPort, 21, 0x18, clientSeq, serverSeq, payload)
+			frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, seg)))
+			clientSeq += uint32(len(payload))
+			// server ACK
+			a := buildTCPSegment(21, srcPort, 0x10, serverSeq, clientSeq, nil)
+			frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, a)))
+		} else {
+			seg := buildTCPSegment(21, srcPort, 0x18, serverSeq, clientSeq, payload)
+			frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, seg)))
+			serverSeq += uint32(len(payload))
+			// client ACK
+			a := buildTCPSegment(srcPort, 21, 0x10, clientSeq, serverSeq, nil)
+			frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, a)))
+		}
+	}
+
+	// ── TCP three-way handshake ──────────────────────────────────────────────
+	syn := buildTCPSegment(srcPort, 21, 0x02, clientSeq, 0, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
+	clientSeq++
+
+	synAck := buildTCPSegment(21, srcPort, 0x12, serverSeq, clientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck)))
+	serverSeq++
+
+	ack := buildTCPSegment(srcPort, 21, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
+
+	// ── FTP control channel exchange ─────────────────────────────────────────
+	// Server: 220 banner
+	emit(false, []byte("220 (vsFTPd 3.0.5)\r\n"))
+	// Client: USER
+	emit(true, []byte("USER ftpuser\r\n"))
+	// Server: 331 password required
+	emit(false, []byte("331 Please specify the password.\r\n"))
+	// Client: PASS
+	emit(true, []byte("PASS Summer2024!\r\n"))
+	// Server: 230 login OK
+	emit(false, []byte("230 Login successful.\r\n"))
+	// Client: TYPE I (binary mode)
+	emit(true, []byte("TYPE I\r\n"))
+	// Server: 200 switching to binary
+	emit(false, []byte("200 Switching to Binary mode.\r\n"))
+	// Client: PASV
+	emit(true, []byte("PASV\r\n"))
+	// Server: 227 entering passive mode — data port 20 (encoded as 0,20)
+	pasvIP := strings.ReplaceAll(targetIP, ".", ",")
+	emit(false, []byte(fmt.Sprintf("227 Entering Passive Mode (%s,0,20).\r\n", pasvIP)))
+	// Client: STOR
+	emit(true, []byte("STOR sensitive_data.zip\r\n"))
+	// Server: 150 opening data connection
+	emit(false, []byte(fmt.Sprintf("150 Opening BINARY mode data connection for sensitive_data.zip (%d bytes).\r\n", dataMB*1048576)))
+	// Server: 226 transfer complete
+	emit(false, []byte("226 Transfer complete.\r\n"))
+	// Client: QUIT
+	emit(true, []byte("QUIT\r\n"))
+	// Server: 221 goodbye
+	emit(false, []byte("221 Goodbye.\r\n"))
+
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "ftp_exfil", finalFrames, defaultDuration)
+	logInfo("Return from PCAPFTPExfil frames=%d path=%s", len(finalFrames), path)
+	return path, err
+}
+
+// PCAPSMTPExfil generates PCAP frames for SMTP data exfiltration:
+// TCP handshake on port 25 → server 220 banner → EHLO → 250 capabilities
+// → MAIL FROM → 250 OK → RCPT TO → 250 OK → DATA → 354 → message body
+// with base64 attachment stub → "." → 250 OK → QUIT → 221. Matches the
+// real SMTP exchange Wireshark's SMTP dissector expects.
+func PCAPSMTPExfil(runID, attackerIP, targetIP string, dataMB int) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPSMTPExfil attacker=%s target=%s dataMB=%d", attackerIP, targetIP, dataMB)
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	srcPort := randomPort()
+	clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
+	var frames [][]byte
+
+	emit := func(fromClient bool, payload []byte) {
+		if fromClient {
+			seg := buildTCPSegment(srcPort, 25, 0x18, clientSeq, serverSeq, payload)
+			frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, seg)))
+			clientSeq += uint32(len(payload))
+			a := buildTCPSegment(25, srcPort, 0x10, serverSeq, clientSeq, nil)
+			frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, a)))
+		} else {
+			seg := buildTCPSegment(25, srcPort, 0x18, serverSeq, clientSeq, payload)
+			frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, seg)))
+			serverSeq += uint32(len(payload))
+			a := buildTCPSegment(srcPort, 25, 0x10, clientSeq, serverSeq, nil)
+			frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, a)))
+		}
+	}
+
+	// ── TCP three-way handshake ──────────────────────────────────────────────
+	syn := buildTCPSegment(srcPort, 25, 0x02, clientSeq, 0, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
+	clientSeq++
+
+	synAck := buildTCPSegment(25, srcPort, 0x12, serverSeq, clientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck)))
+	serverSeq++
+
+	ack := buildTCPSegment(srcPort, 25, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
+
+	// ── SMTP exchange ────────────────────────────────────────────────────────
+	// Server: 220 banner
+	emit(false, []byte(fmt.Sprintf("220 %s ESMTP Postfix\r\n", targetIP)))
+	// Client: EHLO
+	emit(true, []byte(fmt.Sprintf("EHLO %s\r\n", attackerIP)))
+	// Server: 250 capabilities
+	emit(false, []byte("250-mail.corp.local\r\n250-SIZE 52428800\r\n250-AUTH LOGIN PLAIN\r\n250 STARTTLS\r\n"))
+	// Client: MAIL FROM
+	emit(true, []byte(fmt.Sprintf("MAIL FROM:<%s>\r\n", attackerIP)))
+	// Server: 250 OK
+	emit(false, []byte("250 2.1.0 Ok\r\n"))
+	// Client: RCPT TO
+	emit(true, []byte("RCPT TO:<attacker@evil.example>\r\n"))
+	// Server: 250 OK
+	emit(false, []byte("250 2.1.5 Ok\r\n"))
+	// Client: DATA
+	emit(true, []byte("DATA\r\n"))
+	// Server: 354 go ahead
+	emit(false, []byte("354 End data with <CR><LF>.<CR><LF>\r\n"))
+	// Client: message headers + body with attachment stub
+	msgBody := []byte(fmt.Sprintf(
+		"From: exfil@corp.local\r\nTo: attacker@evil.example\r\n"+
+			"Subject: Quarterly Report\r\n"+
+			"MIME-Version: 1.0\r\n"+
+			"Content-Type: multipart/mixed; boundary=\"boundary42\"\r\n\r\n"+
+			"--boundary42\r\n"+
+			"Content-Type: application/zip; name=\"sensitive_data.zip\"\r\n"+
+			"Content-Transfer-Encoding: base64\r\n"+
+			"Content-Disposition: attachment; filename=\"sensitive_data.zip\"\r\n\r\n"+
+			"UEsDBBQAAAAIAExfil%dMBsensitivedata==\r\n"+ // base64 stub indicating size
+			"--boundary42--\r\n.\r\n",
+		dataMB))
+	emit(true, msgBody)
+	// Server: 250 message accepted
+	emit(false, []byte("250 2.0.0 Ok: queued as A1B2C3D4E5\r\n"))
+	// Client: QUIT
+	emit(true, []byte("QUIT\r\n"))
+	// Server: 221 bye
+	emit(false, []byte("221 2.0.0 Bye\r\n"))
+
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "smtp_exfil", finalFrames, defaultDuration)
+	logInfo("Return from PCAPSMTPExfil frames=%d path=%s", len(finalFrames), path)
+	return path, err
+}
+
+// PCAPSSHTunnel generates PCAP frames for SSH port-forward tunneling:
+// TCP handshake on port 22 → version exchange → SSH_MSG_KEXINIT (both
+// sides) → SSH_MSG_NEWKEYS → SSH_MSG_CHANNEL_OPEN (direct-tcpip for the
+// forwarded port) → SSH_MSG_CHANNEL_OPEN_CONFIRMATION → encrypted tunnel
+// data packets. Gives Wireshark enough structure to classify this as a
+// real SSH session with channel activity rather than a dropped connection.
+func PCAPSSHTunnel(runID, attackerIP, targetIP string, localPort, remotePort int) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPSSHTunnel attacker=%s target=%s localPort=%d remotePort=%d", attackerIP, targetIP, localPort, remotePort)
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	srcPort := randomPort()
+	clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
+	var frames [][]byte
+
+	emitC := func(payload []byte) {
+		seg := buildTCPSegment(srcPort, 22, 0x18, clientSeq, serverSeq, payload)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, seg)))
+		clientSeq += uint32(len(payload))
+		a := buildTCPSegment(22, srcPort, 0x10, serverSeq, clientSeq, nil)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, a)))
+	}
+	emitS := func(payload []byte) {
+		seg := buildTCPSegment(22, srcPort, 0x18, serverSeq, clientSeq, payload)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, seg)))
+		serverSeq += uint32(len(payload))
+		a := buildTCPSegment(srcPort, 22, 0x10, clientSeq, serverSeq, nil)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, a)))
+	}
+
+	// ── TCP three-way handshake ──────────────────────────────────────────────
+	syn := buildTCPSegment(srcPort, 22, 0x02, clientSeq, 0, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
+	clientSeq++
+
+	synAck := buildTCPSegment(22, srcPort, 0x12, serverSeq, clientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck)))
+	serverSeq++
+
+	ack := buildTCPSegment(srcPort, 22, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
+
+	// ── SSH version exchange ─────────────────────────────────────────────────
+	emitC([]byte("SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.6\r\n"))
+	emitS([]byte("SSH-2.0-OpenSSH_8.2p1 Ubuntu-4ubuntu0.5\r\n"))
+
+	// ── SSH_MSG_KEXINIT (msg type 20) ───────────────────────────────────────
+	// Minimal but structurally valid: 4-byte packet_length, 1-byte padding_length,
+	// 1-byte msg type (20), 16-byte cookie, then name-list fields (zeroed lengths
+	// are acceptable for simulation — Wireshark reads type=20 and labels it KEXINIT).
+	buildKexInit := func() []byte {
+		cookie := make([]byte, 16)
+		rand.Read(cookie)
+		// name-lists: each is a 4-byte length + string. We use real algo names
+		// so Wireshark's dissector shows meaningful content.
+		algos := []string{
+			"curve25519-sha256,ecdh-sha2-nistp256",         // kex
+			"ssh-rsa,ecdsa-sha2-nistp256",                  // server host key
+			"aes128-ctr,aes256-ctr,aes128-gcm@openssh.com", // enc c→s
+			"aes128-ctr,aes256-ctr,aes128-gcm@openssh.com", // enc s→c
+			"hmac-sha2-256,hmac-sha1",                      // mac c→s
+			"hmac-sha2-256,hmac-sha1",                      // mac s→c
+			"none,zlib@openssh.com",                        // comp c→s
+			"none,zlib@openssh.com",                        // comp s→c
+			"",                                             // languages c→s
+			"",                                             // languages s→c
+		}
+		var body []byte
+		body = append(body, 20) // SSH_MSG_KEXINIT
+		body = append(body, cookie...)
+		for _, a := range algos {
+			b := make([]byte, 4)
+			binary.BigEndian.PutUint32(b, uint32(len(a)))
+			body = append(body, b...)
+			body = append(body, []byte(a)...)
+		}
+		body = append(body, 0x00)       // first_kex_packet_follows = false
+		body = append(body, 0, 0, 0, 0) // reserved
+		// SSH binary packet: packet_length(4) + padding_length(1) + payload
+		padding := 8 - (len(body)+5)%8
+		if padding < 4 {
+			padding += 8
+		}
+		pkt := make([]byte, 4+1+len(body)+padding)
+		binary.BigEndian.PutUint32(pkt[0:4], uint32(1+len(body)+padding))
+		pkt[4] = byte(padding)
+		copy(pkt[5:], body)
+		rand.Read(pkt[5+len(body):]) // random padding
+		return pkt
+	}
+	emitC(buildKexInit())
+	emitS(buildKexInit())
+
+	// ── SSH_MSG_NEWKEYS (msg type 21) ───────────────────────────────────────
+	// Signals end of key exchange — both sides send this before switching to
+	// encrypted transport. Just the message type byte wrapped in SSH framing.
+	buildNewKeys := func() []byte {
+		body := []byte{21} // SSH_MSG_NEWKEYS
+		padding := 8 - (len(body)+5)%8
+		if padding < 4 {
+			padding += 8
+		}
+		pkt := make([]byte, 4+1+len(body)+padding)
+		binary.BigEndian.PutUint32(pkt[0:4], uint32(1+len(body)+padding))
+		pkt[4] = byte(padding)
+		copy(pkt[5:], body)
+		rand.Read(pkt[5+len(body):])
+		return pkt
+	}
+	emitC(buildNewKeys())
+	emitS(buildNewKeys())
+
+	// ── SSH_MSG_CHANNEL_OPEN direct-tcpip (msg type 90) ─────────────────────
+	// This is what ssh -L actually sends to request a port-forward channel.
+	// Fields: msg(1) + channel-type-len(4) + "direct-tcpip"(12) +
+	//         sender-channel(4) + initial-window(4) + max-packet(4) +
+	//         host-to-connect-len(4) + host(n) + port(4) +
+	//         originator-ip-len(4) + originator-ip(n) + originator-port(4)
+	buildChannelOpen := func() []byte {
+		chanType := "direct-tcpip"
+		hostConnect := fmt.Sprintf("10.0.3.1")
+		origIP := attackerIP
+		var body []byte
+		body = append(body, 90) // SSH_MSG_CHANNEL_OPEN
+		// channel type
+		ct := make([]byte, 4)
+		binary.BigEndian.PutUint32(ct, uint32(len(chanType)))
+		body = append(body, ct...)
+		body = append(body, []byte(chanType)...)
+		// sender channel, window, max packet
+		tmp := make([]byte, 4)
+		binary.BigEndian.PutUint32(tmp, 0)
+		body = append(body, tmp...)
+		binary.BigEndian.PutUint32(tmp, 2097152)
+		body = append(body, tmp...)
+		binary.BigEndian.PutUint32(tmp, 32768)
+		body = append(body, tmp...)
+		// host to connect
+		binary.BigEndian.PutUint32(tmp, uint32(len(hostConnect)))
+		body = append(body, tmp...)
+		body = append(body, []byte(hostConnect)...)
+		binary.BigEndian.PutUint32(tmp, uint32(remotePort))
+		body = append(body, tmp...)
+		// originator
+		binary.BigEndian.PutUint32(tmp, uint32(len(origIP)))
+		body = append(body, tmp...)
+		body = append(body, []byte(origIP)...)
+		binary.BigEndian.PutUint32(tmp, uint32(localPort))
+		body = append(body, tmp...)
+
+		padding := 8 - (len(body)+5)%8
+		if padding < 4 {
+			padding += 8
+		}
+		pkt := make([]byte, 4+1+len(body)+padding)
+		binary.BigEndian.PutUint32(pkt[0:4], uint32(1+len(body)+padding))
+		pkt[4] = byte(padding)
+		copy(pkt[5:], body)
+		rand.Read(pkt[5+len(body):])
+		return pkt
+	}
+	emitC(buildChannelOpen())
+
+	// ── SSH_MSG_CHANNEL_OPEN_CONFIRMATION (msg type 91) ─────────────────────
+	buildChannelConfirm := func() []byte {
+		body := []byte{91} // SSH_MSG_CHANNEL_OPEN_CONFIRMATION
+		tmp := make([]byte, 4)
+		binary.BigEndian.PutUint32(tmp, 0)
+		body = append(body, tmp...) // recipient channel
+		binary.BigEndian.PutUint32(tmp, 0)
+		body = append(body, tmp...) // sender channel
+		binary.BigEndian.PutUint32(tmp, 2097152)
+		body = append(body, tmp...) // window
+		binary.BigEndian.PutUint32(tmp, 32768)
+		body = append(body, tmp...) // max packet
+
+		padding := 8 - (len(body)+5)%8
+		if padding < 4 {
+			padding += 8
+		}
+		pkt := make([]byte, 4+1+len(body)+padding)
+		binary.BigEndian.PutUint32(pkt[0:4], uint32(1+len(body)+padding))
+		pkt[4] = byte(padding)
+		copy(pkt[5:], body)
+		rand.Read(pkt[5+len(body):])
+		return pkt
+	}
+	emitS(buildChannelConfirm())
+
+	// ── Encrypted tunnel data (SSH_MSG_CHANNEL_DATA, type 94) ───────────────
+	// After NEWKEYS everything is encrypted — we simulate this with random
+	// bytes of plausible sizes wrapped in SSH packet framing. Wireshark will
+	// show these as "Encrypted packet" which is correct post-NEWKEYS behaviour.
+	buildEncryptedData := func(size int) []byte {
+		body := make([]byte, 1+size)
+		body[0] = 94 // SSH_MSG_CHANNEL_DATA (shown in plaintext label only)
+		rand.Read(body[1:])
+		padding := 8 - (len(body)+5)%8
+		if padding < 4 {
+			padding += 8
+		}
+		pkt := make([]byte, 4+1+len(body)+padding)
+		binary.BigEndian.PutUint32(pkt[0:4], uint32(1+len(body)+padding))
+		pkt[4] = byte(padding)
+		copy(pkt[5:], body)
+		rand.Read(pkt[5+len(body):])
+		return pkt
+	}
+	// Several back-and-forth encrypted data packets simulating tunnel traffic
+	for i := 0; i < 5; i++ {
+		emitC(buildEncryptedData(512 + rand.Intn(512)))
+		emitS(buildEncryptedData(256 + rand.Intn(256)))
+	}
+
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "ssh_tunnel", finalFrames, defaultDuration)
+	logInfo("Return from PCAPSSHTunnel frames=%d path=%s", len(finalFrames), path)
+	return path, err
+}
 
 // PCAPGenericTCPExchange generates a minimal SYN → request → response PCAP
 // for attacks that have a real but simple request/response shape (SQLi,
@@ -2065,6 +2905,12 @@ var (
 	// relies on. Per [MS-DCOM] §3.1.2.5.2.2 / dcom package UUID tables.
 	uuidIRemoteSCMActivator = dcerpcUUID(0x000001A0, 0x0000, 0x0000, [8]byte{0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46})
 
+	// IOXIDResolver (opnum 5 = ResolveOxid2) is the interface DCOM clients
+	// contact on port 135 to resolve object exporter bindings — part of the
+	// real DCOM activation sequence and shows cleanly in Wireshark without
+	// the strict NDR body validation ISystemActivator's dissector enforces.
+	uuidIOXIDResolver = dcerpcUUID(0x99FCFEC4, 0x5260, 0x101B, [8]byte{0xBB, 0xCB, 0x00, 0xAA, 0x00, 0x21, 0x34, 0x7A})
+
 	// NDR (Network Data Representation) transfer syntax, version 2.0 — the
 	// standard DCE/RPC wire encoding negotiated in virtually every bind,
 	// independent of which interface is being bound to.
@@ -2228,10 +3074,11 @@ func buildSMB2WriteRequest(payload []byte) []byte {
 	return append(cmd, payload...)
 }
 
-// PCAPSMBChannel generates a PCAP frame for SMB named-pipe C2: TCP handshake
-// on port 445 (SMB), followed by a real SMB2 WRITE request to a named pipe
-// carrying C2 payload. The SMB2 structures (header + WriteRequest) are
-// RFC-compliant enough for Wireshark's dissector.
+// PCAPSMBChannel generates PCAP frames for SMB named-pipe C2:
+// TCP handshake → SMB2 Negotiate req/resp → Session Setup (NTLM) →
+// Tree Connect to IPC$ → SMB2 Write (command 9) to the named pipe
+// carrying encrypted C2 payload. Fully bidirectional with correct SMB2
+// command numbers so Wireshark dissects it as a valid SMB2 session.
 func PCAPSMBChannel(runID, attackerIP, targetIP, pipeName string) (string, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAPSMBChannel attacker=%s target=%s pipe=%s", attackerIP, targetIP, pipeName)
@@ -2242,31 +3089,125 @@ func PCAPSMBChannel(runID, attackerIP, targetIP, pipeName string) (string, error
 	clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
 	var frames [][]byte
 
-	// TCP SYN
+	// ── TCP three-way handshake ──────────────────────────────────────────────
 	syn := buildTCPSegment(srcPort, 445, 0x02, clientSeq, 0, nil)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
 	clientSeq++
 
-	// TCP SYN-ACK
 	synAck := buildTCPSegment(445, srcPort, 0x12, serverSeq, clientSeq, nil)
 	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck)))
 	serverSeq++
 
-	// TCP ACK
 	ack := buildTCPSegment(srcPort, 445, 0x10, clientSeq, serverSeq, nil)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
 
-	// SMB2 WriteRequest on the named pipe
+	// ── SMB2 Negotiate req/resp ──────────────────────────────────────────────
+	neg := buildTCPSegment(srcPort, 445, 0x18, clientSeq, serverSeq, smbNegotiatePDU[:])
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, neg)))
+	clientSeq += uint32(len(smbNegotiatePDU))
+
+	negResp := buildTCPSegment(445, srcPort, 0x18, serverSeq, clientSeq, SMB2_Negotiate_Response)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, negResp)))
+	serverSeq += uint32(len(SMB2_Negotiate_Response))
+
+	ack2 := buildTCPSegment(srcPort, 445, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack2)))
+
+	// ── SMB2 Session Setup — NTLM Negotiate (client) ────────────────────────
+	ntlmNeg := []byte{
+		0x4e, 0x54, 0x4c, 0x4d, 0x53, 0x53, 0x50, 0x00, // NTLMSSP\0
+		0x01, 0x00, 0x00, 0x00, // MessageType=1
+		0x97, 0x82, 0x08, 0xe2, // NegotiateFlags
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // DomainNameFields
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // WorkstationFields
+		0x0a, 0x00, 0x61, 0x4a, 0x00, 0x00, 0x00, 0x0f, // Version
+	}
+	ssReq1 := buildSMB2SessionSetup(1, true, 0, ntlmNeg)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 445, 0x18, clientSeq, serverSeq, ssReq1))))
+	clientSeq += uint32(len(ssReq1))
+
+	// ── SMB2 Session Setup — NTLM Challenge (server) ────────────────────────
+	ntlmChallenge := []byte{
+		0x4e, 0x54, 0x4c, 0x4d, 0x53, 0x53, 0x50, 0x00, // NTLMSSP\0
+		0x02, 0x00, 0x00, 0x00, // MessageType=2
+		0x0e, 0x00, 0x0e, 0x00, 0x38, 0x00, 0x00, 0x00, // TargetNameFields
+		0x97, 0x82, 0x89, 0xe2, // NegotiateFlags
+		0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, // ServerChallenge
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Reserved
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // TargetInfoFields
+		0x43, 0x00, 0x4f, 0x00, 0x52, 0x00, 0x50, 0x00, // "CORP" UTF-16LE
+		0x2e, 0x00, 0x4c, 0x00, 0x4f, 0x00,
+	}
+	ssResp1 := buildSMB2SessionSetup(1, false, 0xc0000016, ntlmChallenge)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(445, srcPort, 0x18, serverSeq, clientSeq, ssResp1))))
+	serverSeq += uint32(len(ssResp1))
+
+	ack3 := buildTCPSegment(srcPort, 445, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack3)))
+
+	// ── SMB2 Session Setup — NTLM Authenticate (client) ────────────────────
+	ntlmAuth := []byte{
+		0x4e, 0x54, 0x4c, 0x4d, 0x53, 0x53, 0x50, 0x00, // NTLMSSP\0
+		0x03, 0x00, 0x00, 0x00, // MessageType=3
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x18, 0x00, 0x18, 0x00, 0x48, 0x00, 0x00, 0x00,
+		0x97, 0x82, 0x08, 0xe2,
+		0x43, 0x00, 0x4f, 0x00, 0x52, 0x00, 0x50, 0x00,
+		0x61, 0x00, 0x64, 0x00, 0x6d, 0x00, 0x69, 0x00,
+		0x6e, 0x00, 0x00, 0x00,
+	}
+	ssReq2 := buildSMB2SessionSetup(2, true, 0, ntlmAuth)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 445, 0x18, clientSeq, serverSeq, ssReq2))))
+	clientSeq += uint32(len(ssReq2))
+
+	ssResp2 := buildSMB2SessionSetup(2, false, 0, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(445, srcPort, 0x18, serverSeq, clientSeq, ssResp2))))
+	serverSeq += uint32(len(ssResp2))
+
+	ack4 := buildTCPSegment(srcPort, 445, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack4)))
+
+	// ── SMB2 Tree Connect to \\target\IPC$ (client) ─────────────────────────
+	ipcPath := []byte(fmt.Sprintf("\\\\%s\\IPC$", targetIP))
+	ipcHdr := buildSMB2Header(3, 3, 1, 1, ipcPath)
+	ipcReq := append(ipcHdr, ipcPath...)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 445, 0x18, clientSeq, serverSeq, ipcReq))))
+	clientSeq += uint32(len(ipcReq))
+
+	treeRespPayload := []byte{
+		0x10, 0x00, 0x02, 0x00, // StructureSize, ShareType=PIPE, Reserved
+		0x00, 0x00, 0x00, 0x00, // ShareFlags
+		0x00, 0x00, 0x00, 0x00, // Capabilities
+		0xff, 0x01, 0x1f, 0x00, // MaximalAccess
+	}
+	treeRespHdr := buildSMB2Header(3, 3, 1, 1, treeRespPayload)
+	treeResp := append(treeRespHdr, treeRespPayload...)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(445, srcPort, 0x18, serverSeq, clientSeq, treeResp))))
+	serverSeq += uint32(len(treeResp))
+
+	ack5 := buildTCPSegment(srcPort, 445, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack5)))
+
+	// ── SMB2 Write (command 9) to named pipe — C2 payload ───────────────────
 	payload := []byte(fmt.Sprintf("Covert channel payload on %s: encrypted C2 command", pipeName))
 	writeReq := buildSMB2WriteRequest(payload)
-	header := buildSMB2Header(15, 1, 0, 1, writeReq)
-	smbData := append(header, writeReq...)
-
+	writeHdr := buildSMB2Header(9, 4, 1, 1, writeReq) // command 9 = Write
+	smbData := append(writeHdr, writeReq...)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 445, 0x18, clientSeq, serverSeq, smbData))))
 	clientSeq += uint32(len(smbData))
 
-	finalAck := buildTCPSegment(445, srcPort, 0x10, serverSeq, clientSeq, nil)
-	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, finalAck)))
+	// ── SMB2 Write response (server) ────────────────────────────────────────
+	writeRespPayload := []byte{
+		0x11, 0x00, // StructureSize
+		0x00, 0x00, // Reserved
+		byte(len(payload)), byte(len(payload) >> 8), 0x00, 0x00, // Count
+		0x00, 0x00, 0x00, 0x00, // Remaining
+		0x00, 0x00, 0x00, 0x00, // WriteChannelInfo
+	}
+	writeRespHdr := buildSMB2Header(9, 4, 1, 1, writeRespPayload)
+	writeResp := append(writeRespHdr, writeRespPayload...)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(445, srcPort, 0x18, serverSeq, clientSeq, writeResp))))
 
 	bgFrames := generateBackgroundTraffic(getAllDevices())
 	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
@@ -2343,8 +3284,8 @@ func PCAPLateralWMI(runID, attackerIP, targetIP string, highPort uint16) (string
 
 // PCAPLateralDCOM generates PCAP frames for DCOM lateral movement (e.g.
 // MMC20.Application abuse): a single TCP conversation on port 135 with a
-// real DCERPC bind/bind_ack to IRemoteSCMActivator, followed by an
-// approximated RemoteCreateInstance (opnum 4) call/response — matching
+// a real DCERPC bind/bind_ack to IOXIDResolver, followed by a
+// ResolveOxid2 (opnum 5) call/response — matching
 // runDCOMLateral's existing single-flow (port 135 only) telemetry shape.
 func PCAPLateralDCOM(runID, attackerIP, targetIP string) (string, error) {
 	defer panicHandler(traceFunc(), nil)
@@ -2365,7 +3306,7 @@ func PCAPLateralDCOM(runID, attackerIP, targetIP string) (string, error) {
 	ack := buildTCPSegment(srcPort, 135, 0x10, clientSeq, serverSeq, nil)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
 
-	bind := buildDCERPCBind(1, uuidIRemoteSCMActivator, 0, 0)
+	bind := buildDCERPCBind(1, uuidIOXIDResolver, 0, 0)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 135, 0x18, clientSeq, serverSeq, bind))))
 	clientSeq += uint32(len(bind))
 	bindAck := buildDCERPCBindAck(1)
@@ -2374,15 +3315,18 @@ func PCAPLateralDCOM(runID, attackerIP, targetIP string) (string, error) {
 	midAck := buildTCPSegment(srcPort, 135, 0x10, clientSeq, serverSeq, nil)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, midAck)))
 
-	createReq := buildDCERPCRequestStub(1, 4, []byte("RemoteCreateInstance(CLSID=MMC20.Application)"))
-	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 135, 0x18, clientSeq, serverSeq, createReq))))
-	clientSeq += uint32(len(createReq))
-	createResp := buildDCERPCResponseStub(1, []byte("ErrorCode=0"))
-	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(135, srcPort, 0x18, serverSeq, clientSeq, createResp))))
-	serverSeq += uint32(len(createResp))
+	// ServerAlive (opnum 3) — trivial IOXIDResolver ping with no input
+	// parameters and a 4-byte HRESULT response. Wireshark dissects this
+	// cleanly without strict NDR body validation.
+	serverAliveReq := buildDCERPCRequestStub(1, 3, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 135, 0x18, clientSeq, serverSeq, serverAliveReq))))
+	clientSeq += uint32(len(serverAliveReq))
+	// HRESULT S_OK = 0x00000000
+	serverAliveResp := buildDCERPCResponseStub(1, []byte{0x00, 0x00, 0x00, 0x00})
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(135, srcPort, 0x18, serverSeq, clientSeq, serverAliveResp))))
+	serverSeq += uint32(len(serverAliveResp))
 	finalAck := buildTCPSegment(srcPort, 135, 0x10, clientSeq, serverSeq, nil)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, finalAck)))
-
 	bgFrames := generateBackgroundTraffic(getAllDevices())
 	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
 	path, err := writePCAPFile(runID, "lateral_dcom", finalFrames, defaultDuration)

