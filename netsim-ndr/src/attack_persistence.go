@@ -101,9 +101,23 @@ func runProtocolTunnel(req AttackRequest) (*AttackResult, error) {
 			result.PCAPFiles = append(result.PCAPFiles, pcapPath)
 		}
 	default:
-		pcapPath, pcapErr := PCAPDNSQueryResponse(req.RunID, "protocol_tunnel_dns", req.AttackerIP, c2IP, randomHexString(40)+".tunnel.example.net", true)
-		if pcapErr == nil {
-			result.PCAPFiles = append(result.PCAPFiles, pcapPath)
+		// DNS tunnel: bidirectional TXT query/response pairs (not NXDOMAIN
+		// which is the DGA shape — a tunnel needs replies carrying C2 data back)
+		dnsDev := getDNSServer()
+		if dnsDev != nil {
+			infectedDev, _ := getDeviceByIP(req.AttackerIP)
+			if infectedDev == nil {
+				infectedDev = getAttackerDevice()
+			}
+			_, pcapPath, pcapErr := PCAPDNSTunnel(infectedDev, dnsDev, "tunnel.example.net", 10)
+			if pcapErr == nil {
+				result.PCAPFiles = append(result.PCAPFiles, pcapPath)
+			}
+		} else {
+			pcapPath, pcapErr := PCAPDNSQueryResponse(req.RunID, "protocol_tunnel_dns", req.AttackerIP, c2IP, randomHexString(40)+".tunnel.example.net", false)
+			if pcapErr == nil {
+				result.PCAPFiles = append(result.PCAPFiles, pcapPath)
+			}
 		}
 	}
 	logInfo("Return from runProtocolTunnel syslogs=%d", result.SyslogCount)
