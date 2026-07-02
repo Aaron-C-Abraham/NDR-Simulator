@@ -707,10 +707,8 @@ func runCredentialStuffing(req AttackRequest) (*AttackResult, error) {
 		if targetDev == nil {
 			continue
 		}
-		var lastUser string
 		for idx := 0; idx < min(listSize, 20); idx++ {
 			user := fmt.Sprintf("user%d@corp.local", rand.Intn(1000))
-			lastUser = user
 			msg := fmt.Sprintf("Authentication failed for %s from %s — invalid credentials (credential stuffing suspected)", user, req.AttackerIP)
 			ev := sendSyslog(targetDev, msg, 4)
 			result.SyslogCount++
@@ -728,10 +726,8 @@ func runCredentialStuffing(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
 
-		// PCAP: one representative login attempt
-		reqPayload := []byte(fmt.Sprintf("POST /login HTTP/1.1\r\nHost: %s\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\nemail=%s&password=leaked123", targetIP, lastUser))
-		respPayload := []byte("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n")
-		path, _ := PCAPGenericTCPExchange(req.RunID, "credential_stuffing", req.AttackerIP, targetIP, 443, reqPayload, respPayload)
+		// PCAP: multiple login attempts with visible credentials
+		path, _ := PCAPCredentialStuffing(req.RunID, req.AttackerIP, targetIP, min(listSize, 20))
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
