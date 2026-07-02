@@ -832,7 +832,7 @@ func runC2Beaconing(req AttackRequest) (*AttackResult, error) {
 		result.EventIDs = append(result.EventIDs, fids...)
 
 		// PCAP (Option B — always generate)
-		_, path, err := PCAPBeaconing(infectedDev, c2Dev.IPAddress, count)
+		_, path, err := PCAPBeaconing(infectedDev, req.AttackerIP, count, req.RunID)
 		if err == nil && path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}

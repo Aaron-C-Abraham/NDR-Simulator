@@ -314,7 +314,7 @@ func PCAPPortScan(attackerDev, targetDev *Device, ports []uint16, port_mapping m
 // is a complete TCP handshake → HTTP GET with beacon ID → 200 OK response
 // → FIN teardown, so Wireshark sees distinct fully-formed HTTP sessions
 // rather than scattered unrelated TCP packets.
-func PCAPBeaconing(infectedDev *Device, c2IP string, count int) ([]byte, string, error) {
+func PCAPBeaconing(infectedDev *Device, c2IP string, count int, runID string) ([]byte, string, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAPBeaconing device=%s c2=%s count=%d", infectedDev.Name, c2IP, count)
 
@@ -376,7 +376,7 @@ func PCAPBeaconing(infectedDev *Device, c2IP string, count int) ([]byte, string,
 
 	bgFrames := generateBackgroundTraffic(getAllDevices())
 	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
-	path, err := writePCAPFile("beacon", "beaconing", finalFrames, defaultDuration)
+	path, err := writePCAPFile(runID, "beaconing", finalFrames, defaultDuration)
 	logInfo("Return from PCAPBeaconing frames=%d path=%s", len(finalFrames), path)
 	return nil, path, err
 }
@@ -5779,8 +5779,16 @@ func PCAPPassTheHash(runID, attackerIP, targetIP, ntlmHash string) (string, erro
 	domainName := []byte{'C', 0, 'O', 0, 'R', 0, 'P', 0}                                  // "CORP" UTF-16LE
 	workstation := []byte{'A', 0, 'T', 0, 'T', 0, 'A', 0, 'C', 0, 'K', 0, 'E', 0, 'R', 0} // "ATTACKER" UTF-16LE
 
-	// LmChallengeResponse: 24 bytes of zeros (LM disabled in modern Windows)
+	lmHashHex := ntlmHash
+	if idx := strings.Index(ntlmHash, ":"); idx >= 0 {
+		lmHashHex = ntlmHash[:idx]
+	}
+	lmHashBytes := make([]byte, 16)
+	for i := 0; i < 16 && i*2+1 < len(lmHashHex); i++ {
+		fmt.Sscanf(lmHashHex[i*2:i*2+2], "%02x", &lmHashBytes[i])
+	}
 	lmResponse := make([]byte, 24)
+	copy(lmResponse[:16], lmHashBytes)
 	// NtChallengeResponse: 24 bytes — first 16 are the NT hash, rest are the
 	// server challenge XOR'd with hash (simplified; sufficient for Wireshark)
 	ntResponse := make([]byte, 24)
