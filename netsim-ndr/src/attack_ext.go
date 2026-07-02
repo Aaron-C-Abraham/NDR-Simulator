@@ -303,27 +303,6 @@ func runSSRFAttack(req AttackRequest) (*AttackResult, error) {
 		if ssrfErr1 == nil {
 			result.PCAPFiles = append(result.PCAPFiles, ssrfPath1)
 		}
-
-		// Hop 2: vulnerable app server → internal metadata service
-		// The server-side request the app makes on behalf of the attacker —
-		// this is the SSRF itself, showing the internal endpoint being accessed.
-		metaIP := "169.254.169.254"
-		metaPayload := []byte(fmt.Sprintf(
-			"GET /latest/meta-data/ HTTP/1.1\r\n"+
-				"Host: %s\r\n"+
-				"User-Agent: python-requests/2.28.0\r\n\r\n",
-			metaIP))
-		metaBody := "ami-id\nami-launch-index\nami-manifest-path\nhostname\n" +
-			"instance-action\ninstance-id\ninstance-type\nlocal-hostname\n" +
-			"local-ipv4\nmac\nnetwork\nplacement\nprofile\npublic-hostname\n" +
-			"public-ipv4\npublic-keys\nreservation-id\nsecurity-groups\n"
-		metaResp := []byte(fmt.Sprintf(
-			"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s",
-			len(metaBody), metaBody))
-		ssrfPath2, ssrfErr2 := PCAPGenericTCPExchange(req.RunID, "ssrf_internal", targetIP, metaIP, 80, metaPayload, metaResp)
-		if ssrfErr2 == nil {
-			result.PCAPFiles = append(result.PCAPFiles, ssrfPath2)
-		}
 	}
 	logInfo("Return from runSSRFAttack syslogs=%d", result.SyslogCount)
 	return result, nil
