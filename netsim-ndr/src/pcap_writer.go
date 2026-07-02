@@ -718,8 +718,9 @@ func PCAPSlowloris(runID, attackerIP, targetIP string, connections int) (string,
 // messages claim was tried), and the server's rejection response carried
 // in the data segment immediately before the RST.
 type bruteForceExchange struct {
-	clientPayload func(attempt int, usernames []string) []byte
-	serverPayload func(attempt int, usernames []string) []byte
+	clientPayload       func(attempt int, usernames []string) []byte
+	serverPayload       func(attempt int, usernames []string) []byte
+	secondServerPayload func(attempt int, usernames []string) []byte // optional second server frame
 }
 
 // bruteForceUsername returns usernames[attempt % len(usernames)], or a
@@ -736,35 +737,71 @@ func bruteForceExchangeFor(protocol string) bruteForceExchange {
 	switch protocol {
 	case "ssh":
 		return bruteForceExchange{
+			// Client: version banner + SSH_MSG_USERAUTH_REQUEST (type 50)
+			// Username is sent in plaintext in the userauth request —
+			// this is the login attempt Wireshark shows as the auth try.
 			clientPayload: func(attempt int, usernames []string) []byte {
 				user := bruteForceUsername(attempt, usernames)
 				if user == "" {
 					user = fmt.Sprintf("user%d", attempt)
 				}
-				// SSH protocol: version banner + auth attempt indicator
-				// Real SSH encrypts credentials but the username is sent
-				// in plaintext in the SSH_MSG_USERAUTH_REQUEST before
-				// key exchange completes in some implementations
-				return []byte(fmt.Sprintf(
-					"SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.6\r\n"+
-						"\x00\x00\x00\x1c\x05\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"+
-						"Failed password for %s", user))
+				// SSH version exchange + minimal SSH_MSG_USERAUTH_REQUEST:
+				// msg type 50 + username length + username + service name
+				// "ssh-connection" + auth method "password" + password flag + password
+				userBytes := []byte(user)
+				passBytes := []byte(fmt.Sprintf("pass%d", attempt))
+				service := []byte("ssh-connection")
+				method := []byte("password")
+				var authReq []byte
+				authReq = append(authReq, 50) // SSH_MSG_USERAUTH_REQUEST
+				authReq = append(authReq, 0, 0, 0, byte(len(userBytes)))
+				authReq = append(authReq, userBytes...)
+				authReq = append(authReq, 0, 0, 0, byte(len(service)))
+				authReq = append(authReq, service...)
+				authReq = append(authReq, 0, 0, 0, byte(len(method)))
+				authReq = append(authReq, method...)
+				authReq = append(authReq, 0) // boolean: not changing password
+				authReq = append(authReq, 0, 0, 0, byte(len(passBytes)))
+				authReq = append(authReq, passBytes...)
+				banner := []byte("SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.6\r\n")
+				return append(banner, authReq...)
 			},
+			// Server: version banner + SSH_MSG_USERAUTH_FAILURE (type 51)
+			// This is the authentication failure Wireshark shows.
 			serverPayload: func(attempt int, usernames []string) []byte {
 				user := bruteForceUsername(attempt, usernames)
 				if user == "" {
 					user = fmt.Sprintf("user%d", attempt)
 				}
-				return []byte(fmt.Sprintf(
+				// SSH_MSG_USERAUTH_FAILURE: type 51 + auth methods name-list
+				// + partial success boolean
+				methods := []byte("publickey,password,keyboard-interactive")
+				var authFail []byte
+				authFail = append(authFail, 51) // SSH_MSG_USERAUTH_FAILURE
+				authFail = append(authFail, 0, 0, 0, byte(len(methods)))
+				authFail = append(authFail, methods...)
+				authFail = append(authFail, 0) // partial success = false
+				banner := []byte(fmt.Sprintf(
 					"SSH-2.0-OpenSSH_8.4p1 Debian-5+deb11u3\r\n"+
-						"Permission denied, please try again.\r\n"+
-						"Failed password for %s from 198.51.100.100 port 22 ssh2", user))
+						"Failed password for %s from 198.51.100.100 port 22 ssh2\r\n", user))
+				return append(banner, authFail...)
 			},
 		}
 	case "rdp":
 		return bruteForceExchange{
+			// Client: RDP Connection Request (X.224 CR TPDU) — login attempt
 			clientPayload: func(int, []string) []byte { return rdpClientPDU[:] },
-			serverPayload: func(int, []string) []byte { return []byte{0x03, 0x00, 0x00, 0x07, 0x02, 0xF0, 0x80, 0x02} },
+			// Server: X.224 Connection Confirm only — server accepts TCP connection
+			// The immediate RST/ACK after this signals credential rejection.
+			// This is the closest Wireshark can show for RDP auth failure without
+			// a full CredSSP/NLA exchange (which requires real crypto material).
+			serverPayload: func(int, []string) []byte {
+				return []byte{
+					0x03, 0x00, 0x00, 0x0B,
+					0x06, 0xD0, 0x00, 0x00, 0x12, 0x34, 0x00,
+				}
+			},
+			secondServerPayload: nil,
 		}
 	case "smb":
 		return bruteForceExchange{
@@ -875,6 +912,16 @@ func PCAPBruteForce(runID, attackerIP, targetIP string, targetPort uint16, proto
 			resp := buildTCPSegment(targetPort, srcPort, 0x18, serverSeq, clientSeq, serverPayload)
 			frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, resp)))
 			serverSeq += uint32(len(serverPayload))
+		}
+
+		// Optional second server frame (e.g. RDP disconnect after CC)
+		if exchange.secondServerPayload != nil {
+			secondPayload := exchange.secondServerPayload(idx, usernames)
+			if len(secondPayload) > 0 {
+				resp2 := buildTCPSegment(targetPort, srcPort, 0x18, serverSeq, clientSeq, secondPayload)
+				frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, resp2)))
+				serverSeq += uint32(len(secondPayload))
+			}
 		}
 
 		// RST/ACK (auth failure → connection torn down)
