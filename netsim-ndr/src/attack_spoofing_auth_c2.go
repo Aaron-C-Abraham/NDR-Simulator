@@ -874,24 +874,12 @@ func runDGA(req AttackRequest) (*AttackResult, error) {
 			result.EventIDs = append(result.EventIDs, fids...)
 		}
 
-		// PCAP 1: DNS NXDOMAIN queries from infected host
+		// Single PCAP: multiple DGA domains → same C2 IP, then C2 callback
 		if len(dgaDomains) > 0 {
-			path, _ := PCAPDNSQueryResponse(req.RunID, "dga", infectedIP, dnsDev.IPAddress, dgaDomains[len(dgaDomains)-1], true)
+			path, _ := PCAPDGAMulti(req.RunID, infectedIP, dnsDev.IPAddress, req.AttackerIP, dgaDomains)
 			if path != "" {
 				result.PCAPFiles = append(result.PCAPFiles, path)
 			}
-		}
-
-		// PCAP 2: C2 callback — infected host connects to attacker after DGA resolution
-		c2Path, _ := PCAPGenericTCPExchange(
-			req.RunID, "dga_c2",
-			infectedIP, req.AttackerIP,
-			uint16(80),
-			[]byte(fmt.Sprintf("GET /gate.php?id=%s HTTP/1.1\r\nHost: %s\r\n\r\n", randomHexString(8), req.AttackerIP)),
-			[]byte("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nslee"),
-		)
-		if c2Path != "" {
-			result.PCAPFiles = append(result.PCAPFiles, c2Path)
 		}
 	}
 
@@ -953,10 +941,8 @@ func runHTTPCovertChannel(req AttackRequest) (*AttackResult, error) {
 	fw := getFirewall()
 
 	for _, infectedIP := range req.TargetIPs {
-		var lastData string
 		for idx := 0; idx < count; idx++ {
 			encodedData := randomHexString(64)
-			lastData = encodedData
 			msg := fmt.Sprintf("Outbound HTTP: src=%s dst=%s header X-Custom-Data: %s", infectedIP, req.AttackerIP, encodedData)
 			ev := sendSyslog(fw, msg, 6)
 			result.SyslogCount++
@@ -969,9 +955,14 @@ func runHTTPCovertChannel(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
 
-		reqPayload := []byte(fmt.Sprintf("GET / HTTP/1.1\r\nHost: %s\r\nX-Custom-Data: %s\r\n\r\n", req.AttackerIP, lastData))
-		respPayload := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
-		path, _ := PCAPGenericTCPExchange(req.RunID, "http_covert", infectedIP, req.AttackerIP, 80, reqPayload, respPayload)
+		path, _ := PCAPGenericTCPExchangeN(req.RunID, "http_covert", infectedIP, req.AttackerIP, 80,
+			func(i int) []byte {
+				return []byte(fmt.Sprintf("GET / HTTP/1.1\r\nHost: %s\r\nX-Custom-Data: %s\r\n\r\n", req.AttackerIP, randomHexString(64)))
+			},
+			func(i int) []byte {
+				return []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+			},
+			count)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}

@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -401,8 +402,8 @@ func PCAPDNSTunnel(runID, attackerIP string, infectedDev, dnsDev *Device, domain
 		txID := uint16(0x1000 + idx)
 
 		// ── DNS TXT query (client→server) ────────────────────────────────
-		// Long base32-encoded subdomain carries exfil data outbound
-		chunk := make([]byte, 32)
+		// Long base32-encoded subdomain — 63 bytes (max DNS label) carries exfil data
+		chunk := make([]byte, 63)
 		for j := range chunk {
 			chunk[j] = b32Alphabet[(idx*7+j*13)%len(b32Alphabet)]
 		}
@@ -419,7 +420,7 @@ func PCAPDNSTunnel(runID, attackerIP string, infectedDev, dnsDev *Device, domain
 		// ── DNS TXT response (server→client) ─────────────────────────────
 		// TXT answer carries base32-encoded C2 command inbound.
 		// Build a minimal DNS response: header + question echo + answer RR.
-		cmdChunk := make([]byte, 16)
+		cmdChunk := make([]byte, 200)
 		for j := range cmdChunk {
 			cmdChunk[j] = b32Alphabet[(idx*3+j*5)%len(b32Alphabet)]
 		}
@@ -3341,7 +3342,7 @@ func buildDCERPCResponseStub(callID uint32, approxPayload []byte) []byte {
 // MessageID, AsyncID/TreeID, SessionID, Signature).
 func buildSMB2Header(command uint16, messageID uint64, treeID uint32, sessionID uint64, payload []byte) []byte {
 	hdr := make([]byte, 64)
-	copy(hdr[0:4], []byte{0xFF, 0x53, 0x4D, 0x42})  // Signature: "\xFFSMB"
+	copy(hdr[0:4], []byte{0xFE, 0x53, 0x4D, 0x42})  // Signature: "\xFFSMB"
 	binary.LittleEndian.PutUint16(hdr[4:6], 0x0040) // StructureSize = 64
 	binary.LittleEndian.PutUint16(hdr[6:8], 0)      // CreditCharge
 	binary.LittleEndian.PutUint32(hdr[8:12], 0)     // Status = 0 (success)
@@ -3534,6 +3535,57 @@ func PCAPSMBChannel(runID, attackerIP, targetIP, pipeName string) (string, error
 	writeRespHdr := buildSMB2Header(9, 4, 1, 1, writeRespPayload)
 	writeResp := append(writeRespHdr, writeRespPayload...)
 	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(445, srcPort, 0x18, serverSeq, clientSeq, writeResp))))
+	serverSeq += uint32(len(writeResp))
+	ackW := buildTCPSegment(srcPort, 445, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ackW)))
+
+	addNBSS := func(data []byte) []byte {
+		nbss := make([]byte, 4)
+		nbss[0] = 0x00
+		nbss[1] = byte(len(data) >> 16)
+		nbss[2] = byte(len(data) >> 8)
+		nbss[3] = byte(len(data))
+		return append(nbss, data...)
+	}
+
+	// ── C2 command/response cycles over named pipe ───────────────────────────
+	commands := []string{
+		"cmd:whoami",
+		"cmd:ipconfig /all",
+		"cmd:net user",
+		"cmd:tasklist",
+		"cmd:dir C:\\Users",
+	}
+	responses := []string{
+		"resp:CORP\\Admin",
+		"resp:Windows IP Configuration...",
+		"resp:User accounts for \\\\VICTIM",
+		"resp:Image Name PID Session",
+		"resp:Volume in drive C",
+	}
+	for i, cmd := range commands {
+		cmdPayload := []byte(fmt.Sprintf("Encrypted C2 command [%d]: %s via %s", i+1, cmd, pipeName))
+		cmdReq := buildSMB2WriteRequest(cmdPayload)
+		cmdHdr := buildSMB2Header(9, uint64(5+i), 1, 1, cmdReq)
+		cmdData := append(cmdHdr, cmdReq...)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6,
+			buildTCPSegment(srcPort, 445, 0x18, clientSeq, serverSeq, addNBSS(cmdData)))))
+		clientSeq += uint32(len(addNBSS(cmdData)))
+		cmdAck := buildTCPSegment(445, srcPort, 0x10, serverSeq, clientSeq, nil)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, cmdAck)))
+
+		// Victim response — same structure as command write
+		respPayload := []byte(fmt.Sprintf("Encrypted C2 response [%d]: %s", i+1, responses[i]))
+		respReq := buildSMB2WriteRequest(respPayload)
+		respHdr := buildSMB2Header(9, uint64(10+i), 1, 1, respReq)
+		respData := append(respHdr, respReq...)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6,
+			buildTCPSegment(445, srcPort, 0x18, serverSeq, clientSeq, addNBSS(respData)))))
+		serverSeq += uint32(len(addNBSS(respData)))
+
+		respAck := buildTCPSegment(srcPort, 445, 0x10, clientSeq, serverSeq, nil)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, respAck)))
+	}
 
 	bgFrames := generateBackgroundTraffic(getAllDevices())
 	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
@@ -4032,21 +4084,29 @@ func buildICMPExchangePCAP(runID, attackName, attackerIP, c2IP string, count int
 	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
 
 	if count > 100 {
-		count = 100 // cap PCAP size; syslog/netflow already reflect the full count
+		count = 100
 	}
 	identifier := uint16(rand.Intn(65535))
-	payload := make([]byte, 1400)
-	for i := range payload {
-		payload[i] = byte('A' + i%26) // arbitrary tunnel/exfil filler payload
+
+	// Attacker sends small command payload (C2 instruction)
+	reqPayload := make([]byte, 8)
+	for i := range reqPayload {
+		reqPayload[i] = byte('A' + i%26)
 	}
+	// Victim replies with large data payload (tunnel data)
+	replyPayload := make([]byte, 1400)
+	for i := range replyPayload {
+		replyPayload[i] = byte('A' + i%26)
+	}
+
 	var frames [][]byte
 	for i := 0; i < count; i++ {
 		seq := uint16(i + 1)
-		echoReq := buildICMPSegment(8, 0, 0, identifier, seq, payload) // type 8 = Echo Request, checksum=0 per file convention
+		echoReq := buildICMPSegment(8, 0, 0, identifier, seq, reqPayload)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, c2IP, 1, echoReq)))
 
 		if withReplies {
-			echoReply := buildICMPSegment(0, 0, 0, identifier, seq, payload) // type 0 = Echo Reply
+			echoReply := buildICMPSegment(0, 0, 0, identifier, seq, replyPayload)
 			frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(c2IP, attackerIP, 1, echoReply)))
 		}
 	}
@@ -6150,4 +6210,191 @@ func uint32LE(v uint32) []byte {
 	b := make([]byte, 4)
 	binary.LittleEndian.PutUint32(b, v)
 	return b
+}
+
+// PCAPDGAMulti generates a single PCAP for DGA: multiple random domains
+// return NXDOMAIN, then one "successful" domain resolves to the attacker C2 IP,
+// followed by an HTTP C2 callback to that IP — all in one capture file.
+func PCAPDGAMulti(runID, infectedIP, dnsIP, c2IP string, domains []string) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPDGAMulti infected=%s dns=%s c2=%s domains=%d", infectedIP, dnsIP, c2IP, len(domains))
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	var frames [][]byte
+
+	// Cap at 20 domains for PCAP size
+	cap := 20
+	if len(domains) < cap {
+		cap = len(domains)
+	}
+
+	for i := 0; i < cap; i++ {
+		srcPort := uint16(50000 + i)
+		query := buildDNSQueryType(domains[i], 0x0001) // A record
+
+		// Query from infected host to DNS server
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC,
+			buildIPv4Packet(infectedIP, dnsIP, 17, buildUDPDatagram(srcPort, 53, query))))
+
+		var resp []byte
+		if i >= cap-3 {
+			// Last 3 domains resolve to attacker C2 IP
+			c2Parts := strings.Split(c2IP, ".")
+			var c2Bytes [4]byte
+			for j, p := range c2Parts {
+				val, _ := strconv.Atoi(p)
+				c2Bytes[j] = byte(val)
+			}
+			resp = append(resp, query[0], query[1])
+			resp = append(resp, 0x81, 0x80)                                     // QR=1, RCODE=0 (success)
+			resp = append(resp, 0x00, 0x01)                                     // QDCOUNT=1
+			resp = append(resp, 0x00, 0x01)                                     // ANCOUNT=1
+			resp = append(resp, 0x00, 0x00)                                     // NSCOUNT=0
+			resp = append(resp, 0x00, 0x00)                                     // ARCOUNT=0
+			resp = append(resp, query[12:]...)                                  // question section
+			resp = append(resp, 0xC0, 0x0C)                                     // name pointer
+			resp = append(resp, 0x00, 0x01)                                     // TYPE A
+			resp = append(resp, 0x00, 0x01)                                     // CLASS IN
+			resp = append(resp, 0x00, 0x00, 0x00, 0x3C)                         // TTL=60
+			resp = append(resp, 0x00, 0x04)                                     // RDLENGTH=4
+			resp = append(resp, c2Bytes[0], c2Bytes[1], c2Bytes[2], c2Bytes[3]) // C2 IP
+		} else {
+			// NXDOMAIN
+			resp = append(resp, query[0], query[1])
+			resp = append(resp, 0x81, 0x83) // RCODE=3 NXDOMAIN
+			resp = append(resp, 0x00, 0x01)
+			resp = append(resp, 0x00, 0x00)
+			resp = append(resp, 0x00, 0x00)
+			resp = append(resp, 0x00, 0x00)
+			resp = append(resp, query[12:]...)
+		}
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC,
+			buildIPv4Packet(dnsIP, infectedIP, 17, buildUDPDatagram(53, srcPort, resp))))
+	}
+
+	// C2 callback — infected host connects to attacker after successful resolution
+	c2SrcPort := randomPort()
+	clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
+	syn := buildTCPSegment(c2SrcPort, 80, 0x02, clientSeq, 0, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(infectedIP, c2IP, 6, syn)))
+	clientSeq++
+	synAck := buildTCPSegment(80, c2SrcPort, 0x12, serverSeq, clientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(c2IP, infectedIP, 6, synAck)))
+	serverSeq++
+	ack := buildTCPSegment(c2SrcPort, 80, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(infectedIP, c2IP, 6, ack)))
+	reqPayload := []byte(fmt.Sprintf("GET /gate.php?id=%s HTTP/1.1\r\nHost: %s\r\n\r\n", randomHexString(8), c2IP))
+	req := buildTCPSegment(c2SrcPort, 80, 0x18, clientSeq, serverSeq, reqPayload)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(infectedIP, c2IP, 6, req)))
+	clientSeq += uint32(len(reqPayload))
+	respPayload := []byte("HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\n{\"cmd\":\"sleep\"}")
+	resp := buildTCPSegment(80, c2SrcPort, 0x18, serverSeq, clientSeq, respPayload)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(c2IP, infectedIP, 6, resp)))
+
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "dga", finalFrames, defaultDuration)
+	logInfo("Return from PCAPDGAMulti frames=%d path=%s", len(finalFrames), path)
+	return path, err
+}
+
+// PCAPTLSExchangeN is like PCAPTLSExchange but repeats the request/response
+// exchange count times over the same TLS session — each iteration sends one
+// Application Data record each direction, matching Aaron's definition of
+// count = number of to-and-fro exchanges.
+func PCAPTLSExchangeN(runID, attackName, attackerIP, targetIP string, targetPort uint16, sni string, reqFn func(i int) []byte, respFn func(i int) []byte, count int) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPTLSExchangeN attack=%s attacker=%s target=%s count=%d", attackName, attackerIP, targetIP, count)
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	srcPort := randomPort()
+	clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
+	var frames [][]byte
+
+	// TCP handshake
+	syn := buildTCPSegment(srcPort, targetPort, 0x02, clientSeq, 0, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
+	clientSeq++
+	synAck := buildTCPSegment(targetPort, srcPort, 0x12, serverSeq, clientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck)))
+	serverSeq++
+	ack := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
+
+	// TLS handshake
+	clientHello := buildTLSClientHelloSNI(sni)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, targetPort, 0x18, clientSeq, serverSeq, clientHello))))
+	clientSeq += uint32(len(clientHello))
+	serverHello := buildMinimalTLSServerHello()
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(targetPort, srcPort, 0x18, serverSeq, clientSeq, serverHello))))
+	serverSeq += uint32(len(serverHello))
+	midAck := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, midAck)))
+
+	// count exchanges
+	for i := 0; i < count; i++ {
+		req := buildTLSApplicationData(reqFn(i))
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, targetPort, 0x18, clientSeq, serverSeq, req))))
+		clientSeq += uint32(len(req))
+		sAck := buildTCPSegment(targetPort, srcPort, 0x10, serverSeq, clientSeq, nil)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, sAck)))
+		resp := buildTLSApplicationData(respFn(i))
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(targetPort, srcPort, 0x18, serverSeq, clientSeq, resp))))
+		serverSeq += uint32(len(resp))
+		cAck := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, cAck)))
+	}
+
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, attackName, finalFrames, defaultDuration)
+	logInfo("Return from PCAPTLSExchangeN frames=%d path=%s", len(finalFrames), path)
+	return path, err
+}
+
+// PCAPGenericTCPExchangeN is like PCAPGenericTCPExchange but repeats
+// count request/response exchanges over the same TCP session.
+func PCAPGenericTCPExchangeN(runID, attackName, attackerIP, targetIP string, targetPort uint16, reqFn func(i int) []byte, respFn func(i int) []byte, count int) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPGenericTCPExchangeN attack=%s attacker=%s target=%s count=%d", attackName, attackerIP, targetIP, count)
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	srcPort := randomPort()
+	clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
+	var frames [][]byte
+
+	// TCP handshake
+	syn := buildTCPSegment(srcPort, targetPort, 0x02, clientSeq, 0, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
+	clientSeq++
+	synAck := buildTCPSegment(targetPort, srcPort, 0x12, serverSeq, clientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck)))
+	serverSeq++
+	ack := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
+
+	// count exchanges
+	for i := 0; i < count; i++ {
+		reqPayload := reqFn(i)
+		req := buildTCPSegment(srcPort, targetPort, 0x18, clientSeq, serverSeq, reqPayload)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, req)))
+		clientSeq += uint32(len(reqPayload))
+		sAck := buildTCPSegment(targetPort, srcPort, 0x10, serverSeq, clientSeq, nil)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, sAck)))
+		respPayload := respFn(i)
+		resp := buildTCPSegment(targetPort, srcPort, 0x18, serverSeq, clientSeq, respPayload)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, resp)))
+		serverSeq += uint32(len(respPayload))
+		cAck := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, cAck)))
+	}
+
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, attackName, finalFrames, defaultDuration)
+	logInfo("Return from PCAPGenericTCPExchangeN frames=%d path=%s", len(finalFrames), path)
+	return path, err
 }
