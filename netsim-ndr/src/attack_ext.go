@@ -792,8 +792,12 @@ func runWebSocketC2(req AttackRequest) (*AttackResult, error) {
 	result.FlowCount += fc
 	result.EventIDs = append(result.EventIDs, fids...)
 
-	wsPayload := []byte(fmt.Sprintf("ws-frame:%s", randomHexString(32)))
-	wsResp := []byte(randomHexString(32))
+	var wsPayload []byte
+	var wsResp []byte
+	for i := 0; i < count; i++ {
+		wsPayload = append(wsPayload, []byte(fmt.Sprintf("ws-frame-%d:%s\n", i+1, randomHexString(32)))...)
+		wsResp = append(wsResp, []byte(fmt.Sprintf("ws-resp-%d:%s\n", i+1, randomHexString(16)))...)
+	}
 	wsPath, wsErr := PCAPTLSExchange(req.RunID, "websocket_c2", req.AttackerIP, c2IP, 443, c2IP, wsPayload, wsResp)
 	if wsErr == nil {
 		result.PCAPFiles = append(result.PCAPFiles, wsPath)
@@ -826,8 +830,13 @@ func runDomainFronting(req AttackRequest) (*AttackResult, error) {
 	result.FlowCount += fc
 	result.EventIDs = append(result.EventIDs, fids...)
 
-	dfPayload := []byte("GET / HTTP/1.1\r\nHost: evil-c2.com\r\n\r\n")
-	dfResp := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+	var dfPayload []byte
+	for i := 0; i < count; i++ {
+		dfPayload = append(dfPayload, []byte(fmt.Sprintf(
+			"GET /c2/tasks?seq=%d HTTP/1.1\r\nHost: evil-c2.com\r\nX-Forwarded-Host: evil-c2.com\r\nOrigin: https://%s\r\nX-Session: %s\r\n\r\n",
+			i+1, frontDomain, randomHexString(16)))...)
+	}
+	dfResp := []byte("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 27\r\n\r\n{\"cmd\":\"beacon\",\"sleep\":60}")
 	dfPath, dfErr := PCAPTLSExchange(req.RunID, "domain_fronting", req.AttackerIP, frontIP, 443, frontDomain, dfPayload, dfResp)
 	if dfErr == nil {
 		result.PCAPFiles = append(result.PCAPFiles, dfPath)
@@ -844,32 +853,42 @@ func runReverseShell(req AttackRequest) (*AttackResult, error) {
 	port := getAttackParamInt(req.Params, "port", 4444)
 	count := getAttackParamInt(req.Params, "count", 5)
 	fw := getFirewall()
-	c2IP := realC2IP()
 	for _, targetIP := range req.TargetIPs {
 		dev := fw
 		if d, ok := getDeviceByIP(targetIP); ok && d != nil {
 			dev = d
 		}
 		msgs := []string{
-			fmt.Sprintf("Reverse shell: outbound connection from %s to %s:%d — /bin/bash spawned over socket", targetIP, c2IP, port),
-			fmt.Sprintf("IDS: reverse shell callback detected — %s connecting to unusual external port %d on %s", targetIP, port, c2IP),
+			fmt.Sprintf("Reverse shell: outbound connection from %s to %s:%d — /bin/bash spawned over socket", targetIP, req.AttackerIP, port),
+			fmt.Sprintf("IDS: reverse shell callback detected — %s connecting to unusual external port %d on %s", targetIP, port, req.AttackerIP),
 		}
 		for _, msg := range msgs {
 			ev := sendSyslog(dev, msg, 2)
 			result.SyslogCount++
-			eventID, _ := recordRunEvent(req.RunID, "syslog", targetIP, targetIP, c2IP, "TCP", ev)
+			eventID, _ := recordRunEvent(req.RunID, "syslog", targetIP, targetIP, req.AttackerIP, "TCP", ev)
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 		for idx := 0; idx < count; idx++ {
-			flows := []FlowRecord{{SrcIP: targetIP, DstIP: c2IP, SrcPort: randomPort(), DstPort: uint16(port), Protocol: 6, Bytes: uint32(rand.Intn(10000) + 500), Packets: uint32(rand.Intn(100) + 10), StartTime: time.Now().Add(-time.Duration(idx*30) * time.Second), EndTime: time.Now().Add(-time.Duration(idx*30-29) * time.Second), TCPFlags: 0x18}}
-			fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", targetIP, c2IP, "TCP", flows)
+			flows := []FlowRecord{{SrcIP: targetIP, DstIP: req.AttackerIP, SrcPort: randomPort(), DstPort: uint16(port), Protocol: 6, Bytes: uint32(rand.Intn(10000) + 500), Packets: uint32(rand.Intn(100) + 10), StartTime: time.Now().Add(-time.Duration(idx*30) * time.Second), EndTime: time.Now().Add(-time.Duration(idx*30-29) * time.Second), TCPFlags: 0x18}}
+			fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", targetIP, req.AttackerIP, "TCP", flows)
 			result.FlowCount += fc
 			result.EventIDs = append(result.EventIDs, fids...)
 		}
 
-		rsPayload := []byte("id\n")
-		rsResp := []byte("uid=0(root) gid=0(root) groups=0(root)\n")
-		rsPath, rsErr := PCAPGenericTCPExchange(req.RunID, "reverse_shell", targetIP, c2IP, uint16(port), rsPayload, rsResp)
+		commands := []string{"id\n", "whoami\n", "cat /etc/passwd\n", "uname -a\n", "ls /root\n"}
+		responses := []string{
+			"uid=0(root) gid=0(root) groups=0(root)\n",
+			"root\n",
+			"root:x:0:0:root:/root:/bin/bash\n",
+			"Linux victim 5.15.0 #1 SMP x86_64 GNU/Linux\n",
+			"flag.txt .ssh .bashrc\n",
+		}
+		var rsPayload, rsResp []byte
+		for i := 0; i < count && i < len(commands); i++ {
+			rsPayload = append(rsPayload, []byte(commands[i])...)
+			rsResp = append(rsResp, []byte(responses[i])...)
+		}
+		rsPath, rsErr := PCAPGenericTCPExchange(req.RunID, "reverse_shell", targetIP, req.AttackerIP, uint16(port), rsPayload, rsResp)
 		if rsErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, rsPath)
 		}
@@ -884,7 +903,6 @@ func runPowerShellC2(req AttackRequest) (*AttackResult, error) {
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	count := getAttackParamInt(req.Params, "count", 15)
 	fw := getFirewall()
-	c2IP := realC2IP()
 	for _, targetIP := range req.TargetIPs {
 		dev := fw
 		if d, ok := getDeviceByIP(targetIP); ok && d != nil {
@@ -892,22 +910,25 @@ func runPowerShellC2(req AttackRequest) (*AttackResult, error) {
 		}
 		msgs := []string{
 			fmt.Sprintf("PowerShell: encoded command executed on %s — IEX([System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String(...)))", targetIP),
-			fmt.Sprintf("EDR: PowerShell C2 beacon from %s to %s — base64 encoded HTTPS POST every 60s with %d%% jitter", targetIP, c2IP, 20),
+			fmt.Sprintf("EDR: PowerShell C2 beacon from %s to %s — base64 encoded HTTPS POST every 60s with %d%% jitter", targetIP, req.AttackerIP, 20),
 		}
 		for _, msg := range msgs {
 			ev := sendSyslog(dev, msg, 3)
 			result.SyslogCount++
-			eventID, _ := recordRunEvent(req.RunID, "syslog", targetIP, targetIP, c2IP, "TCP", ev)
+			eventID, _ := recordRunEvent(req.RunID, "syslog", targetIP, targetIP, req.AttackerIP, "TCP", ev)
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
-		flows := []FlowRecord{{SrcIP: targetIP, DstIP: c2IP, SrcPort: randomPort(), DstPort: 443, Protocol: 6, Bytes: uint32(count * 4000), Packets: uint32(count * 8), StartTime: time.Now().Add(-time.Duration(count) * time.Minute), EndTime: time.Now(), TCPFlags: 0x18}}
-		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", targetIP, c2IP, "TCP", flows)
+		flows := []FlowRecord{{SrcIP: targetIP, DstIP: req.AttackerIP, SrcPort: randomPort(), DstPort: 443, Protocol: 6, Bytes: uint32(count * 4000), Packets: uint32(count * 8), StartTime: time.Now().Add(-time.Duration(count) * time.Minute), EndTime: time.Now(), TCPFlags: 0x18}}
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", targetIP, req.AttackerIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
 
-		psPayload := []byte(fmt.Sprintf("cmd:%s", randomHexString(40)))
-		psResp := []byte(randomHexString(24))
-		psPath, psErr := PCAPTLSExchange(req.RunID, "powershell_c2", targetIP, c2IP, 443, c2IP, psPayload, psResp)
+		var psPayload []byte
+		for i := 0; i < count; i++ {
+			psPayload = append(psPayload, []byte(fmt.Sprintf("cmd:%s\n", randomHexString(40)))...)
+		}
+		psResp := []byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length: 24\r\n\r\n%s", randomHexString(24)))
+		psPath, psErr := PCAPTLSExchange(req.RunID, "powershell_c2", targetIP, req.AttackerIP, 443, req.AttackerIP, psPayload, psResp)
 		if psErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, psPath)
 		}
@@ -929,27 +950,29 @@ func runDNSExfil(req AttackRequest) (*AttackResult, error) {
 		dev = dnsDev
 	}
 	chunkCount := dataKB * 5
-	msgs := []string{
-		fmt.Sprintf("DNS exfiltration: %s sending %d base32-encoded TXT queries to %s — data size ~%dKB", req.AttackerIP, chunkCount, domain, dataKB),
-		fmt.Sprintf("IDS: DNS exfil detected — high-entropy subdomain queries to %s from %s exceeding 100 queries/min", domain, req.AttackerIP),
-	}
-	for _, msg := range msgs {
-		ev := sendSyslog(dev, msg, 3)
-		result.SyslogCount++
-		eventID, _ := recordRunEvent(req.RunID, "syslog", "dns", req.AttackerIP, domain, "UDP", ev)
-		result.EventIDs = append(result.EventIDs, eventID)
-	}
 	dnsTarget := "8.8.8.8"
 	if dnsDev != nil {
 		dnsTarget = dnsDev.IPAddress
 	}
-	flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: dnsTarget, SrcPort: randomPort(), DstPort: 53, Protocol: 17, Bytes: uint32(dataKB * 1200), Packets: uint32(chunkCount * 2), StartTime: time.Now().Add(-time.Duration(chunkCount/10) * time.Second), EndTime: time.Now()}}
-	fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, dnsTarget, "UDP", flows)
-	result.FlowCount += fc
-	result.EventIDs = append(result.EventIDs, fids...)
-	dnsPath, dnsErr := PCAPDNSExfilMulti(req.RunID, req.AttackerIP, dnsTarget, domain, chunkCount)
-	if dnsErr == nil {
-		result.PCAPFiles = append(result.PCAPFiles, dnsPath)
+	for _, targetIP := range req.TargetIPs {
+		msgs := []string{
+			fmt.Sprintf("DNS exfiltration: %s sending %d base32-encoded TXT queries to %s — data size ~%dKB", targetIP, chunkCount, domain, dataKB),
+			fmt.Sprintf("IDS: DNS exfil detected — high-entropy subdomain queries to %s from %s exceeding 100 queries/min", domain, targetIP),
+		}
+		for _, msg := range msgs {
+			ev := sendSyslog(dev, msg, 3)
+			result.SyslogCount++
+			eventID, _ := recordRunEvent(req.RunID, "syslog", "dns", targetIP, dnsTarget, "UDP", ev)
+			result.EventIDs = append(result.EventIDs, eventID)
+		}
+		flows := []FlowRecord{{SrcIP: targetIP, DstIP: dnsTarget, SrcPort: randomPort(), DstPort: 53, Protocol: 17, Bytes: uint32(dataKB * 1200), Packets: uint32(chunkCount * 2), StartTime: time.Now().Add(-time.Duration(chunkCount/10) * time.Second), EndTime: time.Now()}}
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", targetIP, dnsTarget, "UDP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
+		dnsPath, dnsErr := PCAPDNSExfilMulti(req.RunID, targetIP, req.AttackerIP, dnsTarget, domain, chunkCount)
+		if dnsErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, dnsPath)
+		}
 	}
 	logInfo("Return from runDNSExfil syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -961,28 +984,29 @@ func runICMPExfil(req AttackRequest) (*AttackResult, error) {
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	dataKB := getAttackParamInt(req.Params, "data_kb", 20)
 	fw := getFirewall()
-	c2IP := realC2IP()
 	msgs := []string{
-		fmt.Sprintf("ICMP exfiltration: %s sending %dKB encoded in ICMP echo payloads to %s", req.AttackerIP, dataKB, c2IP),
-		fmt.Sprintf("IDS: abnormal ICMP payload size from %s — %d bytes/packet (normal=64) — data exfil via ICMP", req.AttackerIP, 1400),
+		fmt.Sprintf("ICMP exfiltration: %s sending %dKB encoded in ICMP echo payloads to %s", req.TargetIPs, dataKB, req.AttackerIP),
+		fmt.Sprintf("IDS: abnormal ICMP payload size from %s — %d bytes/packet (normal=64) — data exfil via ICMP", req.TargetIPs, 1400),
 	}
 	for _, msg := range msgs {
 		ev := sendSyslog(fw, msg, 3)
 		result.SyslogCount++
-		eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", req.AttackerIP, c2IP, "ICMP", ev)
+		eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", req.AttackerIP, req.AttackerIP, "ICMP", ev)
 		result.EventIDs = append(result.EventIDs, eventID)
 	}
-	flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: c2IP, SrcPort: 0, DstPort: 0, Protocol: 1, Bytes: uint32(dataKB * 1024), Packets: uint32(dataKB * 1024 / 1400), StartTime: time.Now().Add(-time.Duration(dataKB*5) * time.Second), EndTime: time.Now()}}
-	fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, c2IP, "ICMP", flows)
-	result.FlowCount += fc
-	result.EventIDs = append(result.EventIDs, fids...)
 	packetCount := dataKB * 1024 / 1400
 	if packetCount < 1 {
 		packetCount = 1
 	}
-	icmpExfPath, icmpExfErr := PCAPICMPExfil(req.RunID, req.AttackerIP, c2IP, packetCount)
-	if icmpExfErr == nil {
-		result.PCAPFiles = append(result.PCAPFiles, icmpExfPath)
+	for _, targetIP := range req.TargetIPs {
+		flows := []FlowRecord{{SrcIP: targetIP, DstIP: req.AttackerIP, SrcPort: 0, DstPort: 0, Protocol: 1, Bytes: uint32(dataKB * 1024), Packets: uint32(packetCount), StartTime: time.Now().Add(-time.Duration(dataKB*5) * time.Second), EndTime: time.Now()}}
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", targetIP, req.AttackerIP, "ICMP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
+		icmpExfPath, icmpExfErr := PCAPICMPExfil(req.RunID, req.AttackerIP, targetIP, packetCount)
+		if icmpExfErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, icmpExfPath)
+		}
 	}
 	logInfo("Return from runICMPExfil syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -1104,28 +1128,30 @@ func runFTPExfil(req AttackRequest) (*AttackResult, error) {
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	dataMB := getAttackParamInt(req.Params, "data_mb", 50)
 	fw := getFirewall()
-	c2IP := realC2IP()
-	msgs := []string{
-		fmt.Sprintf("FTP exfiltration: %s uploading %dMB to %s:21 — STOR sensitive_data.zip", req.AttackerIP, dataMB, c2IP),
-		fmt.Sprintf("IDS: large outbound FTP transfer from %s to external %s — %dMB in single session", req.AttackerIP, c2IP, dataMB),
-	}
-	for _, msg := range msgs {
-		ev := sendSyslog(fw, msg, 3)
-		result.SyslogCount++
-		eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", req.AttackerIP, c2IP, "TCP", ev)
-		result.EventIDs = append(result.EventIDs, eventID)
-	}
-	flows := []FlowRecord{
-		{SrcIP: req.AttackerIP, DstIP: c2IP, SrcPort: randomPort(), DstPort: 21, Protocol: 6, Bytes: 2000, Packets: 20, StartTime: time.Now(), EndTime: time.Now().Add(2 * time.Second), TCPFlags: 0x18},
-		{SrcIP: req.AttackerIP, DstIP: c2IP, SrcPort: randomPort(), DstPort: 20, Protocol: 6, Bytes: uint32(dataMB * 1048576), Packets: uint32(dataMB * 700), StartTime: time.Now(), EndTime: time.Now().Add(time.Duration(dataMB) * time.Second), TCPFlags: 0x18},
-	}
-	fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, c2IP, "TCP", flows)
-	result.FlowCount += fc
-	result.EventIDs = append(result.EventIDs, fids...)
 
-	ftpPath, ftpErr := PCAPFTPExfil(req.RunID, req.AttackerIP, c2IP, dataMB)
-	if ftpErr == nil {
-		result.PCAPFiles = append(result.PCAPFiles, ftpPath)
+	for _, targetIP := range req.TargetIPs {
+		msgs := []string{
+			fmt.Sprintf("FTP exfiltration: %s uploading %dMB to %s:21 — STOR sensitive_data.zip", targetIP, dataMB, req.AttackerIP),
+			fmt.Sprintf("IDS: large outbound FTP transfer from %s to external %s — %dMB in single session", targetIP, req.AttackerIP, dataMB),
+		}
+		for _, msg := range msgs {
+			ev := sendSyslog(fw, msg, 3)
+			result.SyslogCount++
+			eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", targetIP, req.AttackerIP, "TCP", ev)
+			result.EventIDs = append(result.EventIDs, eventID)
+		}
+		flows := []FlowRecord{
+			{SrcIP: targetIP, DstIP: req.AttackerIP, SrcPort: randomPort(), DstPort: 21, Protocol: 6, Bytes: 2000, Packets: 20, StartTime: time.Now(), EndTime: time.Now().Add(2 * time.Second), TCPFlags: 0x18},
+			{SrcIP: targetIP, DstIP: req.AttackerIP, SrcPort: randomPort(), DstPort: 20, Protocol: 6, Bytes: uint32(dataMB * 1048576), Packets: uint32(dataMB * 700), StartTime: time.Now(), EndTime: time.Now().Add(time.Duration(dataMB) * time.Second), TCPFlags: 0x18},
+		}
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", targetIP, req.AttackerIP, "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
+
+		ftpPath, ftpErr := PCAPFTPExfil(req.RunID, targetIP, req.AttackerIP, dataMB)
+		if ftpErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, ftpPath)
+		}
 	}
 
 	logInfo("Return from runFTPExfil syslogs=%d", result.SyslogCount)
@@ -1138,27 +1164,27 @@ func runSMTPExfil(req AttackRequest) (*AttackResult, error) {
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	dataMB := getAttackParamInt(req.Params, "data_mb", 10)
 	fw := getFirewall()
-	for _, targetIP := range req.TargetIPs {
+	for _, sourceIP := range req.TargetIPs {
 		dev := fw
-		if d, ok := getDeviceByIP(targetIP); ok && d != nil {
+		if d, ok := getDeviceByIP(sourceIP); ok && d != nil {
 			dev = d
 		}
 		msgs := []string{
-			fmt.Sprintf("SMTP exfiltration from %s: email to attacker@evil.example with %dMB attachment via %s", req.AttackerIP, dataMB, targetIP),
-			fmt.Sprintf("DLP alert: outbound email from %s with sensitive attachment (%dMB) to external domain evil.example", req.AttackerIP, dataMB),
+			fmt.Sprintf("SMTP exfiltration from %s: email to attacker@evil.example with %dMB attachment via %s", sourceIP, dataMB, req.AttackerIP),
+			fmt.Sprintf("DLP alert: outbound email from %s with sensitive attachment (%dMB) to external domain evil.example", sourceIP, dataMB),
 		}
 		for _, msg := range msgs {
 			ev := sendSyslog(dev, msg, 3)
 			result.SyslogCount++
-			eventID, _ := recordRunEvent(req.RunID, "syslog", targetIP, req.AttackerIP, targetIP, "TCP", ev)
+			eventID, _ := recordRunEvent(req.RunID, "syslog", sourceIP, sourceIP, req.AttackerIP, "TCP", ev)
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
-		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 25, Protocol: 6, Bytes: uint32(dataMB * 1048576), Packets: uint32(dataMB * 700), StartTime: time.Now(), EndTime: time.Now().Add(time.Duration(dataMB*5) * time.Second), TCPFlags: 0x18}}
-		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
+		flows := []FlowRecord{{SrcIP: sourceIP, DstIP: req.AttackerIP, SrcPort: randomPort(), DstPort: 25, Protocol: 6, Bytes: uint32(dataMB * 1048576), Packets: uint32(dataMB * 700), StartTime: time.Now(), EndTime: time.Now().Add(time.Duration(dataMB*5) * time.Second), TCPFlags: 0x18}}
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", sourceIP, req.AttackerIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
 
-		smtpPath, smtpErr := PCAPSMTPExfil(req.RunID, req.AttackerIP, targetIP, dataMB)
+		smtpPath, smtpErr := PCAPSMTPExfil(req.RunID, sourceIP, req.AttackerIP, dataMB)
 		if smtpErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, smtpPath)
 		}

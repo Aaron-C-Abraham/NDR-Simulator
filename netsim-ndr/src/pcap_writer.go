@@ -386,7 +386,7 @@ func PCAPBeaconing(infectedDev *Device, c2IP string, count int, runID string) ([
 // (data going out) and receives a TXT response with a base32-encoded
 // C2 command (data coming back) — the bidirectional shape Wireshark
 // expects for a real DNS tunnel rather than a one-way query stream.
-func PCAPDNSTunnel(infectedDev, dnsDev *Device, domain string, count int) ([]byte, string, error) {
+func PCAPDNSTunnel(runID, attackerIP string, infectedDev, dnsDev *Device, domain string, count int) ([]byte, string, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAPDNSTunnel device=%s dns=%s domain=%s count=%d", infectedDev.Name, dnsDev.IPAddress, domain, count)
 
@@ -455,11 +455,24 @@ func PCAPDNSTunnel(infectedDev, dnsDev *Device, domain string, count int) ([]byt
 		udpResp := buildUDPDatagram(53, srcPort, resp)
 		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC,
 			buildIPv4Packet(dnsDev.IPAddress, infectedDev.IPAddress, 17, udpResp)))
+
+		// ── DNS forward to attacker-controlled authoritative server ──────
+		fwdQuery := buildDNSQueryType(subdomain, 0x0010)
+		fwdQuery[0] = byte(txID >> 8)
+		fwdQuery[1] = byte(txID & 0xFF)
+		udpFwd := buildUDPDatagram(uint16(50000+rand.Intn(10000)), 53, fwdQuery)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC,
+			buildIPv4Packet(dnsDev.IPAddress, attackerIP, 17, udpFwd)))
+
+		// Attacker authoritative server responds
+		udpFwdResp := buildUDPDatagram(53, uint16(50000+rand.Intn(10000)), resp)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC,
+			buildIPv4Packet(attackerIP, dnsDev.IPAddress, 17, udpFwdResp)))
 	}
 
 	bgFrames := generateBackgroundTraffic(getAllDevices())
 	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
-	path, err := writePCAPFile("dnstunn", "dns_tunnel", finalFrames, defaultDuration)
+	path, err := writePCAPFile(runID, "dns_tunnel", finalFrames, defaultDuration)
 	logInfo("Return from PCAPDNSTunnel frames=%d path=%s", len(finalFrames), path)
 	return nil, path, err
 }
@@ -718,9 +731,10 @@ func PCAPSlowloris(runID, attackerIP, targetIP string, connections int) (string,
 // messages claim was tried), and the server's rejection response carried
 // in the data segment immediately before the RST.
 type bruteForceExchange struct {
+	firstServerPayload  func(attempt int, usernames []string) []byte // optional: server speaks first (e.g. VNC)
 	clientPayload       func(attempt int, usernames []string) []byte
 	serverPayload       func(attempt int, usernames []string) []byte
-	secondServerPayload func(attempt int, usernames []string) []byte // optional second server frame
+	secondServerPayload func(attempt int, usernames []string) []byte
 }
 
 // bruteForceUsername returns usernames[attempt % len(usernames)], or a
@@ -848,8 +862,26 @@ func bruteForceExchangeFor(protocol string) bruteForceExchange {
 		}
 	case "vnc":
 		return bruteForceExchange{
-			clientPayload: func(int, []string) []byte { return []byte{0x03, 0x00, 0x8a, 0x9c, 0xf1, 0x02, 0x44, 0x91} },
-			serverPayload: func(int, []string) []byte { return []byte{0x00, 0x00, 0x00, 0x01} },
+			firstServerPayload: func(int, []string) []byte {
+				// Server sends RFB version + security type + 16-byte challenge
+				version := []byte("RFB 003.008\n")
+				secType := []byte{0x01, 0x02} // 1 security type: VNC Authentication
+				challenge := make([]byte, 16)
+				rand.Read(challenge)
+				payload := append(version, secType...)
+				return append(payload, challenge...)
+			},
+			clientPayload: func(attempt int, usernames []string) []byte {
+				// Client sends RFB version echo + 16-byte DES auth response
+				version := []byte("RFB 003.008\n")
+				authResp := make([]byte, 16)
+				rand.Read(authResp)
+				return append(version, authResp...)
+			},
+			serverPayload: func(int, []string) []byte {
+				// Auth failed
+				return []byte{0x00, 0x00, 0x00, 0x01}
+			},
 		}
 	default:
 		return bruteForceExchange{
@@ -898,6 +930,19 @@ func PCAPBruteForce(runID, attackerIP, targetIP string, targetPort uint16, proto
 		// ACK — completes the handshake (this was missing before)
 		ack := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
+
+		// Optional first server frame (for protocols where server speaks first e.g. VNC)
+		if exchange.firstServerPayload != nil {
+			firstSrvPayload := exchange.firstServerPayload(idx, usernames)
+			if len(firstSrvPayload) > 0 {
+				firstSrv := buildTCPSegment(targetPort, srcPort, 0x18, serverSeq, clientSeq, firstSrvPayload)
+				frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, firstSrv)))
+				serverSeq += uint32(len(firstSrvPayload))
+				// Client ACKs it
+				firstAck := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
+				frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, firstAck)))
+			}
+		}
 
 		// Client payload (credentials / auth attempt)
 		clientPayload := exchange.clientPayload(idx, usernames)
@@ -973,6 +1018,16 @@ func PCAPExfil(runID, attackerIP, targetIP string, targetPort uint16, dataMB int
 
 	ack := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
+
+	// Attacker → infected host: trigger GET to signal readiness
+	triggerReq := []byte(fmt.Sprintf("GET /task?id=%s HTTP/1.1\r\nHost: %s\r\n\r\n", randomHexString(8), targetIP))
+	triggerPkt := buildTCPSegment(targetPort, srcPort, 0x18, serverSeq, clientSeq, triggerReq)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, triggerPkt)))
+	serverSeq += uint32(len(triggerReq))
+
+	// Infected host ACKs trigger
+	triggerAck := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, triggerAck)))
 
 	// ── HTTP POST header (client) ────────────────────────────────────────────
 	headerPkt := buildTCPSegment(srcPort, targetPort, 0x18, clientSeq, serverSeq, httpHeader)
@@ -1077,15 +1132,13 @@ func PCAPLateral(runID, attackerIP, targetIP string, targetPort uint16) (string,
 	// NTLMSSP\0 + msg type 2 (challenge) + minimal fields
 	ntlmChallenge := []byte{
 		0x4e, 0x54, 0x4c, 0x4d, 0x53, 0x53, 0x50, 0x00, // "NTLMSSP\0"
-		0x02, 0x00, 0x00, 0x00, // MessageType = 2 (Challenge)
-		0x0e, 0x00, 0x0e, 0x00, 0x38, 0x00, 0x00, 0x00, // TargetNameFields
+		0x02, 0x00, 0x00, 0x00, // MessageType=2
+		0x08, 0x00, 0x08, 0x00, 0x30, 0x00, 0x00, 0x00, // TargetNameFields (len=8, offset=48)
 		0x97, 0x82, 0x89, 0xe2, // NegotiateFlags
-		0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, // ServerChallenge (8 bytes)
+		0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, // ServerChallenge
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Reserved
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // TargetInfoFields
-		// TargetName: "CORP" in UTF-16LE
-		0x43, 0x00, 0x4f, 0x00, 0x52, 0x00, 0x50, 0x00,
-		0x2e, 0x00, 0x4c, 0x00, 0x4f, 0x00,
+		0x43, 0x00, 0x4f, 0x00, 0x52, 0x00, 0x50, 0x00, // "CORP" UTF-16LE
 	}
 	sessSetupResp := buildSMB2SessionSetup(1, false, 0xc0000016, ntlmChallenge) // STATUS_MORE_PROCESSING_REQUIRED
 	sess2 := buildTCPSegment(targetPort, srcPort, 0x18, serverSeq, clientSeq, sessSetupResp)
@@ -1096,19 +1149,42 @@ func PCAPLateral(runID, attackerIP, targetIP string, targetPort uint16) (string,
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack3)))
 
 	// ── SMB2 Session Setup request — NTLM Authenticate (client) ────────────
-	ntlmAuth := []byte{
-		0x4e, 0x54, 0x4c, 0x4d, 0x53, 0x53, 0x50, 0x00, // "NTLMSSP\0"
-		0x03, 0x00, 0x00, 0x00, // MessageType = 3 (Authenticate)
-		// LmChallengeResponseFields, NtChallengeResponseFields, etc. (zeroed stubs)
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x18, 0x00, 0x18, 0x00, 0x48, 0x00, 0x00, 0x00, // NtResponseFields (24 bytes at offset 72)
-		0x97, 0x82, 0x08, 0xe2, // NegotiateFlags
-		// DomainName "CORP" UTF-16LE, UserName "administrator" UTF-16LE (abbreviated)
-		0x43, 0x00, 0x4f, 0x00, 0x52, 0x00, 0x50, 0x00,
-		0x61, 0x00, 0x64, 0x00, 0x6d, 0x00, 0x69, 0x00,
-		0x6e, 0x00, 0x00, 0x00,
-	}
+	userName := []byte{'A', 0, 'd', 0, 'm', 0, 'i', 0, 'n', 0}
+	domainName := []byte{'C', 0, 'O', 0, 'R', 0, 'P', 0}
+	workstation := []byte{'A', 0, 'T', 0, 'T', 0, 'A', 0, 'C', 0, 'K', 0, 'E', 0, 'R', 0}
+	lmResponse := make([]byte, 24)
+	ntResponse := make([]byte, 24)
+
+	headerSize := uint32(64)
+	lmOff := headerSize
+	ntOff := lmOff + uint32(len(lmResponse))
+	domOff := ntOff + uint32(len(ntResponse))
+	userOff := domOff + uint32(len(domainName))
+	wkOff := userOff + uint32(len(userName))
+
+	ntlmAuth := []byte{'N', 'T', 'L', 'M', 'S', 'S', 'P', 0x00, 0x03, 0x00, 0x00, 0x00}
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(lmResponse)))...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(lmResponse)))...)
+	ntlmAuth = append(ntlmAuth, uint32LE(lmOff)...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(ntResponse)))...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(ntResponse)))...)
+	ntlmAuth = append(ntlmAuth, uint32LE(ntOff)...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(domainName)))...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(domainName)))...)
+	ntlmAuth = append(ntlmAuth, uint32LE(domOff)...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(userName)))...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(userName)))...)
+	ntlmAuth = append(ntlmAuth, uint32LE(userOff)...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(workstation)))...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(workstation)))...)
+	ntlmAuth = append(ntlmAuth, uint32LE(wkOff)...)
+	ntlmAuth = append(ntlmAuth, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)
+	ntlmAuth = append(ntlmAuth, 0x33, 0x82, 0x8A, 0xE2)
+	ntlmAuth = append(ntlmAuth, lmResponse...)
+	ntlmAuth = append(ntlmAuth, ntResponse...)
+	ntlmAuth = append(ntlmAuth, domainName...)
+	ntlmAuth = append(ntlmAuth, userName...)
+	ntlmAuth = append(ntlmAuth, workstation...)
 	sessSetupReq2 := buildSMB2SessionSetup(2, true, 0, ntlmAuth)
 	sess3 := buildTCPSegment(srcPort, targetPort, 0x18, clientSeq, serverSeq, sessSetupReq2)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, sess3)))
@@ -1326,15 +1402,14 @@ func PCAPPsExec(runID, attackerIP, targetIP string) (string, error) {
 
 	// ── SMB2 Session Setup — NTLM Challenge (server) ────────────────────────
 	ntlmChallenge := []byte{
-		0x4e, 0x54, 0x4c, 0x4d, 0x53, 0x53, 0x50, 0x00, // NTLMSSP\0
-		0x02, 0x00, 0x00, 0x00, // MessageType = 2
-		0x0e, 0x00, 0x0e, 0x00, 0x38, 0x00, 0x00, 0x00, // TargetNameFields
-		0x97, 0x82, 0x89, 0xe2, // NegotiateFlags
-		0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, // ServerChallenge
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Reserved
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // TargetInfoFields
-		0x43, 0x00, 0x4f, 0x00, 0x52, 0x00, 0x50, 0x00, // TargetName: "CORP" UTF-16LE
-		0x2e, 0x00, 0x4c, 0x00, 0x4f, 0x00,
+		0x4e, 0x54, 0x4c, 0x4d, 0x53, 0x53, 0x50, 0x00,
+		0x02, 0x00, 0x00, 0x00,
+		0x08, 0x00, 0x08, 0x00, 0x30, 0x00, 0x00, 0x00,
+		0x97, 0x82, 0x89, 0xe2,
+		0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x43, 0x00, 0x4f, 0x00, 0x52, 0x00, 0x50, 0x00,
 	}
 	ssResp1 := buildSMB2SessionSetup(1, false, 0xc0000016, ntlmChallenge)
 	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(445, srcPort, 0x18, serverSeq, clientSeq, ssResp1))))
@@ -1344,17 +1419,42 @@ func PCAPPsExec(runID, attackerIP, targetIP string) (string, error) {
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack3)))
 
 	// ── SMB2 Session Setup — NTLM Authenticate (client) ────────────────────
-	ntlmAuth := []byte{
-		0x4e, 0x54, 0x4c, 0x4d, 0x53, 0x53, 0x50, 0x00, // NTLMSSP\0
-		0x03, 0x00, 0x00, 0x00, // MessageType = 3
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // LmResponseFields
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // NtResponseFields
-		0x18, 0x00, 0x18, 0x00, 0x48, 0x00, 0x00, 0x00, // DomainNameFields
-		0x97, 0x82, 0x08, 0xe2, // NegotiateFlags
-		0x43, 0x00, 0x4f, 0x00, 0x52, 0x00, 0x50, 0x00, // "CORP" UTF-16LE
-		0x61, 0x00, 0x64, 0x00, 0x6d, 0x00, 0x69, 0x00, // "admi" UTF-16LE
-		0x6e, 0x00, 0x00, 0x00, // "n\0"
-	}
+	userName := []byte{'A', 0, 'd', 0, 'm', 0, 'i', 0, 'n', 0}
+	domainName := []byte{'C', 0, 'O', 0, 'R', 0, 'P', 0}
+	workstation := []byte{'A', 0, 'T', 0, 'T', 0, 'A', 0, 'C', 0, 'K', 0, 'E', 0, 'R', 0}
+	lmResponse := make([]byte, 24)
+	ntResponse := make([]byte, 24)
+
+	headerSize := uint32(64)
+	lmOff := headerSize
+	ntOff := lmOff + uint32(len(lmResponse))
+	domOff := ntOff + uint32(len(ntResponse))
+	userOff := domOff + uint32(len(domainName))
+	wkOff := userOff + uint32(len(userName))
+
+	ntlmAuth := []byte{'N', 'T', 'L', 'M', 'S', 'S', 'P', 0x00, 0x03, 0x00, 0x00, 0x00}
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(lmResponse)))...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(lmResponse)))...)
+	ntlmAuth = append(ntlmAuth, uint32LE(lmOff)...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(ntResponse)))...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(ntResponse)))...)
+	ntlmAuth = append(ntlmAuth, uint32LE(ntOff)...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(domainName)))...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(domainName)))...)
+	ntlmAuth = append(ntlmAuth, uint32LE(domOff)...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(userName)))...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(userName)))...)
+	ntlmAuth = append(ntlmAuth, uint32LE(userOff)...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(workstation)))...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(workstation)))...)
+	ntlmAuth = append(ntlmAuth, uint32LE(wkOff)...)
+	ntlmAuth = append(ntlmAuth, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)
+	ntlmAuth = append(ntlmAuth, 0x33, 0x82, 0x8A, 0xE2)
+	ntlmAuth = append(ntlmAuth, lmResponse...)
+	ntlmAuth = append(ntlmAuth, ntResponse...)
+	ntlmAuth = append(ntlmAuth, domainName...)
+	ntlmAuth = append(ntlmAuth, userName...)
+	ntlmAuth = append(ntlmAuth, workstation...)
 	ssReq2 := buildSMB2SessionSetup(2, true, 0, ntlmAuth)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 445, 0x18, clientSeq, serverSeq, ssReq2))))
 	clientSeq += uint32(len(ssReq2))
@@ -1505,6 +1605,53 @@ func PCAPFTPExfil(runID, attackerIP, targetIP string, dataMB int) (string, error
 	// Client: STOR
 	emit(true, []byte("STOR sensitive_data.zip\r\n"))
 	// Server: 150 opening data connection
+	// ── FTP data channel — separate TCP connection on port 20 ───────────────
+	dataSrcPort := randomPort()
+	dataClientSeq, dataServerSeq := rand.Uint32(), rand.Uint32()
+
+	// TCP handshake for data channel
+	dataSyn := buildTCPSegment(dataSrcPort, 20, 0x02, dataClientSeq, 0, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, dataSyn)))
+	dataClientSeq++
+
+	dataSynAck := buildTCPSegment(20, dataSrcPort, 0x12, dataServerSeq, dataClientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, dataSynAck)))
+	dataServerSeq++
+
+	dataAck := buildTCPSegment(dataSrcPort, 20, 0x10, dataClientSeq, dataServerSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, dataAck)))
+
+	// ZIP file header + data chunks
+	zipHeader := []byte("PK\x03\x04sensitive_data.zip content placeholder")
+	dataChunk := make([]byte, 1400)
+	for i := range dataChunk {
+		dataChunk[i] = byte(i % 256)
+	}
+
+	// Send ZIP header
+	zipPkt := buildTCPSegment(dataSrcPort, 20, 0x18, dataClientSeq, dataServerSeq, zipHeader)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, zipPkt)))
+	dataClientSeq += uint32(len(zipHeader))
+
+	// Send data chunks (cap at 10)
+	chunkCount := dataMB * 10
+	if chunkCount > 10 {
+		chunkCount = 10
+	}
+	for i := 0; i < chunkCount; i++ {
+		dataPkt := buildTCPSegment(dataSrcPort, 20, 0x18, dataClientSeq, dataServerSeq, dataChunk)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, dataPkt)))
+		dataClientSeq += uint32(len(dataChunk))
+		serverDataAck := buildTCPSegment(20, dataSrcPort, 0x10, dataServerSeq, dataClientSeq, nil)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, serverDataAck)))
+	}
+
+	// FIN data channel
+	dataFin := buildTCPSegment(dataSrcPort, 20, 0x11, dataClientSeq, dataServerSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, dataFin)))
+	dataClientSeq++
+	dataFinAck := buildTCPSegment(20, dataSrcPort, 0x11, dataServerSeq, dataClientSeq, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, dataFinAck)))
 	emit(false, []byte(fmt.Sprintf("150 Opening BINARY mode data connection for sensitive_data.zip (%d bytes).\r\n", dataMB*1048576)))
 	// Server: 226 transfer complete
 	emit(false, []byte("226 Transfer complete.\r\n"))
@@ -3285,13 +3432,12 @@ func PCAPSMBChannel(runID, attackerIP, targetIP, pipeName string) (string, error
 	ntlmChallenge := []byte{
 		0x4e, 0x54, 0x4c, 0x4d, 0x53, 0x53, 0x50, 0x00, // NTLMSSP\0
 		0x02, 0x00, 0x00, 0x00, // MessageType=2
-		0x0e, 0x00, 0x0e, 0x00, 0x38, 0x00, 0x00, 0x00, // TargetNameFields
+		0x08, 0x00, 0x08, 0x00, 0x30, 0x00, 0x00, 0x00, // TargetNameFields (len=8, offset=48)
 		0x97, 0x82, 0x89, 0xe2, // NegotiateFlags
 		0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, // ServerChallenge
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Reserved
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // TargetInfoFields
-		0x43, 0x00, 0x4f, 0x00, 0x52, 0x00, 0x50, 0x00, // "CORP" UTF-16LE
-		0x2e, 0x00, 0x4c, 0x00, 0x4f, 0x00,
+		0x43, 0x00, 0x4f, 0x00, 0x52, 0x00, 0x50, 0x00, // "CORP" UTF-16LE (8 bytes, matches len=8)
 	}
 	ssResp1 := buildSMB2SessionSetup(1, false, 0xc0000016, ntlmChallenge)
 	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(445, srcPort, 0x18, serverSeq, clientSeq, ssResp1))))
@@ -3301,17 +3447,42 @@ func PCAPSMBChannel(runID, attackerIP, targetIP, pipeName string) (string, error
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack3)))
 
 	// ── SMB2 Session Setup — NTLM Authenticate (client) ────────────────────
-	ntlmAuth := []byte{
-		0x4e, 0x54, 0x4c, 0x4d, 0x53, 0x53, 0x50, 0x00, // NTLMSSP\0
-		0x03, 0x00, 0x00, 0x00, // MessageType=3
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x18, 0x00, 0x18, 0x00, 0x48, 0x00, 0x00, 0x00,
-		0x97, 0x82, 0x08, 0xe2,
-		0x43, 0x00, 0x4f, 0x00, 0x52, 0x00, 0x50, 0x00,
-		0x61, 0x00, 0x64, 0x00, 0x6d, 0x00, 0x69, 0x00,
-		0x6e, 0x00, 0x00, 0x00,
-	}
+	userName := []byte{'A', 0, 'd', 0, 'm', 0, 'i', 0, 'n', 0}
+	domainName := []byte{'C', 0, 'O', 0, 'R', 0, 'P', 0}
+	workstation := []byte{'A', 0, 'T', 0, 'T', 0, 'A', 0, 'C', 0, 'K', 0, 'E', 0, 'R', 0}
+	lmResponse := make([]byte, 24)
+	ntResponse := make([]byte, 24)
+
+	headerSize := uint32(64)
+	lmOff := headerSize
+	ntOff := lmOff + uint32(len(lmResponse))
+	domOff := ntOff + uint32(len(ntResponse))
+	userOff := domOff + uint32(len(domainName))
+	wkOff := userOff + uint32(len(userName))
+
+	ntlmAuth := []byte{'N', 'T', 'L', 'M', 'S', 'S', 'P', 0x00, 0x03, 0x00, 0x00, 0x00}
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(lmResponse)))...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(lmResponse)))...)
+	ntlmAuth = append(ntlmAuth, uint32LE(lmOff)...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(ntResponse)))...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(ntResponse)))...)
+	ntlmAuth = append(ntlmAuth, uint32LE(ntOff)...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(domainName)))...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(domainName)))...)
+	ntlmAuth = append(ntlmAuth, uint32LE(domOff)...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(userName)))...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(userName)))...)
+	ntlmAuth = append(ntlmAuth, uint32LE(userOff)...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(workstation)))...)
+	ntlmAuth = append(ntlmAuth, uint16LE(uint16(len(workstation)))...)
+	ntlmAuth = append(ntlmAuth, uint32LE(wkOff)...)
+	ntlmAuth = append(ntlmAuth, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)
+	ntlmAuth = append(ntlmAuth, 0x33, 0x82, 0x8A, 0xE2)
+	ntlmAuth = append(ntlmAuth, lmResponse...)
+	ntlmAuth = append(ntlmAuth, ntResponse...)
+	ntlmAuth = append(ntlmAuth, domainName...)
+	ntlmAuth = append(ntlmAuth, userName...)
+	ntlmAuth = append(ntlmAuth, workstation...)
 	ssReq2 := buildSMB2SessionSetup(2, true, 0, ntlmAuth)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 445, 0x18, clientSeq, serverSeq, ssReq2))))
 	clientSeq += uint32(len(ssReq2))
@@ -3784,27 +3955,45 @@ func PCAPRogueDHCP(runID, attackerIP, fakeGateway string) (string, error) {
 // subdomains) since this needs the chunk count and domain driven by the
 // calling attack's actual parameters, and a believable base32-style alphabet
 // rather than full random hex per query.
-func PCAPDNSExfilMulti(runID, attackerIP, dnsTargetIP, domain string, chunkCount int) (string, error) {
+func PCAPDNSExfilMulti(runID, infectedIP, attackerIP, dnsTargetIP, domain string, chunkCount int) (string, error) {
 	defer panicHandler(traceFunc(), nil)
-	logInfo("Entering PCAPDNSExfilMulti attacker=%s dnsTarget=%s domain=%s chunks=%d", attackerIP, dnsTargetIP, domain, chunkCount)
+	logInfo("Entering PCAPDNSExfilMulti infectedIP=%s attacker=%s dnsTarget=%s domain=%s chunks=%d", infectedIP, attackerIP, dnsTargetIP, domain, chunkCount)
 
 	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
 	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
 
-	const chunkAlphabet = "abcdefghijklmnopqrstuvwxyz234567" // base32-ish charset for believable-looking encoded subdomains
+	const chunkAlphabet = "abcdefghijklmnopqrstuvwxyz234567"
 	if chunkCount > 200 {
-		chunkCount = 200 // cap PCAP size; syslog/netflow already reflect the full chunk count
+		chunkCount = 200
 	}
 	var frames [][]byte
 	for i := 0; i < chunkCount; i++ {
+		// Attacker → DNS: small trigger query
+		triggerQuery := buildDNSQueryType("ready."+domain, 0x0001)
+		triggerIP := buildIPv4Packet(attackerIP, dnsTargetIP, 17, buildUDPDatagram(uint16(40000+i%10000), 53, triggerQuery))
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, triggerIP))
+
+		// Infected host → DNS: TXT query with exfil chunk
 		chunk := make([]byte, 28)
 		for j := range chunk {
-			chunk[j] = chunkAlphabet[(i*7+j*13)%len(chunkAlphabet)] // deterministic pseudo-random-looking chunk per query
+			chunk[j] = chunkAlphabet[(i*7+j*13)%len(chunkAlphabet)]
 		}
 		qname := string(chunk) + "." + domain
-		query := buildDNSQueryType(qname, 0x0010) // TXT
-		ip := buildIPv4Packet(attackerIP, dnsTargetIP, 17, buildUDPDatagram(uint16(50000+i%10000), 53, query))
+		query := buildDNSQueryType(qname, 0x0010)
+		ip := buildIPv4Packet(infectedIP, dnsTargetIP, 17, buildUDPDatagram(uint16(50000+i%10000), 53, query))
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, ip))
+
+		// DNS → infected host: NXDOMAIN response
+		var nxResp []byte
+		nxResp = append(nxResp, query[0], query[1])
+		nxResp = append(nxResp, 0x81, 0x83)
+		nxResp = append(nxResp, 0x00, 0x01)
+		nxResp = append(nxResp, 0x00, 0x00)
+		nxResp = append(nxResp, 0x00, 0x00)
+		nxResp = append(nxResp, 0x00, 0x00)
+		nxResp = append(nxResp, query[12:]...)
+		respIP := buildIPv4Packet(dnsTargetIP, infectedIP, 17, buildUDPDatagram(53, uint16(50000+i%10000), nxResp))
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, respIP))
 	}
 	bgFrames := generateBackgroundTraffic(getAllDevices())
 	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
@@ -3827,8 +4016,8 @@ func PCAPICMPTunnel(runID, attackerIP, c2IP string, count int) (string, error) {
 // PCAPICMPExfil simulates one-way ICMP exfiltration: oversized echo requests
 // carrying encoded data outbound, with no replies (data is leaving, not a
 // two-way channel) — matching the one-way framing in runICMPExfil's syslog.
-func PCAPICMPExfil(runID, attackerIP, c2IP string, packetCount int) (string, error) {
-	return buildICMPExchangePCAP(runID, "icmp_exfil", attackerIP, c2IP, packetCount, false)
+func PCAPICMPExfil(runID, attackerIP, victimIP string, packetCount int) (string, error) {
+	return buildICMPExfilPCAP(runID, "icmp_exfil", attackerIP, victimIP, packetCount)
 }
 
 // buildICMPExchangePCAP is the shared builder behind PCAPICMPTunnel and
@@ -3860,6 +4049,41 @@ func buildICMPExchangePCAP(runID, attackName, attackerIP, c2IP string, count int
 			echoReply := buildICMPSegment(0, 0, 0, identifier, seq, payload) // type 0 = Echo Reply
 			frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(c2IP, attackerIP, 1, echoReply)))
 		}
+	}
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, attackName, finalFrames, defaultDuration)
+	logInfo("Return from %s frames=%d path=%s", attackName, len(finalFrames), path)
+	return path, err
+}
+
+// buildICMPExfilPCAP: attacker sends small ICMP echo request (trigger),
+// infected host replies with oversized ICMP echo reply carrying stolen data.
+func buildICMPExfilPCAP(runID, attackName, attackerIP, victimIP string, count int) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering %s attacker=%s victim=%s count=%d", attackName, attackerIP, victimIP, count)
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+
+	if count > 100 {
+		count = 100
+	}
+	identifier := uint16(rand.Intn(65535))
+	triggerPayload := []byte("ping") // small attacker trigger
+	dataPayload := make([]byte, 1400)
+	for i := range dataPayload {
+		dataPayload[i] = byte('A' + i%26) // exfiltrated data
+	}
+	var frames [][]byte
+	for i := 0; i < count; i++ {
+		seq := uint16(i + 1)
+		// Attacker → victim: small echo request (trigger)
+		echoReq := buildICMPSegment(8, 0, 0, identifier, seq, triggerPayload)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, victimIP, 1, echoReq)))
+		// Victim → attacker: large echo reply (stolen data)
+		echoReply := buildICMPSegment(0, 0, 0, identifier, seq, dataPayload)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(victimIP, attackerIP, 1, echoReply)))
 	}
 	bgFrames := generateBackgroundTraffic(getAllDevices())
 	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)

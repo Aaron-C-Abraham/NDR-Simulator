@@ -109,7 +109,7 @@ func runProtocolTunnel(req AttackRequest) (*AttackResult, error) {
 			if infectedDev == nil {
 				infectedDev = getAttackerDevice()
 			}
-			_, pcapPath, pcapErr := PCAPDNSTunnel(infectedDev, dnsDev, "tunnel.example.net", 10)
+			_, pcapPath, pcapErr := PCAPDNSTunnel(req.RunID, req.AttackerIP, infectedDev, dnsDev, "tunnel.example.net", 10)
 			if pcapErr == nil {
 				result.PCAPFiles = append(result.PCAPFiles, pcapPath)
 			}

