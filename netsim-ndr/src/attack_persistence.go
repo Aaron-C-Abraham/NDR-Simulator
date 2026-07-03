@@ -61,62 +61,63 @@ func runProtocolTunnel(req AttackRequest) (*AttackResult, error) {
 	logInfo("Entering runProtocolTunnel attacker=%s", req.AttackerIP)
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	tunnelProto := getAttackParam(req.Params, "tunnel_protocol", "DNS")
-	c2IP := realC2IP()
 	fw := getFirewall()
-	msgs := []string{
-		fmt.Sprintf("Protocol tunneling: C2 traffic encapsulated in %s from %s to %s — anomalous payload size", tunnelProto, req.AttackerIP, c2IP),
-		fmt.Sprintf("DPI: %s traffic shows non-standard payload entropy 7.8 bits/byte from %s — possible tunnel", tunnelProto, req.AttackerIP),
-		fmt.Sprintf("Firewall: allowed %s sessions carrying unexpected binary content from %s to external %s", tunnelProto, req.AttackerIP, c2IP),
-	}
-	for _, msg := range msgs {
-		ev := sendSyslog(fw, msg, 3)
-		result.SyslogCount++
-		eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", req.AttackerIP, c2IP, tunnelProto, ev)
-		result.EventIDs = append(result.EventIDs, eventID)
-	}
-	var proto uint8 = 17
-	dstPort := uint16(53)
-	if tunnelProto == "ICMP" {
-		proto = 1
-		dstPort = 0
-	} else if tunnelProto == "HTTP" {
-		proto = 6
-		dstPort = 80
-	}
-	flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: c2IP, SrcPort: uint16(randomPort()), DstPort: dstPort, Protocol: proto, Bytes: 2097152, Packets: 4096, StartTime: time.Now().Add(-5 * time.Minute), EndTime: time.Now()}}
-	fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, c2IP, tunnelProto, flows)
-	result.FlowCount += fc
-	result.EventIDs = append(result.EventIDs, fids...)
-	switch tunnelProto {
-	case "HTTP":
-		reqPayload := []byte(fmt.Sprintf("POST /api/sync HTTP/1.1\r\nHost: cdn.example.net\r\nContent-Length: 512\r\n\r\n%s", randomHexString(512)))
-		respPayload := []byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK")
-		pcapPath, pcapErr := PCAPGenericTCPExchange(req.RunID, "protocol_tunnel_http", req.AttackerIP, c2IP, dstPort, reqPayload, respPayload)
-		if pcapErr == nil {
-			result.PCAPFiles = append(result.PCAPFiles, pcapPath)
+
+	for _, targetIP := range req.TargetIPs {
+		msgs := []string{
+			fmt.Sprintf("Protocol tunneling: C2 traffic encapsulated in %s from %s to %s — anomalous payload size", tunnelProto, targetIP, req.AttackerIP),
+			fmt.Sprintf("DPI: %s traffic shows non-standard payload entropy 7.8 bits/byte from %s — possible tunnel", tunnelProto, targetIP),
+			fmt.Sprintf("Firewall: allowed %s sessions carrying unexpected binary content from %s to external %s", tunnelProto, targetIP, req.AttackerIP),
 		}
-	case "ICMP":
-		pcapPath, pcapErr := writeICMPTunnelPCAP(req.RunID, req.AttackerIP, c2IP)
-		if pcapErr == nil {
-			result.PCAPFiles = append(result.PCAPFiles, pcapPath)
+		for _, msg := range msgs {
+			ev := sendSyslog(fw, msg, 3)
+			result.SyslogCount++
+			eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", targetIP, req.AttackerIP, tunnelProto, ev)
+			result.EventIDs = append(result.EventIDs, eventID)
 		}
-	default:
-		// DNS tunnel: bidirectional TXT query/response pairs (not NXDOMAIN
-		// which is the DGA shape — a tunnel needs replies carrying C2 data back)
-		dnsDev := getDNSServer()
-		if dnsDev != nil {
-			infectedDev, _ := getDeviceByIP(req.AttackerIP)
-			if infectedDev == nil {
-				infectedDev = getAttackerDevice()
-			}
-			_, pcapPath, pcapErr := PCAPDNSTunnel(req.RunID, req.AttackerIP, infectedDev, dnsDev, "tunnel.example.net", 10)
+		var proto uint8 = 17
+		dstPort := uint16(53)
+		if tunnelProto == "ICMP" {
+			proto = 1
+			dstPort = 0
+		} else if tunnelProto == "HTTP" {
+			proto = 6
+			dstPort = 80
+		}
+		flows := []FlowRecord{{SrcIP: targetIP, DstIP: req.AttackerIP, SrcPort: uint16(randomPort()), DstPort: dstPort, Protocol: proto, Bytes: 2097152, Packets: 4096, StartTime: time.Now().Add(-5 * time.Minute), EndTime: time.Now()}}
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", targetIP, req.AttackerIP, tunnelProto, flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
+
+		switch tunnelProto {
+		case "HTTP":
+			reqPayload := []byte(fmt.Sprintf("POST /api/sync HTTP/1.1\r\nHost: cdn.example.net\r\nContent-Length: 512\r\n\r\n%s", randomHexString(512)))
+			respPayload := []byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK")
+			pcapPath, pcapErr := PCAPGenericTCPExchange(req.RunID, "protocol_tunnel_http", targetIP, req.AttackerIP, dstPort, reqPayload, respPayload)
 			if pcapErr == nil {
 				result.PCAPFiles = append(result.PCAPFiles, pcapPath)
 			}
-		} else {
-			pcapPath, pcapErr := PCAPDNSQueryResponse(req.RunID, "protocol_tunnel_dns", req.AttackerIP, c2IP, randomHexString(40)+".tunnel.example.net", false)
+		case "ICMP":
+			pcapPath, pcapErr := writeICMPTunnelPCAP(req.RunID, targetIP, req.AttackerIP)
 			if pcapErr == nil {
 				result.PCAPFiles = append(result.PCAPFiles, pcapPath)
+			}
+		default:
+			dnsDev := getDNSServer()
+			if dnsDev != nil {
+				infectedDev, _ := getDeviceByIP(targetIP)
+				if infectedDev == nil {
+					infectedDev = getAttackerDevice()
+				}
+				_, pcapPath, pcapErr := PCAPDNSTunnel(req.RunID, req.AttackerIP, infectedDev, dnsDev, "tunnel.example.net", 10)
+				if pcapErr == nil {
+					result.PCAPFiles = append(result.PCAPFiles, pcapPath)
+				}
+			} else {
+				pcapPath, pcapErr := PCAPDNSQueryResponse(req.RunID, "protocol_tunnel_dns", targetIP, req.AttackerIP, randomHexString(40)+".tunnel.example.net", false)
+				if pcapErr == nil {
+					result.PCAPFiles = append(result.PCAPFiles, pcapPath)
+				}
 			}
 		}
 	}

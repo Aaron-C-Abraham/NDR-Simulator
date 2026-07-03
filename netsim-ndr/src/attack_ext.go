@@ -712,24 +712,25 @@ func runICMPTunnel(req AttackRequest) (*AttackResult, error) {
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	count := getAttackParamInt(req.Params, "count", 30)
 	fw := getFirewall()
-	c2IP := realC2IP()
-	msgs := []string{
-		fmt.Sprintf("ICMP tunnel detected: %s sending ICMP echo with anomalously large payload (1400 bytes) to %s", req.AttackerIP, c2IP),
-		fmt.Sprintf("IDS: ICMP covert channel — %d echo requests with non-null payloads from %s to %s", count, req.AttackerIP, c2IP),
-	}
-	for _, msg := range msgs {
-		ev := sendSyslog(fw, msg, 3)
-		result.SyslogCount++
-		eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", req.AttackerIP, c2IP, "ICMP", ev)
-		result.EventIDs = append(result.EventIDs, eventID)
-	}
-	flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: c2IP, SrcPort: 0, DstPort: 0, Protocol: 1, Bytes: uint32(count * 1400), Packets: uint32(count), StartTime: time.Now().Add(-time.Duration(count) * time.Second), EndTime: time.Now()}}
-	fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, c2IP, "ICMP", flows)
-	result.FlowCount += fc
-	result.EventIDs = append(result.EventIDs, fids...)
-	icmpTunPath, icmpTunErr := PCAPICMPTunnel(req.RunID, req.AttackerIP, c2IP, count)
-	if icmpTunErr == nil {
-		result.PCAPFiles = append(result.PCAPFiles, icmpTunPath)
+	for _, targetIP := range req.TargetIPs {
+		msgs := []string{
+			fmt.Sprintf("ICMP tunnel detected: %s sending ICMP echo with anomalously large payload (1400 bytes) to %s", req.AttackerIP, targetIP),
+			fmt.Sprintf("IDS: ICMP covert channel — %d echo requests with non-null payloads from %s to %s", count, req.AttackerIP, targetIP),
+		}
+		for _, msg := range msgs {
+			ev := sendSyslog(fw, msg, 3)
+			result.SyslogCount++
+			eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", req.AttackerIP, targetIP, "ICMP", ev)
+			result.EventIDs = append(result.EventIDs, eventID)
+		}
+		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: 0, DstPort: 0, Protocol: 1, Bytes: uint32(count * 1400), Packets: uint32(count), StartTime: time.Now().Add(-time.Duration(count) * time.Second), EndTime: time.Now()}}
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "ICMP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
+		icmpTunPath, icmpTunErr := PCAPICMPTunnel(req.RunID, req.AttackerIP, targetIP, count)
+		if icmpTunErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, icmpTunPath)
+		}
 	}
 	logInfo("Return from runICMPTunnel syslogs=%d", result.SyslogCount)
 	return result, nil
@@ -776,33 +777,33 @@ func runWebSocketC2(req AttackRequest) (*AttackResult, error) {
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	count := getAttackParamInt(req.Params, "count", 20)
 	fw := getFirewall()
-	c2IP := realC2IP()
-	msgs := []string{
-		fmt.Sprintf("WebSocket C2: %s upgraded connection to wss://%s:443 — persistent bidirectional channel", req.AttackerIP, c2IP),
-		fmt.Sprintf("IDS: WebSocket C2 detected from %s — %d command frames over 300s, irregular timing pattern", req.AttackerIP, count),
-	}
-	for _, msg := range msgs {
-		ev := sendSyslog(fw, msg, 3)
-		result.SyslogCount++
-		eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", req.AttackerIP, c2IP, "TCP", ev)
-		result.EventIDs = append(result.EventIDs, eventID)
-	}
-	flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: c2IP, SrcPort: randomPort(), DstPort: 443, Protocol: 6, Bytes: uint32(count * 2000), Packets: uint32(count * 10), StartTime: time.Now().Add(-300 * time.Second), EndTime: time.Now(), TCPFlags: 0x18}}
-	fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, c2IP, "TCP", flows)
-	result.FlowCount += fc
-	result.EventIDs = append(result.EventIDs, fids...)
+	for _, targetIP := range req.TargetIPs {
+		msgs := []string{
+			fmt.Sprintf("WebSocket C2: %s upgraded connection to wss://%s:443 — persistent bidirectional channel", targetIP, req.AttackerIP),
+			fmt.Sprintf("IDS: WebSocket C2 detected from %s — %d command frames over 300s, irregular timing pattern", targetIP, count),
+		}
+		for _, msg := range msgs {
+			ev := sendSyslog(fw, msg, 3)
+			result.SyslogCount++
+			eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", targetIP, req.AttackerIP, "TCP", ev)
+			result.EventIDs = append(result.EventIDs, eventID)
+		}
+		flows := []FlowRecord{{SrcIP: targetIP, DstIP: req.AttackerIP, SrcPort: randomPort(), DstPort: 443, Protocol: 6, Bytes: uint32(count * 2000), Packets: uint32(count * 10), StartTime: time.Now().Add(-300 * time.Second), EndTime: time.Now(), TCPFlags: 0x18}}
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", targetIP, req.AttackerIP, "TCP", flows)
+		result.FlowCount += fc
+		result.EventIDs = append(result.EventIDs, fids...)
 
-	var wsPayload []byte
-	var wsResp []byte
-	for i := 0; i < count; i++ {
-		wsPayload = append(wsPayload, []byte(fmt.Sprintf("ws-frame-%d:%s\n", i+1, randomHexString(32)))...)
-		wsResp = append(wsResp, []byte(fmt.Sprintf("ws-resp-%d:%s\n", i+1, randomHexString(16)))...)
+		var wsPayload []byte
+		var wsResp []byte
+		for i := 0; i < count; i++ {
+			wsPayload = append(wsPayload, []byte(fmt.Sprintf("ws-frame-%d:%s\n", i+1, randomHexString(32)))...)
+			wsResp = append(wsResp, []byte(fmt.Sprintf("ws-resp-%d:%s\n", i+1, randomHexString(16)))...)
+		}
+		wsPath, wsErr := PCAPTLSExchange(req.RunID, "websocket_c2", targetIP, req.AttackerIP, 443, req.AttackerIP, wsPayload, wsResp)
+		if wsErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, wsPath)
+		}
 	}
-	wsPath, wsErr := PCAPTLSExchange(req.RunID, "websocket_c2", req.AttackerIP, c2IP, 443, c2IP, wsPayload, wsResp)
-	if wsErr == nil {
-		result.PCAPFiles = append(result.PCAPFiles, wsPath)
-	}
-
 	logInfo("Return from runWebSocketC2 syslogs=%d", result.SyslogCount)
 	return result, nil
 }

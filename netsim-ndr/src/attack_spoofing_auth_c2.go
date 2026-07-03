@@ -809,7 +809,6 @@ func runC2Beaconing(req AttackRequest) (*AttackResult, error) {
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	intervalSecs := getAttackParamInt(req.Params, "interval_secs", 60)
 	count := getAttackParamInt(req.Params, "count", 10)
-	c2Dev := getCCServer()
 
 	for _, infectedIP := range req.TargetIPs {
 		infectedDev, _ := getDeviceByIP(infectedIP)
@@ -818,16 +817,16 @@ func runC2Beaconing(req AttackRequest) (*AttackResult, error) {
 		}
 
 		interval := time.Duration(intervalSecs) * time.Second
-		syslogEvents := SyslogBeaconing(infectedDev, c2Dev.IPAddress, 100*time.Millisecond, count)
+		syslogEvents := SyslogBeaconing(infectedDev, req.AttackerIP, 100*time.Millisecond, count)
 		result.SyslogCount += len(syslogEvents)
 		for _, ev := range syslogEvents {
-			eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", infectedIP, c2Dev.IPAddress, "HTTPS", ev)
+			eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", infectedIP, req.AttackerIP, "HTTPS", ev)
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 
-		beaconFlows := FlowBeaconing(infectedIP, c2Dev.IPAddress, count, interval)
+		beaconFlows := FlowBeaconing(infectedIP, req.AttackerIP, count, interval)
 		fw := getFirewall()
-		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", infectedIP, c2Dev.IPAddress, "HTTPS", beaconFlows)
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", infectedIP, req.AttackerIP, "HTTPS", beaconFlows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
 
@@ -951,7 +950,6 @@ func runHTTPCovertChannel(req AttackRequest) (*AttackResult, error) {
 	defer panicHandler(traceFunc(), nil)
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	count := getAttackParamInt(req.Params, "count", 20)
-	c2Dev := getCCServer()
 	fw := getFirewall()
 
 	for _, infectedIP := range req.TargetIPs {
@@ -959,19 +957,18 @@ func runHTTPCovertChannel(req AttackRequest) (*AttackResult, error) {
 		for idx := 0; idx < count; idx++ {
 			encodedData := randomHexString(64)
 			lastData = encodedData
-			msg := fmt.Sprintf("Outbound HTTP: src=%s dst=%s header X-Custom-Data: %s", infectedIP, c2Dev.IPAddress, encodedData)
+			msg := fmt.Sprintf("Outbound HTTP: src=%s dst=%s header X-Custom-Data: %s", infectedIP, req.AttackerIP, encodedData)
 			ev := sendSyslog(fw, msg, 6)
 			result.SyslogCount++
-			eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", infectedIP, c2Dev.IPAddress, "HTTP", ev)
+			eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", infectedIP, req.AttackerIP, "HTTP", ev)
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 
-		flows := []FlowRecord{{SrcIP: infectedIP, DstIP: c2Dev.IPAddress, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: uint32(count * 300), Packets: uint32(count * 4), StartTime: time.Now(), EndTime: time.Now().Add(time.Duration(count) * time.Second), TCPFlags: 0x18}}
-		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", infectedIP, c2Dev.IPAddress, "TCP", flows)
+		flows := []FlowRecord{{SrcIP: infectedIP, DstIP: req.AttackerIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6, Bytes: uint32(count * 300), Packets: uint32(count * 4), StartTime: time.Now(), EndTime: time.Now().Add(time.Duration(count) * time.Second), TCPFlags: 0x18}}
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", infectedIP, req.AttackerIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
 
-		// PCAP
 		reqPayload := []byte(fmt.Sprintf("GET / HTTP/1.1\r\nHost: %s\r\nX-Custom-Data: %s\r\n\r\n", req.AttackerIP, lastData))
 		respPayload := []byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
 		path, _ := PCAPGenericTCPExchange(req.RunID, "http_covert", infectedIP, req.AttackerIP, 80, reqPayload, respPayload)
@@ -979,7 +976,6 @@ func runHTTPCovertChannel(req AttackRequest) (*AttackResult, error) {
 			result.PCAPFiles = append(result.PCAPFiles, path)
 		}
 
-		// Real packets (Option A — HTTP with covert headers)
 		go sendRealHTTPCovert(realC2IP(), realC2Port(), count)
 	}
 	return result, nil
