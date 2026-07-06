@@ -2315,18 +2315,23 @@ func PCAP80211Beacon(runID, attackName string, apMAC [6]byte, ssid string) (stri
 	return path, err
 }
 
-// PCAP80211Deauth generates a realistic deauth flood.
-// Varies reason codes, sequence numbers, source direction (AP→client and
-// spoofed client→AP), and uses many unique client MACs to avoid the
-// "cycling through 3 targets" pattern of a scripted flood.
-func PCAP80211Deauth(runID, attackName string, apMAC [6]byte, clients [][6]byte) (string, error) {
+func PCAP80211Deauth(runID, attackName string, apMAC [6]byte, clients [][6]byte, ssid string) (string, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAP80211Deauth clients=%d", len(clients))
 
 	broadcastMAC := [6]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 
-	// Generate a large pool of unique client MACs — real floods hit all
-	// associated stations, not just a fixed handful
+	var frames [][]byte
+	var seqNum uint16
+
+	// --- Phase 0: Background chatter — AP beaconing normally before attack ---
+	// Shows a legitimate network operating; deauth flood appears mid-operation
+	for i := 0; i < 20; i++ {
+		frames = append(frames, build80211Beacon(apMAC, broadcastMAC, ssid, seqNum))
+		seqNum++
+	}
+
+	// --- Phase 1: Deauth flood begins ---
 	allClients := make([][6]byte, 0, len(clients)+20)
 	allClients = append(allClients, clients...)
 	for i := 0; i < 20; i++ {
@@ -2337,23 +2342,19 @@ func PCAP80211Deauth(runID, attackName string, apMAC [6]byte, clients [][6]byte)
 		})
 	}
 
-	// Reason codes seen in real deauth floods — varies per tool/attack
 	reasonCodes := [][]byte{
-		{0x01, 0x00}, // Unspecified
-		{0x02, 0x00}, // Previous auth no longer valid
-		{0x03, 0x00}, // Deauth: station leaving
-		{0x07, 0x00}, // Class 3 frame from nonassociated station
-		{0x08, 0x00}, // Disassociated: station leaving BSS
+		{0x01, 0x00},
+		{0x02, 0x00},
+		{0x03, 0x00},
+		{0x07, 0x00},
+		{0x08, 0x00},
 	}
-
-	var frames [][]byte
-	var seqNum uint16
 
 	for i := 0; i < 50; i++ {
 		clientMAC := allClients[i%len(allClients)]
 		reason := reasonCodes[i%len(reasonCodes)]
 
-		// --- AP → client (most common: AP kicking client) ---
+		// AP → client
 		hdr := make([]byte, 24)
 		hdr[0] = 0xC0
 		hdr[1] = 0x00
@@ -2364,7 +2365,7 @@ func PCAP80211Deauth(runID, attackName string, apMAC [6]byte, clients [][6]byte)
 		seqNum++
 		frames = append(frames, append(hdr, reason...))
 
-		// --- AP → broadcast (kicks all clients simultaneously) ---
+		// AP → broadcast
 		hdr2 := make([]byte, 24)
 		hdr2[0] = 0xC0
 		hdr2[1] = 0x00
@@ -2375,12 +2376,12 @@ func PCAP80211Deauth(runID, attackName string, apMAC [6]byte, clients [][6]byte)
 		seqNum++
 		frames = append(frames, append(hdr2, reason...))
 
-		// --- Spoofed client → AP (attacker spoofs client to confuse AP) ---
+		// Spoofed client → AP
 		hdr3 := make([]byte, 24)
 		hdr3[0] = 0xC0
 		hdr3[1] = 0x00
 		copy(hdr3[4:10], apMAC[:])
-		copy(hdr3[10:16], clientMAC[:]) // src = spoofed client
+		copy(hdr3[10:16], clientMAC[:])
 		copy(hdr3[16:22], apMAC[:])
 		binary.LittleEndian.PutUint16(hdr3[22:24], seqNum<<4)
 		seqNum++

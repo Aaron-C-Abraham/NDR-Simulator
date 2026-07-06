@@ -1083,20 +1083,31 @@ func runExfilHTTP(req AttackRequest) (*AttackResult, error) {
 func runRogueAP(req AttackRequest) (*AttackResult, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering runRogueAP attacker=%s", req.AttackerIP)
-	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
+	result := &AttackResult{
+		AttackID:   req.AttackID,
+		RunID:      req.RunID,
+		AttackerIP: req.AttackerIP,
+		TargetIPs:  req.TargetIPs,
+		StartedAt:  time.Now(),
+	}
 	ssid := getAttackParam(req.Params, "ssid", "Corp-WiFi")
 	rogueMAC := [6]byte{0x00, 0xaa, 0xbb, 0xcc, 0xdd, 0xff}
 
-	for _, apDev := range getWirelessAPs() {
+	// Use wireless APs if available, fall back to any device so logs always fire
+	devices := getWirelessAPs()
+	if len(devices) == 0 {
+		logInfo("runRogueAP: no wireless_ap devices in topology, falling back to all devices")
+		devices = getAllDevices()
+	}
+
+	for _, dev := range devices {
 		msg := fmt.Sprintf("Rogue AP detected: SSID '%s' MAC 00:aa:bb:cc:dd:ff RSSI -65dBm on channel 6 — evil twin suspected", ssid)
-		ev := sendSyslog(apDev, msg, 2)
+		ev := sendSyslog(dev, msg, 2)
 		result.SyslogCount++
-		eventID, _ := recordRunEvent(req.RunID, "syslog", apDev.Name, req.AttackerIP, apDev.IPAddress, "802.11", ev)
+		eventID, _ := recordRunEvent(req.RunID, "syslog", dev.Name, req.AttackerIP, dev.IPAddress, "802.11", ev)
 		result.EventIDs = append(result.EventIDs, eventID)
 	}
 
-	// Single PCAP showing beacon flood — rogue and legit AP beacons interleaved
-	// showing two BSSIDs advertising same SSID (evil twin pattern)
 	path, _ := PCAP80211Beacon(req.RunID, "rogue_ap_beacon", rogueMAC, ssid)
 	if path != "" {
 		result.PCAPFiles = append(result.PCAPFiles, path)
@@ -1112,34 +1123,45 @@ func runDeauth(req AttackRequest) (*AttackResult, error) {
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	apName := getAttackParam(req.Params, "ap_name", "ap-floor1")
 
-	for _, apDev := range getWirelessAPs() {
-		if apDev.Name != apName && apName != "" {
-			continue
-		}
-		apMAC := parseMACAddress(apDev.MACAddress)
-		for idx := 0; idx < 10; idx++ {
-			clientMACStr := fmt.Sprintf("aa:bb:cc:%02x:%02x:%02x", rand.Intn(256), rand.Intn(256), rand.Intn(256))
-			msg := fmt.Sprintf("Deauthentication flood: %d deauth frames from %s targeting client %s — denial of service",
-				100+rand.Intn(400), req.AttackerIP, clientMACStr)
-			ev := sendSyslog(apDev, msg, 2)
-			result.SyslogCount++
-			eventID, _ := recordRunEvent(req.RunID, "syslog", apDev.Name, req.AttackerIP, apDev.IPAddress, "802.11", ev)
-			result.EventIDs = append(result.EventIDs, eventID)
-		}
-
-		// PCAP: deauth frames targeting one synthesized client
-		// Multiple clients being deauthed — shows broadcast + targeted deauth pattern
-		clients := [][6]byte{
-			parseMACAddress(fmt.Sprintf("aa:bb:cc:%02x:%02x:%02x", rand.Intn(256), rand.Intn(256), rand.Intn(256))),
-			parseMACAddress(fmt.Sprintf("aa:bb:cc:%02x:%02x:%02x", rand.Intn(256), rand.Intn(256), rand.Intn(256))),
-			parseMACAddress(fmt.Sprintf("aa:bb:cc:%02x:%02x:%02x", rand.Intn(256), rand.Intn(256), rand.Intn(256))),
-		}
-		path, _ := PCAP80211Deauth(req.RunID, "deauth_flood", apMAC, clients)
-		if path != "" {
-			result.PCAPFiles = append(result.PCAPFiles, path)
-		}
-		break
+	devices := getWirelessAPs()
+	if len(devices) == 0 {
+		logInfo("runDeauth: no wireless_ap devices in topology, falling back to all devices")
+		devices = getAllDevices()
 	}
+
+	var apDev *Device
+	for _, d := range devices {
+		if apName == "" || d.Name == apName {
+			apDev = d
+			break
+		}
+	}
+	if apDev == nil {
+		apDev = devices[0] // fallback to first available
+	}
+
+	apMAC := parseMACAddress(apDev.MACAddress)
+
+	for idx := 0; idx < 10; idx++ {
+		clientMACStr := fmt.Sprintf("aa:bb:cc:%02x:%02x:%02x", rand.Intn(256), rand.Intn(256), rand.Intn(256))
+		msg := fmt.Sprintf("Deauthentication flood on AP '%s': %d deauth frames from %s targeting client %s — denial of service",
+			apName, 100+rand.Intn(400), req.AttackerIP, clientMACStr)
+		ev := sendSyslog(apDev, msg, 2)
+		result.SyslogCount++
+		eventID, _ := recordRunEvent(req.RunID, "syslog", apDev.Name, req.AttackerIP, apDev.IPAddress, "802.11", ev)
+		result.EventIDs = append(result.EventIDs, eventID)
+	}
+
+	clients := [][6]byte{
+		parseMACAddress(fmt.Sprintf("aa:bb:cc:%02x:%02x:%02x", rand.Intn(256), rand.Intn(256), rand.Intn(256))),
+		parseMACAddress(fmt.Sprintf("aa:bb:cc:%02x:%02x:%02x", rand.Intn(256), rand.Intn(256), rand.Intn(256))),
+		parseMACAddress(fmt.Sprintf("aa:bb:cc:%02x:%02x:%02x", rand.Intn(256), rand.Intn(256), rand.Intn(256))),
+	}
+	path, _ := PCAP80211Deauth(req.RunID, "deauth_flood", apMAC, clients, apName)
+	if path != "" {
+		result.PCAPFiles = append(result.PCAPFiles, path)
+	}
+
 	logInfo("Return from runDeauth syslogs=%d", result.SyslogCount)
 	return result, nil
 }

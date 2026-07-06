@@ -1280,25 +1280,40 @@ func runPMKIDAttack(req AttackRequest) (*AttackResult, error) {
 	logInfo("Entering runPMKIDAttack attacker=%s", req.AttackerIP)
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	apName := getAttackParam(req.Params, "ap_name", "ap-floor1")
-	dev := getFirewall()
-	_ = apName
-	if dev == nil {
-		return result, nil
+	ssid := getAttackParam(req.Params, "ssid", "Corp-WiFi")
+
+	// Use wireless AP device matching apName for syslog — same pattern as deauth
+	devices := getWirelessAPs()
+	if len(devices) == 0 {
+		logInfo("runPMKIDAttack: no wireless_ap devices in topology, falling back to all devices")
+		devices = getAllDevices()
 	}
+	var apDev *Device
+	for _, d := range devices {
+		if apName == "" || d.Name == apName {
+			apDev = d
+			break
+		}
+	}
+	if apDev == nil {
+		apDev = devices[0]
+	}
+
 	msgs := []string{
 		fmt.Sprintf("PMKID attack: %s captured EAPOL frame from AP '%s' — WPA2 PMKID extracted for offline cracking", req.AttackerIP, apName),
 		fmt.Sprintf("Wireless IDS: PMKID capture attempt from %s on AP %s — no client association required", req.AttackerIP, apName),
 	}
 	for _, msg := range msgs {
-		ev := sendSyslog(dev, msg, 3)
+		ev := sendSyslog(apDev, msg, 3)
 		result.SyslogCount++
-		eventID, _ := recordRunEvent(req.RunID, "syslog", dev.Name, req.AttackerIP, dev.IPAddress, "802.11", ev)
+		eventID, _ := recordRunEvent(req.RunID, "syslog", apDev.Name, req.AttackerIP, apDev.IPAddress, "802.11", ev)
 		result.EventIDs = append(result.EventIDs, eventID)
 	}
 
-	apMAC := [6]byte{0x00, 0xaa, 0xbb, 0xcc, 0xdd, 0x01}
+	// Use real AP MAC from topology — not hardcoded
+	apMAC := parseMACAddress(apDev.MACAddress)
 	attackerMAC := [6]byte{0x00, 0x11, 0x22, 0x33, 0x44, 0x55}
-	path, _ := PCAPPMKIDAttack(req.RunID, "pmkid_attack", apMAC, attackerMAC, apName)
+	path, _ := PCAPPMKIDAttack(req.RunID, "pmkid_attack", apMAC, attackerMAC, ssid)
 	if path != "" {
 		result.PCAPFiles = append(result.PCAPFiles, path)
 	}
@@ -1312,22 +1327,38 @@ func runEvilTwin(req AttackRequest) (*AttackResult, error) {
 	logInfo("Entering runEvilTwin attacker=%s", req.AttackerIP)
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	ssid := getAttackParam(req.Params, "ssid", "Corp-WiFi")
-	dev := getFirewall()
-	if dev == nil {
-		return result, nil
+	apName := getAttackParam(req.Params, "ap_name", "ap-floor1")
+
+	// Use wireless AP device for syslog — firewall has no visibility into 802.11
+	devices := getWirelessAPs()
+	if len(devices) == 0 {
+		logInfo("runEvilTwin: no wireless_ap devices in topology, falling back to all devices")
+		devices = getAllDevices()
 	}
+	var apDev *Device
+	for _, d := range devices {
+		if apName == "" || d.Name == apName {
+			apDev = d
+			break
+		}
+	}
+	if apDev == nil {
+		apDev = devices[0]
+	}
+
 	msgs := []string{
 		fmt.Sprintf("Evil twin detected: rogue AP broadcasting SSID '%s' from %s with stronger signal (-55 dBm vs legitimate -70 dBm)", ssid, req.AttackerIP),
 		fmt.Sprintf("Wireless IDS: unauthorized AP with SSID '%s' detected at MAC %s — captive portal active", ssid, req.AttackerIP),
-		fmt.Sprintf("Client association alert: 3 clients switched from legitimate AP to rogue '%s' at %s", ssid, req.AttackerIP),
+		fmt.Sprintf("Client association alert: 3 clients switched from legitimate AP '%s' to rogue '%s' at %s", apName, ssid, req.AttackerIP),
 	}
 	for _, msg := range msgs {
-		ev := sendSyslog(dev, msg, 2)
+		ev := sendSyslog(apDev, msg, 2)
 		result.SyslogCount++
-		eventID, _ := recordRunEvent(req.RunID, "syslog", dev.Name, req.AttackerIP, dev.IPAddress, "802.11", ev)
+		eventID, _ := recordRunEvent(req.RunID, "syslog", apDev.Name, req.AttackerIP, apDev.IPAddress, "802.11", ev)
 		result.EventIDs = append(result.EventIDs, eventID)
 	}
 
+	// rogueMAC is intentionally fake — attacker-controlled, not in topology
 	rogueMAC := [6]byte{0x00, 0xaa, 0xbb, 0xcc, 0xdd, 0xff}
 	path, _ := PCAP80211Beacon(req.RunID, "evil_twin_beacon", rogueMAC, ssid)
 	if path != "" {
