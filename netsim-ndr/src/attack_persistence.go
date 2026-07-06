@@ -130,6 +130,7 @@ func runLowSlowScan(req AttackRequest) (*AttackResult, error) {
 	logInfo("Entering runLowSlowScan attacker=%s", req.AttackerIP)
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	scanInterval := getAttackParam(req.Params, "scan_interval", "30s")
+
 	for _, targetIP := range req.TargetIPs {
 		targetDev, _ := getDeviceByIP(targetIP)
 		devName := targetIP
@@ -148,13 +149,20 @@ func runLowSlowScan(req AttackRequest) (*AttackResult, error) {
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 	}
+
 	fw := getFirewall()
 	flows := []FlowRecord{}
 	ports := []uint16{22, 80, 443, 3389, 8080, 3306, 5432, 1433}
 	for idx, port := range ports {
 		offset := time.Duration(idx*30) * time.Second
 		for _, targetIP := range req.TargetIPs {
-			flows = append(flows, FlowRecord{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: uint16(randomPort()), DstPort: port, Protocol: 6, Bytes: 60, Packets: 1, TCPFlags: 0x02, StartTime: time.Now().Add(-time.Hour + offset), EndTime: time.Now().Add(-time.Hour + offset + time.Second)})
+			flows = append(flows, FlowRecord{
+				SrcIP: req.AttackerIP, DstIP: targetIP,
+				SrcPort: uint16(randomPort()), DstPort: port,
+				Protocol: 6, Bytes: 60, Packets: 1, TCPFlags: 0x02,
+				StartTime: time.Now().Add(-time.Hour + offset),
+				EndTime:   time.Now().Add(-time.Hour + offset + time.Second),
+			})
 		}
 	}
 	if len(req.TargetIPs) > 0 {
@@ -162,12 +170,13 @@ func runLowSlowScan(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
 	}
+
+	// One PCAP per target — all ports in one file with sparse timestamps
+	// so Wireshark shows the slow scan pattern (SYN→RST per port, spaced out)
 	for _, targetIP := range req.TargetIPs {
-		for _, port := range ports {
-			pcapPath, pcapErr := PCAPGenericTCPExchange(req.RunID, "low_slow_scan", req.AttackerIP, targetIP, port, nil, nil)
-			if pcapErr == nil {
-				result.PCAPFiles = append(result.PCAPFiles, pcapPath)
-			}
+		pcapPath, pcapErr := PCAPLowSlowScan(req.RunID, req.AttackerIP, targetIP, ports)
+		if pcapErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, pcapPath)
 		}
 	}
 	logInfo("Return from runLowSlowScan syslogs=%d", result.SyslogCount)
@@ -183,6 +192,7 @@ func runDecoyScan(req AttackRequest) (*AttackResult, error) {
 	for idx := range decoyIPs {
 		decoyIPs[idx] = fmt.Sprintf("10.%d.%d.%d", rand.Intn(256), rand.Intn(256), 1+rand.Intn(254))
 	}
+
 	for _, targetIP := range req.TargetIPs {
 		targetDev, _ := getDeviceByIP(targetIP)
 		devName := targetIP
@@ -201,12 +211,18 @@ func runDecoyScan(req AttackRequest) (*AttackResult, error) {
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 	}
+
 	fw := getFirewall()
 	flows := []FlowRecord{}
 	allSources := append([]string{req.AttackerIP}, decoyIPs...)
 	for _, srcIP := range allSources {
 		for _, targetIP := range req.TargetIPs {
-			flows = append(flows, FlowRecord{SrcIP: srcIP, DstIP: targetIP, SrcPort: uint16(randomPort()), DstPort: uint16(randomPort()), Protocol: 6, Bytes: 60, Packets: 1, TCPFlags: 0x02, StartTime: time.Now().Add(-10 * time.Second), EndTime: time.Now()})
+			flows = append(flows, FlowRecord{
+				SrcIP: srcIP, DstIP: targetIP,
+				SrcPort: uint16(randomPort()), DstPort: uint16(randomPort()),
+				Protocol: 6, Bytes: 60, Packets: 1, TCPFlags: 0x02,
+				StartTime: time.Now().Add(-10 * time.Second), EndTime: time.Now(),
+			})
 		}
 	}
 	if len(req.TargetIPs) > 0 {
@@ -214,12 +230,13 @@ func runDecoyScan(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
 	}
-	for _, srcIP := range allSources {
-		for _, targetIP := range req.TargetIPs {
-			pcapPath, pcapErr := PCAPGenericTCPExchange(req.RunID, "decoy_scan", srcIP, targetIP, uint16(randomPort()), nil, nil)
-			if pcapErr == nil {
-				result.PCAPFiles = append(result.PCAPFiles, pcapPath)
-			}
+
+	// One PCAP per target — all source IPs interleaved so Wireshark shows
+	// simultaneous SYNs from many sources (the nmap -D signature)
+	for _, targetIP := range req.TargetIPs {
+		pcapPath, pcapErr := PCAPDecoyScan(req.RunID, req.AttackerIP, targetIP, decoyIPs)
+		if pcapErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, pcapPath)
 		}
 	}
 	logInfo("Return from runDecoyScan syslogs=%d", result.SyslogCount)

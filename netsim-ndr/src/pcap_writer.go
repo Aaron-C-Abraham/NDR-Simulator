@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1201,9 +1202,9 @@ func PCAPLateral(runID, attackerIP, targetIP string, targetPort uint16) (string,
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack4)))
 
 	// ── SMB2 Tree Connect to \\target\C$ (client) ───────────────────────────
-	treePayload := []byte(fmt.Sprintf("\\\\%s\\C$", targetIP))
-	treeHdr := buildSMB2Header(3, 3, 1, 1, treePayload)
-	treeReq := append(treeHdr, treePayload...)
+	treeBody := buildSMB2TreeConnectRequest(fmt.Sprintf("\\\\%s\\C$", targetIP))
+	treeHdr := buildSMB2Header(3, 3, 1, 1, treeBody)
+	treeReq := append(treeHdr, treeBody...)
 	tree1 := buildTCPSegment(srcPort, targetPort, 0x18, clientSeq, serverSeq, treeReq)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, tree1)))
 	clientSeq += uint32(len(treeReq))
@@ -1217,7 +1218,7 @@ func PCAPLateral(runID, attackerIP, targetIP string, targetPort uint16) (string,
 		0x00, 0x00, 0x00, 0x00, // Capabilities
 		0xff, 0x01, 0x1f, 0x00, // MaximalAccess
 	}
-	treeRespHdr := buildSMB2Header(3, 3, 1, 1, treeRespPayload)
+	treeRespHdr := buildSMB2ResponseHeader(3, 3, 1, 1, 0, treeRespPayload)
 	treeResp := append(treeRespHdr, treeRespPayload...)
 	tree2 := buildTCPSegment(targetPort, srcPort, 0x18, serverSeq, clientSeq, treeResp)
 	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, tree2)))
@@ -1243,7 +1244,7 @@ func PCAPLateral(runID, attackerIP, targetIP string, targetPort uint16) (string,
 		0x00, 0x00, 0x00, 0x00, // Remaining
 		0x00, 0x00, 0x00, 0x00, // WriteChannelInfoOffset/Length
 	}
-	writeRespHdr := buildSMB2Header(9, 4, 1, 1, writeRespPayload)
+	writeRespHdr := buildSMB2ResponseHeader(9, 4, 1, 1, 0, writeRespPayload)
 	writeResp := append(writeRespHdr, writeRespPayload...)
 	wr2 := buildTCPSegment(targetPort, srcPort, 0x18, serverSeq, clientSeq, writeResp)
 	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, wr2)))
@@ -1469,9 +1470,9 @@ func PCAPPsExec(runID, attackerIP, targetIP string) (string, error) {
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack4)))
 
 	// ── SMB2 Tree Connect to \\target\IPC$ (client) ─────────────────────────
-	ipcPath := []byte(fmt.Sprintf("\\\\%s\\IPC$", targetIP))
-	ipcHdr := buildSMB2Header(3, 3, 1, 1, ipcPath)
-	ipcReq := append(ipcHdr, ipcPath...)
+	ipcBody := buildSMB2TreeConnectRequest(fmt.Sprintf("\\\\%s\\IPC$", targetIP))
+	ipcHdr := buildSMB2Header(3, 3, 1, 1, ipcBody)
+	ipcReq := append(ipcHdr, ipcBody...)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 445, 0x18, clientSeq, serverSeq, ipcReq))))
 	clientSeq += uint32(len(ipcReq))
 
@@ -1484,7 +1485,7 @@ func PCAPPsExec(runID, attackerIP, targetIP string) (string, error) {
 		0x00, 0x00, 0x00, 0x00, // Capabilities
 		0xff, 0x01, 0x1f, 0x00, // MaximalAccess
 	}
-	treeRespHdr := buildSMB2Header(3, 3, 1, 1, treeRespPayload)
+	treeRespHdr := buildSMB2ResponseHeader(3, 3, 1, 1, 0, treeRespPayload)
 	treeResp := append(treeRespHdr, treeRespPayload...)
 	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(445, srcPort, 0x18, serverSeq, clientSeq, treeResp))))
 	serverSeq += uint32(len(treeResp))
@@ -1492,24 +1493,23 @@ func PCAPPsExec(runID, attackerIP, targetIP string) (string, error) {
 	ack5 := buildTCPSegment(srcPort, 445, 0x10, clientSeq, serverSeq, nil)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack5)))
 
-	// ── DCE/RPC CreateServiceW on \svcctl pipe (client) ─────────────────────
-	// opnum 12 = CreateServiceW in the SVCCTL interface
+	// ── DCE/RPC CreateServiceW on \svcctl pipe (client) ─────────────────────────
 	svcctlPayload := []byte("PSEXESVC\x00%SystemRoot%\\PSEXESVC.exe\x00")
 	createSvcReq := buildDCERPCRequestStub(1, 12, svcctlPayload)
-	svcHdr := buildSMB2Header(9, 4, 1, 1, createSvcReq)
-	svcWrite := append(svcHdr, createSvcReq...)
+	// Wrap DCE/RPC stub in a proper SMB2 Write request body
+	svcWriteReq := buildSMB2WriteRequest(createSvcReq)
+	svcHdr := buildSMB2Header(9, 4, 1, 1, svcWriteReq)
+	svcWrite := append(svcHdr, svcWriteReq...)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 445, 0x18, clientSeq, serverSeq, svcWrite))))
 	clientSeq += uint32(len(svcWrite))
 
-	// ── DCE/RPC CreateServiceW response — STATUS_SUCCESS (server) ───────────
-	createSvcResp := buildDCERPCResponseStub(1, []byte("ReturnValue=0")) // ERROR_SUCCESS
-	svcRespHdr := buildSMB2Header(9, 4, 1, 1, createSvcResp)
-	svcRespFrame := append(svcRespHdr, createSvcResp...)
+	// ── DCE/RPC CreateServiceW response ─────────────────────────────────────────
+	createSvcResp := buildDCERPCResponseStub(1, []byte("ReturnValue=0"))
+	svcRespPayload := buildSMB2WriteRequest(createSvcResp) // reuse write structure for response body
+	svcRespHdr := buildSMB2ResponseHeader(9, 4, 1, 1, 0, svcRespPayload)
+	svcRespFrame := append(svcRespHdr, svcRespPayload...)
 	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(445, srcPort, 0x18, serverSeq, clientSeq, svcRespFrame))))
 	serverSeq += uint32(len(svcRespFrame))
-
-	ack6 := buildTCPSegment(srcPort, 445, 0x10, clientSeq, serverSeq, nil)
-	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack6)))
 
 	// ── SMB2 Write — drop PSEXESVC.exe to ADMIN$ (client) ───────────────────
 	exeBanner := []byte("MZ\x90\x00PSEXESVC.exe binary payload")
@@ -1527,7 +1527,7 @@ func PCAPPsExec(runID, attackerIP, targetIP string) (string, error) {
 		0x00, 0x00, 0x00, 0x00, // Remaining
 		0x00, 0x00, 0x00, 0x00, // WriteChannelInfo
 	}
-	writeRespHdr := buildSMB2Header(9, 5, 1, 1, writeRespPayload)
+	writeRespHdr := buildSMB2ResponseHeader(9, 5, 1, 1, 0, writeRespPayload)
 	writeResp := append(writeRespHdr, writeRespPayload...)
 	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(445, srcPort, 0x18, serverSeq, clientSeq, writeResp))))
 
@@ -3338,25 +3338,52 @@ func buildDCERPCResponseStub(callID uint32, approxPayload []byte) []byte {
 
 // ── SMB2 (RFC 1002) ──────────────────────────────────────────────────────────
 
-// buildSMB2Header builds a 64-byte SMB2 common header (Signature, StructureSize,
-// CreditCharge, Status, Command, CreditRequestResponse, Flags, NextCommand,
-// MessageID, AsyncID/TreeID, SessionID, Signature).
+// buildSMB2Header builds a 64-byte SMB2 header + NBSS wrapper.
+// payload is used only for NBSS length — callers must NOT append payload again.
+// The returned bytes are: NBSS(4) + SMB2Header(64) + payload
 func buildSMB2Header(command uint16, messageID uint64, treeID uint32, sessionID uint64, payload []byte) []byte {
 	hdr := make([]byte, 64)
-	copy(hdr[0:4], []byte{0xFE, 0x53, 0x4D, 0x42})  // Signature: "\xFFSMB"
-	binary.LittleEndian.PutUint16(hdr[4:6], 0x0040) // StructureSize = 64
-	binary.LittleEndian.PutUint16(hdr[6:8], 0)      // CreditCharge
-	binary.LittleEndian.PutUint32(hdr[8:12], 0)     // Status = 0 (success)
+	copy(hdr[0:4], []byte{0xFE, 0x53, 0x4D, 0x42})
+	binary.LittleEndian.PutUint16(hdr[4:6], 0x0040)
+	binary.LittleEndian.PutUint16(hdr[6:8], 0)
+	binary.LittleEndian.PutUint32(hdr[8:12], 0)
 	binary.LittleEndian.PutUint16(hdr[12:14], command)
-	binary.LittleEndian.PutUint16(hdr[14:16], 1) // CreditRequestResponse
-	binary.LittleEndian.PutUint32(hdr[16:20], 0) // Flags
-	binary.LittleEndian.PutUint32(hdr[20:24], 0) // NextCommand = 0 (single PDU)
+	binary.LittleEndian.PutUint16(hdr[14:16], 1)
+	binary.LittleEndian.PutUint32(hdr[16:20], 0)
+	binary.LittleEndian.PutUint32(hdr[20:24], 0)
 	binary.LittleEndian.PutUint64(hdr[24:32], messageID)
-	binary.LittleEndian.PutUint32(hdr[32:36], 0) // Reserved (ProcessID in requests)
+	binary.LittleEndian.PutUint32(hdr[32:36], 0)
 	binary.LittleEndian.PutUint32(hdr[36:40], treeID)
 	binary.LittleEndian.PutUint64(hdr[40:48], sessionID)
-	// Signature (48:64) = 16 bytes of zeros (HMAC, not computed for prototype)
-	return hdr
+
+	// NBSS length = SMB2 header (64) + payload
+	totalLen := 64 + len(payload)
+	nbss := []byte{0x00, byte(totalLen >> 16), byte(totalLen >> 8), byte(totalLen)}
+	// Return NBSS + SMB2 header only — caller appends payload
+	return append(nbss, hdr...)
+}
+
+// buildSMB2ResponseHeader is like buildSMB2Header but sets the SMB2
+// response flag (0x00000001) in Flags so Wireshark dissects server→client
+// frames correctly.
+func buildSMB2ResponseHeader(command uint16, messageID uint64, treeID uint32, sessionID uint64, status uint32, payload []byte) []byte {
+	hdr := make([]byte, 64)
+	copy(hdr[0:4], []byte{0xFE, 0x53, 0x4D, 0x42})
+	binary.LittleEndian.PutUint16(hdr[4:6], 0x0040)
+	binary.LittleEndian.PutUint16(hdr[6:8], 0)
+	binary.LittleEndian.PutUint32(hdr[8:12], status) // NT Status
+	binary.LittleEndian.PutUint16(hdr[12:14], command)
+	binary.LittleEndian.PutUint16(hdr[14:16], 1)
+	binary.LittleEndian.PutUint32(hdr[16:20], 0x00000001) // Flags: response
+	binary.LittleEndian.PutUint32(hdr[20:24], 0)
+	binary.LittleEndian.PutUint64(hdr[24:32], messageID)
+	binary.LittleEndian.PutUint32(hdr[32:36], 0)
+	binary.LittleEndian.PutUint32(hdr[36:40], treeID)
+	binary.LittleEndian.PutUint64(hdr[40:48], sessionID)
+
+	totalLen := 64 + len(payload)
+	nbss := []byte{0x00, byte(totalLen >> 16), byte(totalLen >> 8), byte(totalLen)}
+	return append(nbss, hdr...)
 }
 
 // buildSMB2WriteRequest builds a SMB2 WRITE request command (command 15): 49-byte
@@ -3497,9 +3524,9 @@ func PCAPSMBChannel(runID, attackerIP, targetIP, pipeName string) (string, error
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack4)))
 
 	// ── SMB2 Tree Connect to \\target\IPC$ (client) ─────────────────────────
-	ipcPath := []byte(fmt.Sprintf("\\\\%s\\IPC$", targetIP))
-	ipcHdr := buildSMB2Header(3, 3, 1, 1, ipcPath)
-	ipcReq := append(ipcHdr, ipcPath...)
+	ipcBody := buildSMB2TreeConnectRequest(fmt.Sprintf("\\\\%s\\IPC$", targetIP))
+	ipcHdr := buildSMB2Header(3, 3, 1, 1, ipcBody)
+	ipcReq := append(ipcHdr, ipcBody...)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(srcPort, 445, 0x18, clientSeq, serverSeq, ipcReq))))
 	clientSeq += uint32(len(ipcReq))
 
@@ -3509,7 +3536,7 @@ func PCAPSMBChannel(runID, attackerIP, targetIP, pipeName string) (string, error
 		0x00, 0x00, 0x00, 0x00, // Capabilities
 		0xff, 0x01, 0x1f, 0x00, // MaximalAccess
 	}
-	treeRespHdr := buildSMB2Header(3, 3, 1, 1, treeRespPayload)
+	treeRespHdr := buildSMB2ResponseHeader(3, 3, 1, 1, 0, treeRespPayload)
 	treeResp := append(treeRespHdr, treeRespPayload...)
 	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(445, srcPort, 0x18, serverSeq, clientSeq, treeResp))))
 	serverSeq += uint32(len(treeResp))
@@ -3533,7 +3560,7 @@ func PCAPSMBChannel(runID, attackerIP, targetIP, pipeName string) (string, error
 		0x00, 0x00, 0x00, 0x00, // Remaining
 		0x00, 0x00, 0x00, 0x00, // WriteChannelInfo
 	}
-	writeRespHdr := buildSMB2Header(9, 4, 1, 1, writeRespPayload)
+	writeRespHdr := buildSMB2ResponseHeader(9, 4, 1, 1, 0, writeRespPayload)
 	writeResp := append(writeRespHdr, writeRespPayload...)
 	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(445, srcPort, 0x18, serverSeq, clientSeq, writeResp))))
 	serverSeq += uint32(len(writeResp))
@@ -3578,7 +3605,7 @@ func PCAPSMBChannel(runID, attackerIP, targetIP, pipeName string) (string, error
 		// Victim response — same structure as command write
 		respPayload := []byte(fmt.Sprintf("Encrypted C2 response [%d]: %s", i+1, responses[i]))
 		respReq := buildSMB2WriteRequest(respPayload)
-		respHdr := buildSMB2Header(9, uint64(10+i), 1, 1, respReq)
+		respHdr := buildSMB2ResponseHeader(9, uint64(10+i), 1, 1, 0, respReq)
 		respData := append(respHdr, respReq...)
 		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6,
 			buildTCPSegment(445, srcPort, 0x18, serverSeq, clientSeq, addNBSS(respData)))))
@@ -4292,19 +4319,36 @@ func PCAPGoldenTicket(runID, attackerIP, targetIP, realmName, userPrincipal stri
 	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
 	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
 	krbPort := randomPort()
-	till := time.Now().Add(10 * 365 * 24 * time.Hour)
-	nonce := rand.Intn(1<<31 - 1)
+	var frames [][]byte
 
-	tgsReq := kerberosKDCReq(0x6c, 12, false, nil, realmName, []string{"cifs", targetIP}, till, nonce, []int{23})
-	reqFrame := buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 17, buildUDPDatagram(krbPort, 88, tgsReq)))
+	// --- Phase 1: Normal AS-REQ/AS-REP (legitimate-looking pre-auth) ---
+	// Provides context — the anomalous TGS-REQ below stands out against this
+	normalTill := time.Now().Add(8 * time.Hour) // normal ticket lifetime
+	normalNonce := rand.Intn(1<<31 - 1)
+	asReq := kerberosKDCReq(0x6a, 10, true, []string{userPrincipal}, realmName, []string{"krbtgt", realmName}, normalTill, normalNonce, []int{18, 17, 23})
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 17, buildUDPDatagram(krbPort, 88, asReq))))
+
+	asRep := kerberosKDCRep(0x6b, 11, realmName, []string{userPrincipal}, []string{"krbtgt", realmName}, 18, kerberosFillerCipher(32), 18, kerberosFillerCipher(64))
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 17, buildUDPDatagram(88, krbPort, asRep))))
+
+	// --- Phase 2: TGS-REQ with forged Golden Ticket ---
+	// Key anomalies Wireshark analysts look for:
+	// - etype 23 (RC4-HMAC) — Golden Ticket tools default to RC4
+	// - till = 10 years — real DCs issue max 10-hour tickets
+	// - no padata AP-REQ (forged ticket bypasses normal TGT validation)
+	goldenTill := time.Now().Add(10 * 365 * 24 * time.Hour) // 10-year lifetime — anomalous
+	goldenNonce := rand.Intn(1<<31 - 1)
+	tgsReq := kerberosKDCReq(0x6c, 12, false, nil, realmName, []string{"cifs", targetIP}, goldenTill, goldenNonce, []int{23})
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 17, buildUDPDatagram(krbPort, 88, tgsReq))))
 
 	tgsRep := kerberosKDCRep(0x6d, 13, realmName, []string{userPrincipal}, []string{"cifs", targetIP}, 23, kerberosFillerCipher(32), 23, kerberosFillerCipher(96))
-	repFrame := buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 17, buildUDPDatagram(88, krbPort, tgsRep)))
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 17, buildUDPDatagram(88, krbPort, tgsRep))))
 
-	frames := [][]byte{reqFrame, repFrame}
-
+	// --- Phase 3: SMB session using the forged ticket ---
+	// Shows the attacker actually using the Golden Ticket to access the target
 	smbSrcPort := randomPort()
 	clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
+
 	syn := buildTCPSegment(smbSrcPort, 445, 0x02, clientSeq, 0, nil)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
 	clientSeq++
@@ -4313,11 +4357,35 @@ func PCAPGoldenTicket(runID, attackerIP, targetIP, realmName, userPrincipal stri
 	serverSeq++
 	ack := buildTCPSegment(smbSrcPort, 445, 0x10, clientSeq, serverSeq, nil)
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
+
 	neg := buildTCPSegment(smbSrcPort, 445, 0x18, clientSeq, serverSeq, smbNegotiatePDU[:])
 	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, neg)))
 	clientSeq += uint32(len(smbNegotiatePDU))
+
 	negResp := buildTCPSegment(445, smbSrcPort, 0x18, serverSeq, clientSeq, SMB2_Negotiate_Response)
 	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, negResp)))
+	serverSeq += uint32(len(SMB2_Negotiate_Response))
+	ack2 := buildTCPSegment(smbSrcPort, 445, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack2)))
+
+	// Session Setup with Kerberos blob (forged ticket presented here)
+	ntlmNeg := []byte{
+		0x4e, 0x54, 0x4c, 0x4d, 0x53, 0x53, 0x50, 0x00,
+		0x01, 0x00, 0x00, 0x00,
+		0x97, 0x82, 0x08, 0xe2,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x0a, 0x00, 0x61, 0x4a, 0x00, 0x00, 0x00, 0x0f,
+	}
+	ssReq := buildSMB2SessionSetup(1, true, 0, ntlmNeg)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, buildTCPSegment(smbSrcPort, 445, 0x18, clientSeq, serverSeq, ssReq))))
+	clientSeq += uint32(len(ssReq))
+
+	ssResp := buildSMB2SessionSetup(1, false, 0, nil)
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, buildTCPSegment(445, smbSrcPort, 0x18, serverSeq, clientSeq, ssResp))))
+	serverSeq += uint32(len(ssResp))
+	ack3 := buildTCPSegment(smbSrcPort, 445, 0x10, clientSeq, serverSeq, nil)
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack3)))
 
 	bgFrames := generateBackgroundTraffic(getAllDevices())
 	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
@@ -6398,4 +6466,174 @@ func PCAPGenericTCPExchangeN(runID, attackName, attackerIP, targetIP string, tar
 	path, err := writePCAPFile(runID, attackName, finalFrames, defaultDuration)
 	logInfo("Return from PCAPGenericTCPExchangeN frames=%d path=%s", len(finalFrames), path)
 	return path, err
+}
+
+// writePCAPFileWithTimestamps writes a PCAP where each frame has an explicit
+// pre-computed timestamp. Used for low-and-slow attacks where the timing
+// between packets is the key forensic signature — the 30-second gaps between
+// SYNs must be preserved exactly as-is in the PCAP record headers.
+func writePCAPFileWithTimestamps(runID, attackName string, frames []struct {
+	data []byte
+	ts   time.Time
+}) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering writePCAPFileWithTimestamps runID=%s attack=%s frames=%d", runID, attackName, len(frames))
+
+	filename := fmt.Sprintf("%s_%s_%s_%06d.pcap", runID, attackName, time.Now().Format("20060102_150405"), time.Now().Nanosecond()/1000)
+	path := filepath.Join(GlobalPCAPDir, filename)
+
+	GlobalPCAPWriteLock.Lock()
+	defer GlobalPCAPWriteLock.Unlock()
+
+	file, err := os.Create(path)
+	if err != nil {
+		logError("writePCAPFileWithTimestamps create %s: %v", path, err)
+		return "", err
+	}
+	defer file.Close()
+
+	ghdr := PCAPGlobalHeader{
+		MagicNumber:  0xa1b2c3d4,
+		VersionMajor: 2,
+		VersionMinor: 4,
+		ThisZone:     0,
+		SigFigs:      0,
+		SnapLen:      65535,
+		Network:      1, // LINKTYPE_ETHERNET
+	}
+	if err = binary.Write(file, binary.LittleEndian, ghdr); err != nil {
+		logError("writePCAPFileWithTimestamps global header: %v", err)
+		return "", err
+	}
+
+	for _, f := range frames {
+		rhdr := PCAPRecordHeader{
+			TsSec:   uint32(f.ts.Unix()),
+			TsUsec:  uint32(f.ts.Nanosecond() / 1000),
+			InclLen: uint32(len(f.data)),
+			OrigLen: uint32(len(f.data)),
+		}
+		if err = binary.Write(file, binary.LittleEndian, rhdr); err != nil {
+			logError("writePCAPFileWithTimestamps record header: %v", err)
+			return "", err
+		}
+		if _, err = file.Write(f.data); err != nil {
+			logError("writePCAPFileWithTimestamps packet data: %v", err)
+			return "", err
+		}
+	}
+
+	logInfo("Return from writePCAPFileWithTimestamps path=%s", path)
+	return path, nil
+}
+
+func PCAPLowSlowScan(runID, attackerIP, targetIP string, ports []uint16) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPLowSlowScan attacker=%s target=%s ports=%d", attackerIP, targetIP, len(ports))
+
+	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+
+	var frames []struct {
+		data []byte
+		ts   time.Time
+	}
+
+	base := time.Now().Add(-time.Hour)
+	for idx, port := range ports {
+		portBase := base.Add(time.Duration(idx*30) * time.Second)
+
+		// Background chatter in the first 25 seconds of each 30s window
+		// — normal traffic happening while attacker waits before next probe
+		bgFrames := generateBackgroundTraffic(getAllDevices())
+		for i, bg := range bgFrames {
+			bgTS := portBase.Add(time.Duration(i*2500) * time.Millisecond)
+			if bgTS.After(portBase.Add(25 * time.Second)) {
+				break
+			}
+			frames = append(frames, struct {
+				data []byte
+				ts   time.Time
+			}{bg, bgTS})
+		}
+
+		// SYN at the 30s mark
+		srcPort := randomPort()
+		seq := rand.Uint32()
+		syn := buildTCPSegment(srcPort, port, 0x02, seq, 0, nil)
+		frames = append(frames, struct {
+			data []byte
+			ts   time.Time
+		}{buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)), portBase.Add(29 * time.Second)})
+
+		// RST 50ms after SYN
+		rst := buildTCPSegment(port, srcPort, 0x04, 0, seq+1, nil)
+		frames = append(frames, struct {
+			data []byte
+			ts   time.Time
+		}{buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, rst)), portBase.Add(29*time.Second + 50*time.Millisecond)})
+	}
+
+	// Sort frames by timestamp so Wireshark sees them in order
+	sort.Slice(frames, func(i, j int) bool {
+		return frames[i].ts.Before(frames[j].ts)
+	})
+
+	path, err := writePCAPFileWithTimestamps(runID, "low_slow_scan", frames)
+	logInfo("Return from PCAPLowSlowScan frames=%d path=%s", len(frames), path)
+	return path, err
+}
+
+// PCAPDecoyScan generates an nmap -D style decoy scan: SYN packets from
+// the real attacker IP and all decoy IPs interleaved to the same target port,
+// each getting a RST back. The simultaneous multi-source pattern is the
+// key Wireshark signature.
+func PCAPDecoyScan(runID, attackerIP, targetIP string, decoyIPs []string) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering PCAPDecoyScan attacker=%s target=%s decoys=%d", attackerIP, targetIP, len(decoyIPs))
+
+	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	targetPort := uint16(80)
+	allSources := append([]string{attackerIP}, decoyIPs...)
+
+	var frames [][]byte
+	for _, srcIP := range allSources {
+		srcMAC := [6]byte{0x00, 0xAA, byte(rand.Intn(255)), byte(rand.Intn(255)), byte(rand.Intn(255)), byte(rand.Intn(255))}
+		srcPort := randomPort()
+		seq := rand.Uint32()
+
+		// SYN
+		syn := buildTCPSegment(srcPort, targetPort, 0x02, seq, 0, nil)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(srcIP, targetIP, 6, syn)))
+
+		// RST back
+		rst := buildTCPSegment(targetPort, srcPort, 0x04, 0, seq+1, nil)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, srcIP, 6, rst)))
+	}
+
+	bgFrames := generateBackgroundTraffic(getAllDevices())
+	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+	path, err := writePCAPFile(runID, "decoy_scan", finalFrames, defaultDuration)
+	logInfo("Return from PCAPDecoyScan frames=%d path=%s", len(finalFrames), path)
+	return path, err
+}
+
+// buildSMB2TreeConnectRequest builds a correct SMB2 Tree Connect request body.
+// path must be a UNC path e.g. \\10.0.2.10\C$ — converted to UTF-16LE internally.
+func buildSMB2TreeConnectRequest(path string) []byte {
+	// Convert path to UTF-16LE
+	utf16Path := make([]byte, len(path)*2)
+	for i, c := range path {
+		utf16Path[i*2] = byte(c)
+		utf16Path[i*2+1] = 0x00
+	}
+	// PathOffset = 64 (SMB2 header) + 4 (NBSS) + 8 (body fixed fields)
+	// But Wireshark measures PathOffset from start of SMB2 header = 64 + 8 = 72
+	pathOffset := uint16(64 + 8)
+	body := make([]byte, 8)
+	binary.LittleEndian.PutUint16(body[0:2], 9)                      // StructureSize
+	binary.LittleEndian.PutUint16(body[2:4], 0)                      // Reserved
+	binary.LittleEndian.PutUint16(body[4:6], pathOffset)             // PathOffset
+	binary.LittleEndian.PutUint16(body[6:8], uint16(len(utf16Path))) // PathLength
+	return append(body, utf16Path...)
 }
