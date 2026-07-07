@@ -119,6 +119,7 @@ func writePCAPFileLinkType(runID, attackName string, packets [][]byte, duration 
 			logError("writePCAPFileLinkType packet data: %v", err)
 			return "", err
 		}
+		streamPacket(pkt) // ← stream raw bytes in real-time
 	}
 
 	logInfo("Return from writePCAPFileLinkType path=%s", path)

@@ -4,6 +4,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"math/rand"
@@ -17,6 +18,11 @@ const serverName = "netsim-ndr"
 func main() {
 	defer panicHandler(traceFunc(), nil)
 
+	// Parse command-line flags before anything else
+	streamHost := flag.String("stream-host", "", "IP address to stream raw PCAP packets to (e.g. 10.0.0.5)")
+	streamPort := flag.Int("stream-port", 0, "UDP port to stream raw PCAP packets to (e.g. 9999)")
+	flag.Parse()
+
 	initLogging()
 	logInfo("Starting %s", serverName)
 
@@ -24,6 +30,15 @@ func main() {
 	rand.Seed(time.Now().UnixNano())
 
 	GlobalServerStartTime = time.Now()
+
+	// Initialise packet streamer if both flags provided
+	if *streamHost != "" && *streamPort > 0 {
+		if err := initPacketStreamer(*streamHost, *streamPort); err != nil {
+			logWarn("main: packet streamer not started: %v", err)
+		} else {
+			logInfo("main: streaming packets to %s:%d", *streamHost, *streamPort)
+		}
+	}
 
 	startNetSimServer()
 }
