@@ -162,14 +162,38 @@ func handleExecuteAttack(ginCtx *gin.Context) {
 		logInfo("Port range attack requested,Lower=%d Upper=%d", lower_range, upper_range)
 	}
 
+	if strings.TrimSpace(req.AttackID) == "" {
+		ginCtx.JSON(http.StatusBadRequest, gin.H{"error": "attack_id is required"})
+		return
+	}
+	if strings.TrimSpace(req.AttackerIP) == "" {
+		ginCtx.JSON(http.StatusBadRequest, gin.H{"error": "attacker_ip is required"})
+		return
+	}
+	if len(req.TargetIPs) == 0 {
+		ginCtx.JSON(http.StatusBadRequest, gin.H{"error": "target_ips is required"})
+		return
+	}
+	for i, ip := range req.TargetIPs {
+		if strings.TrimSpace(ip) == "" {
+			ginCtx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("target_ips[%d] is empty", i)})
+			return
+		}
+	}
 	def := lookupAttack(req.AttackID)
 	if def == nil {
 		ginCtx.JSON(http.StatusBadRequest, gin.H{"error": "unknown attack_id: " + req.AttackID})
 		return
 	}
-	if len(req.TargetIPs) == 0 {
-		ginCtx.JSON(http.StatusBadRequest, gin.H{"error": "target_ips required"})
-		return
+	// Validate required attack parameters
+	for _, param := range def.Parameters {
+		if param.Required {
+			val, exists := req.Params[param.Name]
+			if !exists || strings.TrimSpace(val) == "" {
+				ginCtx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("required parameter '%s' is missing or empty", param.Name)})
+				return
+			}
+		}
 	}
 
 	result, err := executeAttack(req)

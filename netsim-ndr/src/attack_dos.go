@@ -64,14 +64,23 @@ func runSYNFlood(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
 
-		// PCAP (Option B)
-		path, _ := PCAPSYNFlood(req.RunID, targetIP, targetPort, sources, duration)
-		if path != "" {
-			result.PCAPFiles = append(result.PCAPFiles, path)
-		}
-
 		// Real packets (Option A)
 		go sendRealSYNProbes(targetIP, int(targetPort), 50)
+	}
+
+	var synPaths []string
+	for _, targetIP := range req.TargetIPs {
+		var srcs []string
+		for idx := 0; idx < 50; idx++ {
+			srcs = append(srcs, fmt.Sprintf("203.0.%d.%d", rand.Intn(255), 1+rand.Intn(254)))
+		}
+		p, _ := PCAPSYNFlood(req.RunID, targetIP, targetPort, srcs, duration)
+		if p != "" {
+			synPaths = append(synPaths, p)
+		}
+	}
+	if merged, merr := mergePCAPFiles(req.RunID, "syn_flood", synPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
 	}
 
 	logInfo("Return from runSYNFlood syslogs=%d flows=%d pcap=%d", result.SyslogCount, result.FlowCount, len(result.PCAPFiles))
@@ -111,14 +120,23 @@ func runUDPFlood(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
 
-		// PCAP (Option B)
-		path, _ := PCAPUDPFlood(req.RunID, targetIP, targetPort, sources[:10])
-		if path != "" {
-			result.PCAPFiles = append(result.PCAPFiles, path)
-		}
-
 		// Real packets (Option A)
 		go sendRealUDPBurst(targetIP, int(targetPort), 100)
+	}
+
+	var udpPaths []string
+	for _, targetIP := range req.TargetIPs {
+		var srcs []string
+		for idx := 0; idx < 20; idx++ {
+			srcs = append(srcs, fmt.Sprintf("198.51.%d.%d", rand.Intn(255), 1+rand.Intn(254)))
+		}
+		p, _ := PCAPUDPFlood(req.RunID, targetIP, targetPort, srcs[:10])
+		if p != "" {
+			udpPaths = append(udpPaths, p)
+		}
+	}
+	if merged, merr := mergePCAPFiles(req.RunID, "udp_flood", udpPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
 	}
 
 	logInfo("Return from runUDPFlood syslogs=%d flows=%d pcap=%d", result.SyslogCount, result.FlowCount, len(result.PCAPFiles))
@@ -148,11 +166,17 @@ func runICMPFlood(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "ICMP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
+	}
 
-		path, _ := PCAPICMPFlood(req.RunID, req.AttackerIP, targetIP, 100)
-		if path != "" {
-			result.PCAPFiles = append(result.PCAPFiles, path)
+	var icmpPaths []string
+	for _, targetIP := range req.TargetIPs {
+		p, _ := PCAPICMPFlood(req.RunID, req.AttackerIP, targetIP, 100)
+		if p != "" {
+			icmpPaths = append(icmpPaths, p)
 		}
+	}
+	if merged, merr := mergePCAPFiles(req.RunID, "icmp_flood", icmpPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
 	}
 
 	logInfo("Return from runICMPFlood syslogs=%d flows=%d", result.SyslogCount, result.FlowCount)
@@ -199,14 +223,19 @@ func runHTTPFlood(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
 
-		// PCAP (Option B)
-		path, _ := PCAPHTTPFlood(req.RunID, req.AttackerIP, targetIP, 80, 20)
-		if path != "" {
-			result.PCAPFiles = append(result.PCAPFiles, path)
-		}
-
 		// Real packets (Option A)
 		go sendRealHTTPFlood(targetIP, 80, rps)
+	}
+
+	var httpPaths []string
+	for _, targetIP := range req.TargetIPs {
+		p, _ := PCAPHTTPFlood(req.RunID, req.AttackerIP, targetIP, 80, 20)
+		if p != "" {
+			httpPaths = append(httpPaths, p)
+		}
+	}
+	if merged, merr := mergePCAPFiles(req.RunID, "http_flood", httpPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
 	}
 
 	logInfo("Return from runHTTPFlood syslogs=%d flows=%d pcap=%d", result.SyslogCount, result.FlowCount, len(result.PCAPFiles))
@@ -245,14 +274,19 @@ func runSlowloris(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
 
-		// PCAP (Option B)
-		path, _ := PCAPSlowloris(req.RunID, req.AttackerIP, targetIP, connections)
-		if path != "" {
-			result.PCAPFiles = append(result.PCAPFiles, path)
-		}
-
 		// Real packets (Option A)
 		go sendRealSlowloris(targetIP, 80, connections)
+	}
+
+	var slowPaths []string
+	for _, targetIP := range req.TargetIPs {
+		p, _ := PCAPSlowloris(req.RunID, req.AttackerIP, targetIP, connections)
+		if p != "" {
+			slowPaths = append(slowPaths, p)
+		}
+	}
+	if merged, merr := mergePCAPFiles(req.RunID, "slowloris", slowPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
 	}
 
 	logInfo("Return from runSlowloris syslogs=%d flows=%d pcap=%d", result.SyslogCount, result.FlowCount, len(result.PCAPFiles))
@@ -298,10 +332,17 @@ func runAmplification(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", amplifier, targetIP, "UDP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
-		ampPath, ampErr := PCAPUDPAmplification(req.RunID, req.AttackerIP, amplifier, targetIP, 53, 3000)
-		if ampErr == nil {
-			result.PCAPFiles = append(result.PCAPFiles, ampPath)
+	}
+
+	var ampPaths []string
+	for _, targetIP := range req.TargetIPs {
+		p, e := PCAPUDPAmplification(req.RunID, req.AttackerIP, amplifier, targetIP, 53, 3000)
+		if e == nil {
+			ampPaths = append(ampPaths, p)
 		}
+	}
+	if merged, merr := mergePCAPFiles(req.RunID, "amplification", ampPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
 	}
 
 	logInfo("Return from runAmplification syslogs=%d flows=%d", result.SyslogCount, result.FlowCount)
@@ -333,11 +374,19 @@ func runHTTP2Reset(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
-		h2Path, h2Err := PCAPHTTP2Reset(req.RunID, req.AttackerIP, targetIP, streams)
-		if h2Err == nil {
-			result.PCAPFiles = append(result.PCAPFiles, h2Path)
+	}
+
+	var h2Paths []string
+	for _, targetIP := range req.TargetIPs {
+		p, e := PCAPHTTP2Reset(req.RunID, req.AttackerIP, targetIP, streams)
+		if e == nil {
+			h2Paths = append(h2Paths, p)
 		}
 	}
+	if merged, merr := mergePCAPFiles(req.RunID, "http2_reset", h2Paths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
+	}
+
 	logInfo("Return from runHTTP2Reset syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -377,11 +426,23 @@ func runSSLExhaustion(req AttackRequest) (*AttackResult, error) {
 		if renegCount < 10 {
 			renegCount = 10
 		}
-		sslPath, sslErr := PCAPSSLRenegotiationExhaustion(req.RunID, req.AttackerIP, targetIP, uint16(targetPort), renegCount)
-		if sslErr == nil {
-			result.PCAPFiles = append(result.PCAPFiles, sslPath)
+	}
+
+	var sslPaths []string
+	for _, targetIP := range req.TargetIPs {
+		renegCountMerge := 50 * getAttackParamInt(req.Params, "duration", 30) / 30
+		if renegCountMerge < 10 {
+			renegCountMerge = 10
+		}
+		p, e := PCAPSSLRenegotiationExhaustion(req.RunID, req.AttackerIP, targetIP, uint16(targetPort), renegCountMerge)
+		if e == nil {
+			sslPaths = append(sslPaths, p)
 		}
 	}
+	if merged, merr := mergePCAPFiles(req.RunID, "ssl_exhaustion", sslPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
+	}
+
 	logInfo("Return from runSSLExhaustion syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -417,11 +478,19 @@ func runMemcachedAmp(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", reflector, targetIP, "UDP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
-		mcPath, mcErr := PCAPUDPAmplification(req.RunID, req.AttackerIP, reflector, targetIP, 11211, 1400)
-		if mcErr == nil {
-			result.PCAPFiles = append(result.PCAPFiles, mcPath)
+	}
+
+	var mcPaths []string
+	for _, targetIP := range req.TargetIPs {
+		p, e := PCAPUDPAmplification(req.RunID, req.AttackerIP, reflector, targetIP, 11211, 1400)
+		if e == nil {
+			mcPaths = append(mcPaths, p)
 		}
 	}
+	if merged, merr := mergePCAPFiles(req.RunID, "memcached_amp", mcPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
+	}
+
 	logInfo("Return from runMemcachedAmp syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -471,11 +540,28 @@ func runRUDY(req AttackRequest) (*AttackResult, error) {
 		if pcapConns > 5 {
 			pcapConns = 5 // cap at 5 connections in PCAP — enough to show the pattern without huge files
 		}
-		rudyPath, rudyErr := PCAPRUDYAttack(req.RunID, req.AttackerIP, targetIP, pcapConns, dripsPerConn)
-		if rudyErr == nil {
-			result.PCAPFiles = append(result.PCAPFiles, rudyPath)
+	}
+
+	var rudyPaths []string
+	rudyDuration := getAttackParamInt(req.Params, "duration", 600)
+	rudyDrips := rudyDuration / 10
+	if rudyDrips < 3 {
+		rudyDrips = 3
+	}
+	rudyConns := getAttackParamInt(req.Params, "connections", 100)
+	if rudyConns > 5 {
+		rudyConns = 5
+	}
+	for _, targetIP := range req.TargetIPs {
+		p, e := PCAPRUDYAttack(req.RunID, req.AttackerIP, targetIP, rudyConns, rudyDrips)
+		if e == nil {
+			rudyPaths = append(rudyPaths, p)
 		}
 	}
+	if merged, merr := mergePCAPFiles(req.RunID, "rudy", rudyPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
+	}
+
 	logInfo("Return from runRUDY syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -508,11 +594,19 @@ func runACKFlood(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
-		ackPath, ackErr := PCAPACKFlood(req.RunID, targetIP, targetPort, sources)
-		if ackErr == nil {
-			result.PCAPFiles = append(result.PCAPFiles, ackPath)
+	}
+
+	var ackPaths []string
+	for _, targetIP := range req.TargetIPs {
+		p, e := PCAPACKFlood(req.RunID, targetIP, targetPort, sources)
+		if e == nil {
+			ackPaths = append(ackPaths, p)
 		}
 	}
+	if merged, merr := mergePCAPFiles(req.RunID, "ack_flood", ackPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
+	}
+
 	logInfo("Return from runACKFlood syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -546,11 +640,24 @@ func runRSTFlood(req AttackRequest) (*AttackResult, error) {
 		if rstCount < 50 {
 			rstCount = 50
 		}
-		rstPath, rstErr := PCAPRSTFlood(req.RunID, req.AttackerIP, targetIP, targetPort, rstCount)
-		if rstErr == nil {
-			result.PCAPFiles = append(result.PCAPFiles, rstPath)
+	}
+
+	var rstPaths []string
+	rstDuration := getAttackParamInt(req.Params, "duration", 30)
+	rstCount := 200 * rstDuration / 30
+	if rstCount < 50 {
+		rstCount = 50
+	}
+	for _, targetIP := range req.TargetIPs {
+		p, e := PCAPRSTFlood(req.RunID, req.AttackerIP, targetIP, targetPort, rstCount)
+		if e == nil {
+			rstPaths = append(rstPaths, p)
 		}
 	}
+	if merged, merr := mergePCAPFiles(req.RunID, "rst_flood", rstPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
+	}
+
 	logInfo("Return from runRSTFlood syslogs=%d", result.SyslogCount)
 	return result, nil
 }

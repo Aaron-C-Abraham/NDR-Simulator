@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"math/rand"
@@ -986,13 +987,13 @@ func PCAPBruteForce(runID, attackerIP, targetIP string, targetPort uint16, proto
 
 // PCAPExfil generates PCAP frames for HTTP/S data exfiltration:
 // full TCP handshake → HTTP POST with large Content-Length and 10 MTU-sized
-// data chunks → server ACKs throughout → HTTP 200 OK response. Fully
-// bidirectional so Wireshark shows a complete upload session.
-func PCAPExfil(runID, attackerIP, targetIP string, targetPort uint16, dataMB int) (string, error) {
+// data chunks → server ACKs throughout → HTTP 200 OK response. The infected
+// internal host initiates the upload directly to the attacker's external server.
+func PCAPExfil(runID, infectedIP, attackerServerIP string, targetPort uint16, dataMB int) (string, error) {
 	defer panicHandler(traceFunc(), nil)
-	logInfo("Entering PCAPExfil attacker=%s target=%s port=%d dataMB=%d", attackerIP, targetIP, targetPort, dataMB)
+	logInfo("Entering PCAPExfil infected=%s attackerServer=%s port=%d dataMB=%d", infectedIP, attackerServerIP, targetPort, dataMB)
 
-	srcDev, _ := getDeviceByIP(attackerIP)
+	srcDev, _ := getDeviceByIP(infectedIP)
 	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, 0x77}
 	if srcDev != nil {
 		srcMAC = parseMACAddress(srcDev.MACAddress)
@@ -1003,42 +1004,33 @@ func PCAPExfil(runID, attackerIP, targetIP string, targetPort uint16, dataMB int
 
 	httpHeader := []byte(fmt.Sprintf(
 		"POST /upload?token=%s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/octet-stream\r\nContent-Length: %d\r\nUser-Agent: Mozilla/5.0\r\n\r\n",
-		randomHexString(16), targetIP, dataMB*1024*1024))
+		randomHexString(16), attackerServerIP, dataMB*1024*1024))
 	chunk := make([]byte, 1400)
 	rand.Read(chunk)
 
 	var frames [][]byte
 
 	// ── TCP three-way handshake ──────────────────────────────────────────────
+	// Infected host initiates connection to attacker server
 	syn := buildTCPSegment(srcPort, targetPort, 0x02, clientSeq, 0, nil)
-	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, syn)))
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(infectedIP, attackerServerIP, 6, syn)))
 	clientSeq++
 
 	synAck := buildTCPSegment(targetPort, srcPort, 0x12, serverSeq, clientSeq, nil)
-	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, synAck)))
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(attackerServerIP, infectedIP, 6, synAck)))
 	serverSeq++
 
 	ack := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
-	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, ack)))
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(infectedIP, attackerServerIP, 6, ack)))
 
-	// Attacker → infected host: trigger GET to signal readiness
-	triggerReq := []byte(fmt.Sprintf("GET /task?id=%s HTTP/1.1\r\nHost: %s\r\n\r\n", randomHexString(8), targetIP))
-	triggerPkt := buildTCPSegment(targetPort, srcPort, 0x18, serverSeq, clientSeq, triggerReq)
-	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, triggerPkt)))
-	serverSeq += uint32(len(triggerReq))
-
-	// Infected host ACKs trigger
-	triggerAck := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
-	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, triggerAck)))
-
-	// ── HTTP POST header (client) ────────────────────────────────────────────
+	// ── HTTP POST header (infected host → attacker server) ───────────────────
 	headerPkt := buildTCPSegment(srcPort, targetPort, 0x18, clientSeq, serverSeq, httpHeader)
-	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, headerPkt)))
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(infectedIP, attackerServerIP, 6, headerPkt)))
 	clientSeq += uint32(len(httpHeader))
 
-	// Server ACKs the POST header
+	// Attacker server ACKs the POST header
 	serverAck1 := buildTCPSegment(targetPort, srcPort, 0x10, serverSeq, clientSeq, nil)
-	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, serverAck1)))
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(attackerServerIP, infectedIP, 6, serverAck1)))
 
 	// ── Data chunks (10 MTU-sized packets) ──────────────────────────────────
 	fileHeader := []byte(fmt.Sprintf(
@@ -1056,28 +1048,28 @@ func PCAPExfil(runID, attackerIP, targetIP string, targetPort uint16, dataMB int
 			payload = chunk
 		}
 		data := buildTCPSegment(srcPort, targetPort, 0x18, clientSeq, serverSeq, payload)
-		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, data)))
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(infectedIP, attackerServerIP, 6, data)))
 		clientSeq += uint32(len(payload))
 
 		if idx%2 == 1 {
 			chunkAck := buildTCPSegment(targetPort, srcPort, 0x10, serverSeq, clientSeq, nil)
-			frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, chunkAck)))
+			frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(attackerServerIP, infectedIP, 6, chunkAck)))
 		}
 	}
 
-	// Final server ACK covering all chunks
+	// Final attacker server ACK covering all chunks
 	finalDataAck := buildTCPSegment(targetPort, srcPort, 0x10, serverSeq, clientSeq, nil)
-	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, finalDataAck)))
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(attackerServerIP, infectedIP, 6, finalDataAck)))
 
-	// ── HTTP 200 OK response (server) ───────────────────────────────────────
+	// ── HTTP 200 OK response (attacker server confirms receipt) ─────────────
 	httpResp := []byte("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n{\"status\":\"ok\"}")
 	respPkt := buildTCPSegment(targetPort, srcPort, 0x18, serverSeq, clientSeq, httpResp)
-	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, attackerIP, 6, respPkt)))
+	frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(attackerServerIP, infectedIP, 6, respPkt)))
 	serverSeq += uint32(len(httpResp))
 
-	// Client ACKs the response
+	// Infected host ACKs the response
 	finalAck := buildTCPSegment(srcPort, targetPort, 0x10, clientSeq, serverSeq, nil)
-	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(attackerIP, targetIP, 6, finalAck)))
+	frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(infectedIP, attackerServerIP, 6, finalAck)))
 
 	bgFrames := generateBackgroundTraffic(getAllDevices())
 	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
@@ -1757,7 +1749,7 @@ func PCAPSMTPExfil(runID, attackerIP, targetIP string, dataMB int) (string, erro
 	// Server: 250 OK
 	emit(false, []byte("250 2.1.0 Ok\r\n"))
 	// Client: RCPT TO
-	emit(true, []byte("RCPT TO:<attacker@evil.example>\r\n"))
+	emit(true, []byte(fmt.Sprintf("RCPT TO:<admin@corp.local>\r\n")))
 	// Server: 250 OK
 	emit(false, []byte("250 2.1.5 Ok\r\n"))
 	// Client: DATA
@@ -1765,18 +1757,24 @@ func PCAPSMTPExfil(runID, attackerIP, targetIP string, dataMB int) (string, erro
 	// Server: 354 go ahead
 	emit(false, []byte("354 End data with <CR><LF>.<CR><LF>\r\n"))
 	// Client: message headers + body with attachment stub
-	msgBody := []byte(fmt.Sprintf(
-		"From: exfil@corp.local\r\nTo: attacker@evil.example\r\n"+
-			"Subject: Quarterly Report\r\n"+
-			"MIME-Version: 1.0\r\n"+
-			"Content-Type: multipart/mixed; boundary=\"boundary42\"\r\n\r\n"+
-			"--boundary42\r\n"+
-			"Content-Type: application/zip; name=\"sensitive_data.zip\"\r\n"+
-			"Content-Transfer-Encoding: base64\r\n"+
-			"Content-Disposition: attachment; filename=\"sensitive_data.zip\"\r\n\r\n"+
-			"UEsDBBQAAAAIAExfil%dMBsensitivedata==\r\n"+ // base64 stub indicating size
-			"--boundary42--\r\n.\r\n",
-		dataMB))
+	// Generate realistic base64-encoded ZIP content scaled to dataMB
+	zipMagic := []byte{0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x08, 0x00}
+	zipData := make([]byte, dataMB*512)
+	rand.Read(zipData)
+	zipPayload := append(zipMagic, zipData...)
+	b64Str := base64.StdEncoding.EncodeToString(zipPayload)
+
+	msgBody := []byte(
+		"From: exfil@corp.local\r\nTo: admin@corp.local\r\n" +
+			"Subject: Quarterly Report\r\n" +
+			"MIME-Version: 1.0\r\n" +
+			"Content-Type: multipart/mixed; boundary=\"boundary42\"\r\n\r\n" +
+			"--boundary42\r\n" +
+			"Content-Type: application/zip; name=\"sensitive_data.zip\"\r\n" +
+			"Content-Transfer-Encoding: base64\r\n" +
+			"Content-Disposition: attachment; filename=\"sensitive_data.zip\"\r\n\r\n" +
+			b64Str + "\r\n" +
+			"--boundary42--\r\n.\r\n")
 	emit(true, msgBody)
 	// Server: 250 message accepted
 	emit(false, []byte("250 2.0.0 Ok: queued as A1B2C3D4E5\r\n"))
@@ -6871,4 +6869,87 @@ func PCAPIPv6InIPv4Tunnel(runID, attackerIP, targetIP string) (string, error) {
 	path, err := writePCAPFile(runID, "protocol_tunnel_ipv6", finalFrames, defaultDuration)
 	logInfo("Return from PCAPIPv6InIPv4Tunnel frames=%d path=%s", len(finalFrames), path)
 	return path, err
+}
+
+// writePCAPFileMultiTarget writes all per-target packet generators into a
+// single combined PCAP file. genFn is called once per targetIP and returns
+// the raw ethernet frames for that target; all frames are merged and written
+// to one file. Returns the single output path.
+func writePCAPFileMultiTarget(runID, attackName string, targetIPs []string, genFn func(targetIP string) [][]byte) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering writePCAPFileMultiTarget runID=%s attack=%s targets=%d", runID, attackName, len(targetIPs))
+
+	var allFrames [][]byte
+	for _, ip := range targetIPs {
+		frames := genFn(ip)
+		allFrames = append(allFrames, frames...)
+	}
+
+	bgFrames := generateBackgroundTrafficN(getAllDevices(), len(allFrames)/3+10)
+	finalFrames := interleaveBackgroundTraffic(allFrames, bgFrames)
+	path, err := writePCAPFile(runID, attackName, finalFrames, defaultDuration)
+	logInfo("Return from writePCAPFileMultiTarget path=%s frames=%d", path, len(finalFrames))
+	return path, err
+}
+
+// mergePCAPFiles reads multiple PCAP files (all must share the same link type),
+// concatenates their packet records into a single new file, and removes the
+// originals. Returns the merged file path. If only one path is given it is
+// returned as-is without touching the file.
+func mergePCAPFiles(runID, attackName string, paths []string) (string, error) {
+	defer panicHandler(traceFunc(), nil)
+	logInfo("Entering mergePCAPFiles runID=%s attack=%s files=%d", runID, attackName, len(paths))
+
+	if len(paths) == 0 {
+		return "", fmt.Errorf("mergePCAPFiles: no input files")
+	}
+	if len(paths) == 1 {
+		return paths[0], nil
+	}
+
+	filename := fmt.Sprintf("%s_%s_%s_%06d.pcap", runID, attackName,
+		time.Now().Format("20060102_150405"), time.Now().Nanosecond()/1000)
+	outPath := filepath.Join(GlobalPCAPDir, filename)
+
+	GlobalPCAPWriteLock.Lock()
+	defer GlobalPCAPWriteLock.Unlock()
+
+	out, err := os.Create(outPath)
+	if err != nil {
+		logError("mergePCAPFiles create %s: %v", outPath, err)
+		return "", err
+	}
+	defer out.Close()
+
+	// Write the global header once, using the first input file's link type
+	firstData, err := os.ReadFile(paths[0])
+	if err != nil || len(firstData) < 24 {
+		logError("mergePCAPFiles read first file %s: %v", paths[0], err)
+		return "", fmt.Errorf("mergePCAPFiles: cannot read first file")
+	}
+	if _, err = out.Write(firstData[:24]); err != nil {
+		return "", err
+	}
+
+	// Copy packet records from every input file, skipping each file's 24-byte global header
+	for _, p := range paths {
+		data, readErr := os.ReadFile(p)
+		if readErr != nil {
+			logWarn("mergePCAPFiles: skipping unreadable file %s: %v", p, readErr)
+			continue
+		}
+		if len(data) <= 24 {
+			// Empty PCAP (header only, no packets) — skip but still clean up
+			os.Remove(p)
+			continue
+		}
+		if _, err = out.Write(data[24:]); err != nil {
+			logError("mergePCAPFiles write records from %s: %v", p, err)
+			return "", err
+		}
+		os.Remove(p)
+	}
+
+	logInfo("Return from mergePCAPFiles path=%s", outPath)
+	return outPath, nil
 }
