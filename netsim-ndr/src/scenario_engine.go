@@ -10,10 +10,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-	"gopkg.in/yaml.v3"
 	"os"
 	"path/filepath"
+
+	"github.com/google/uuid"
+	"gopkg.in/yaml.v3"
 )
 
 // ScenarioStep is one attack step inside a scenario.
@@ -28,29 +29,29 @@ type ScenarioStep struct {
 
 // ScenarioDefinition is the parsed scenario YAML/JSON.
 type ScenarioDefinition struct {
-	ID             string         `yaml:"id" json:"id"`
-	Name           string         `yaml:"name" json:"name"`
-	Description    string         `yaml:"description" json:"description"`
-	Category       string         `yaml:"category" json:"category"`
-	MitreTechniques []string      `yaml:"mitre_techniques" json:"mitre_techniques"`
-	Steps          []ScenarioStep `yaml:"steps" json:"steps"`
-	ExpectedAlerts []string       `yaml:"expected_alerts" json:"expected_alerts"`
-	DurationSecs   int            `yaml:"duration_secs" json:"duration_secs"`
+	ID              string         `yaml:"id" json:"id"`
+	Name            string         `yaml:"name" json:"name"`
+	Description     string         `yaml:"description" json:"description"`
+	Category        string         `yaml:"category" json:"category"`
+	MitreTechniques []string       `yaml:"mitre_techniques" json:"mitre_techniques"`
+	Steps           []ScenarioStep `yaml:"steps" json:"steps"`
+	ExpectedAlerts  []string       `yaml:"expected_alerts" json:"expected_alerts"`
+	DurationSecs    int            `yaml:"duration_secs" json:"duration_secs"`
 }
 
 // TestRun is the active record for a running scenario.
 type TestRun struct {
-	ID             string             `json:"id"`
-	ScenarioID     string             `json:"scenario_id"`
-	ScenarioName   string             `json:"scenario_name"`
-	Status         string             `json:"status"`
-	StartedAt      *time.Time         `json:"started_at"`
-	CompletedAt    *time.Time         `json:"completed_at"`
-	DurationSecs   int                `json:"duration_secs"`
-	AttackerIP     string             `json:"attacker_ip"`
-	TargetIPs      []string           `json:"target_ips"`
+	ID             string              `json:"id"`
+	ScenarioID     string              `json:"scenario_id"`
+	ScenarioName   string              `json:"scenario_name"`
+	Status         string              `json:"status"`
+	StartedAt      *time.Time          `json:"started_at"`
+	CompletedAt    *time.Time          `json:"completed_at"`
+	DurationSecs   int                 `json:"duration_secs"`
+	AttackerIP     string              `json:"attacker_ip"`
+	TargetIPs      []string            `json:"target_ips"`
 	ConfigSnapshot *ScenarioDefinition `json:"config_snapshot"`
-	CreatedAt      time.Time          `json:"created_at"`
+	CreatedAt      time.Time           `json:"created_at"`
 }
 
 // GlobalRunMap tracks in-flight runs.
@@ -373,7 +374,6 @@ func seedBuiltInScenarios() {
 	logInfo("Return from seedBuiltInScenarios seeded=%d", len(scenarios))
 }
 
-// buildBuiltInScenarios returns the 6 pre-built attack scenario definitions.
 func buildBuiltInScenarios() []*ScenarioDefinition {
 	return []*ScenarioDefinition{
 		{
@@ -385,7 +385,7 @@ func buildBuiltInScenarios() []*ScenarioDefinition {
 			DurationSecs:    300,
 			ExpectedAlerts:  []string{"C2 Beaconing Detected", "Periodic Outbound Connection", "Suspicious External Traffic"},
 			Steps: []ScenarioStep{
-				{AttackID: "recon-portscan", Name: "Initial recon", AttackerIP: "198.51.100.100", TargetIPs: []string{"10.0.2.10"}, Delay: 0},
+				{AttackID: "recon-portscan", Name: "Initial recon", AttackerIP: "198.51.100.100", TargetIPs: []string{"10.0.2.10"}, Delay: 0, Params: map[string]string{"port_range": "1-1024"}},
 				{AttackID: "c2-beaconing", Name: "C2 Beaconing", AttackerIP: "198.51.100.100", TargetIPs: []string{"10.0.3.101"}, Delay: 30, Params: map[string]string{"interval_secs": "60", "count": "5"}},
 			},
 		},
@@ -411,7 +411,7 @@ func buildBuiltInScenarios() []*ScenarioDefinition {
 			DurationSecs:    420,
 			ExpectedAlerts:  []string{"Lateral Movement Detected", "Pass-the-Hash", "Anomalous SMB Activity"},
 			Steps: []ScenarioStep{
-				{AttackID: "recon-portscan", Name: "Internal recon", AttackerIP: "10.0.3.101", TargetIPs: []string{"10.0.1.10", "10.0.1.20"}, Delay: 0},
+				{AttackID: "recon-portscan", Name: "Internal recon", AttackerIP: "10.0.3.101", TargetIPs: []string{"10.0.1.10", "10.0.1.20"}, Delay: 0, Params: map[string]string{"port_range": "1-1024"}},
 				{AttackID: "auth-passthehash", Name: "Pass-the-hash", AttackerIP: "10.0.3.101", TargetIPs: []string{"10.0.1.10"}, Delay: 30},
 				{AttackID: "lateral-smb", Name: "SMB lateral to DC", AttackerIP: "10.0.3.101", TargetIPs: []string{"10.0.1.10", "10.0.1.11"}, Delay: 30},
 				{AttackID: "lateral-psexec", Name: "PsExec to file server", AttackerIP: "10.0.3.101", TargetIPs: []string{"10.0.1.21"}, Delay: 20},
@@ -427,8 +427,8 @@ func buildBuiltInScenarios() []*ScenarioDefinition {
 			ExpectedAlerts:  []string{"Data Exfiltration Detected", "Anomalous Outbound Transfer", "Large Upload"},
 			Steps: []ScenarioStep{
 				{AttackID: "recon-service-enum", Name: "Enumerate shares", AttackerIP: "10.0.3.101", TargetIPs: []string{"10.0.1.21"}, Delay: 0},
-				{AttackID: "exfil-http", Name: "Exfil via HTTPS", AttackerIP: "10.0.3.101", TargetIPs: []string{"10.0.3.101"}, Delay: 60, Params: map[string]string{"data_mb": "200"}},
-				{AttackID: "c2-dns-tunnel", Name: "DNS tunnel backup exfil", AttackerIP: "10.0.3.101", TargetIPs: []string{"10.0.3.101"}, Delay: 30},
+				{AttackID: "exfil-http", Name: "Exfil via HTTPS", AttackerIP: "198.51.100.100", TargetIPs: []string{"10.0.3.101"}, Delay: 60, Params: map[string]string{"data_mb": "200"}},
+				{AttackID: "c2-dns-tunnel", Name: "DNS tunnel backup exfil", AttackerIP: "198.51.100.100", TargetIPs: []string{"10.0.3.101"}, Delay: 30},
 			},
 		},
 		{
@@ -443,7 +443,7 @@ func buildBuiltInScenarios() []*ScenarioDefinition {
 				{AttackID: "auth-bruteforce-rdp", Name: "RDP brute-force entry", AttackerIP: "198.51.100.100", TargetIPs: []string{"10.0.3.101"}, Delay: 0},
 				{AttackID: "c2-beaconing", Name: "Establish C2", AttackerIP: "198.51.100.100", TargetIPs: []string{"10.0.3.101"}, Delay: 60, Params: map[string]string{"count": "3"}},
 				{AttackID: "lateral-smb", Name: "Spread laterally", AttackerIP: "10.0.3.101", TargetIPs: []string{"10.0.1.21", "10.0.3.102"}, Delay: 90},
-				{AttackID: "exfil-http", Name: "Pre-encryption exfil", AttackerIP: "10.0.3.101", TargetIPs: []string{"10.0.3.101"}, Delay: 60, Params: map[string]string{"data_mb": "50"}},
+				{AttackID: "exfil-http", Name: "Pre-encryption exfil", AttackerIP: "198.51.100.100", TargetIPs: []string{"10.0.3.101"}, Delay: 60, Params: map[string]string{"data_mb": "50"}},
 			},
 		},
 		{
