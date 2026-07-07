@@ -60,65 +60,36 @@ func runProtocolTunnel(req AttackRequest) (*AttackResult, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering runProtocolTunnel attacker=%s", req.AttackerIP)
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
-	tunnelProto := getAttackParam(req.Params, "tunnel_protocol", "DNS")
 	fw := getFirewall()
 
 	for _, targetIP := range req.TargetIPs {
 		msgs := []string{
-			fmt.Sprintf("Protocol tunneling: C2 traffic encapsulated in %s from %s to %s — anomalous payload size", tunnelProto, targetIP, req.AttackerIP),
-			fmt.Sprintf("DPI: %s traffic shows non-standard payload entropy 7.8 bits/byte from %s — possible tunnel", tunnelProto, targetIP),
-			fmt.Sprintf("Firewall: allowed %s sessions carrying unexpected binary content from %s to external %s", tunnelProto, targetIP, req.AttackerIP),
+			fmt.Sprintf("Protocol tunneling: IPv6-in-IPv4 encapsulation detected from %s to %s — protocol 41 used to bypass IPv4 filters", req.AttackerIP, targetIP),
+			fmt.Sprintf("DPI: IPv6-in-IPv4 tunnel (proto=41) from %s — C2 traffic hidden inside encapsulated IPv6 packets", req.AttackerIP),
+			fmt.Sprintf("Firewall: outbound protocol-41 traffic from %s to %s — IPv4 filter bypass via IPv6 encapsulation", targetIP, req.AttackerIP),
 		}
 		for _, msg := range msgs {
 			ev := sendSyslog(fw, msg, 3)
 			result.SyslogCount++
-			eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", targetIP, req.AttackerIP, tunnelProto, ev)
+			eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", req.AttackerIP, targetIP, "IPv6-in-IPv4", ev)
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
-		var proto uint8 = 17
-		dstPort := uint16(53)
-		if tunnelProto == "ICMP" {
-			proto = 1
-			dstPort = 0
-		} else if tunnelProto == "HTTP" {
-			proto = 6
-			dstPort = 80
-		}
-		flows := []FlowRecord{{SrcIP: targetIP, DstIP: req.AttackerIP, SrcPort: uint16(randomPort()), DstPort: dstPort, Protocol: proto, Bytes: 2097152, Packets: 4096, StartTime: time.Now().Add(-5 * time.Minute), EndTime: time.Now()}}
-		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", targetIP, req.AttackerIP, tunnelProto, flows)
+
+		// Flow: protocol 41 = IPv6-in-IPv4
+		flows := []FlowRecord{{
+			SrcIP: req.AttackerIP, DstIP: targetIP,
+			SrcPort: 0, DstPort: 0, // protocol 41 has no ports
+			Protocol: 41, Bytes: 2097152, Packets: 4096,
+			StartTime: time.Now().Add(-5 * time.Minute), EndTime: time.Now(),
+		}}
+		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "IPv6-in-IPv4", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
 
-		switch tunnelProto {
-		case "HTTP":
-			reqPayload := []byte(fmt.Sprintf("POST /api/sync HTTP/1.1\r\nHost: cdn.example.net\r\nContent-Length: 512\r\n\r\n%s", randomHexString(512)))
-			respPayload := []byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK")
-			pcapPath, pcapErr := PCAPGenericTCPExchange(req.RunID, "protocol_tunnel_http", targetIP, req.AttackerIP, dstPort, reqPayload, respPayload)
-			if pcapErr == nil {
-				result.PCAPFiles = append(result.PCAPFiles, pcapPath)
-			}
-		case "ICMP":
-			pcapPath, pcapErr := writeICMPTunnelPCAP(req.RunID, targetIP, req.AttackerIP)
-			if pcapErr == nil {
-				result.PCAPFiles = append(result.PCAPFiles, pcapPath)
-			}
-		default:
-			dnsDev := getDNSServer()
-			if dnsDev != nil {
-				infectedDev, _ := getDeviceByIP(targetIP)
-				if infectedDev == nil {
-					infectedDev = getAttackerDevice()
-				}
-				_, pcapPath, pcapErr := PCAPDNSTunnel(req.RunID, req.AttackerIP, infectedDev, dnsDev, "tunnel.example.net", 10)
-				if pcapErr == nil {
-					result.PCAPFiles = append(result.PCAPFiles, pcapPath)
-				}
-			} else {
-				pcapPath, pcapErr := PCAPDNSQueryResponse(req.RunID, "protocol_tunnel_dns", targetIP, req.AttackerIP, randomHexString(40)+".tunnel.example.net", false)
-				if pcapErr == nil {
-					result.PCAPFiles = append(result.PCAPFiles, pcapPath)
-				}
-			}
+		// PCAP: IPv6-in-IPv4 encapsulated packets
+		pcapPath, pcapErr := PCAPIPv6InIPv4Tunnel(req.RunID, req.AttackerIP, targetIP)
+		if pcapErr == nil {
+			result.PCAPFiles = append(result.PCAPFiles, pcapPath)
 		}
 	}
 	logInfo("Return from runProtocolTunnel syslogs=%d", result.SyslogCount)
@@ -129,7 +100,29 @@ func runLowSlowScan(req AttackRequest) (*AttackResult, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering runLowSlowScan attacker=%s", req.AttackerIP)
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
-	scanInterval := getAttackParam(req.Params, "scan_interval", "30s")
+
+	delayMs := getAttackParamInt(req.Params, "delay_ms", 1000)
+	portCount := getAttackParamInt(req.Params, "ports", 8)
+	if delayMs < 1 {
+		delayMs = 1
+	}
+	if portCount < 1 {
+		portCount = 1
+	}
+	if portCount > 1000 {
+		portCount = 1000
+	}
+
+	delayDuration := time.Duration(delayMs) * time.Millisecond
+	scanInterval := fmt.Sprintf("%dms", delayMs)
+
+	// Build port list — common ports cycling through well-known services
+	allPorts := []uint16{22, 80, 443, 3389, 8080, 3306, 5432, 1433, 21, 23, 25, 53,
+		110, 139, 445, 993, 995, 1723, 3306, 5900, 8443, 8888, 9090, 9200}
+	var ports []uint16
+	for i := 0; i < portCount; i++ {
+		ports = append(ports, allPorts[i%len(allPorts)])
+	}
 
 	for _, targetIP := range req.TargetIPs {
 		targetDev, _ := getDeviceByIP(targetIP)
@@ -139,7 +132,7 @@ func runLowSlowScan(req AttackRequest) (*AttackResult, error) {
 		}
 		msgs := []string{
 			fmt.Sprintf("Low-and-slow scan: %s probing %s at rate 1 port per %s — below detection threshold", req.AttackerIP, devName, scanInterval),
-			fmt.Sprintf("Behavioral: %s sent SYN packets to %s across 120 ports over 1 hour — slow scan pattern", req.AttackerIP, devName),
+			fmt.Sprintf("Behavioral: %s sent SYN packets to %s across %d ports — slow scan pattern", req.AttackerIP, devName, portCount),
 		}
 		for _, msg := range msgs {
 			fw := getFirewall()
@@ -152,16 +145,15 @@ func runLowSlowScan(req AttackRequest) (*AttackResult, error) {
 
 	fw := getFirewall()
 	flows := []FlowRecord{}
-	ports := []uint16{22, 80, 443, 3389, 8080, 3306, 5432, 1433}
 	for idx, port := range ports {
-		offset := time.Duration(idx*30) * time.Second
+		offset := time.Duration(idx) * delayDuration
 		for _, targetIP := range req.TargetIPs {
 			flows = append(flows, FlowRecord{
 				SrcIP: req.AttackerIP, DstIP: targetIP,
 				SrcPort: uint16(randomPort()), DstPort: port,
 				Protocol: 6, Bytes: 60, Packets: 1, TCPFlags: 0x02,
-				StartTime: time.Now().Add(-time.Hour + offset),
-				EndTime:   time.Now().Add(-time.Hour + offset + time.Second),
+				StartTime: time.Now().Add(-time.Duration(portCount)*delayDuration + offset),
+				EndTime:   time.Now().Add(-time.Duration(portCount)*delayDuration + offset + time.Second),
 			})
 		}
 	}
@@ -171,10 +163,8 @@ func runLowSlowScan(req AttackRequest) (*AttackResult, error) {
 		result.EventIDs = append(result.EventIDs, fids...)
 	}
 
-	// One PCAP per target — all ports in one file with sparse timestamps
-	// so Wireshark shows the slow scan pattern (SYN→RST per port, spaced out)
 	for _, targetIP := range req.TargetIPs {
-		pcapPath, pcapErr := PCAPLowSlowScan(req.RunID, req.AttackerIP, targetIP, ports)
+		pcapPath, pcapErr := PCAPLowSlowScan(req.RunID, req.AttackerIP, targetIP, ports, delayDuration)
 		if pcapErr == nil {
 			result.PCAPFiles = append(result.PCAPFiles, pcapPath)
 		}

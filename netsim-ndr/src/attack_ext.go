@@ -881,16 +881,18 @@ func runReverseShell(req AttackRequest) (*AttackResult, error) {
 		}
 		rsPath, rsErr := PCAPGenericTCPExchangeN(req.RunID, "reverse_shell", targetIP, req.AttackerIP, uint16(port),
 			func(i int) []byte {
-				if i < len(commands) {
-					return []byte(commands[i])
-				}
-				return []byte(fmt.Sprintf("cmd%d\n", i+1))
-			},
-			func(i int) []byte {
+				// victim→attacker: victim sends command output (responses)
 				if i < len(responses) {
 					return []byte(responses[i])
 				}
 				return []byte(fmt.Sprintf("resp%d\n", i+1))
+			},
+			func(i int) []byte {
+				// attacker→victim: attacker sends commands
+				if i < len(commands) {
+					return []byte(commands[i])
+				}
+				return []byte(fmt.Sprintf("cmd%d\n", i+1))
 			},
 			count)
 		if rsErr == nil {
@@ -1075,7 +1077,10 @@ func runDCOMLateral(req AttackRequest) (*AttackResult, error) {
 			eventID, _ := recordRunEvent(req.RunID, "syslog", targetIP, req.AttackerIP, targetIP, "TCP", ev)
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
-		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 135, Protocol: 6, Bytes: 15000, Packets: 30, StartTime: time.Now(), EndTime: time.Now().Add(5 * time.Second), TCPFlags: 0x18}}
+		flows := []FlowRecord{
+			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 135, Protocol: 6, Bytes: 5000, Packets: 12, StartTime: time.Now(), EndTime: time.Now().Add(2 * time.Second), TCPFlags: 0x18},
+			{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 49152, Protocol: 6, Bytes: 10000, Packets: 18, StartTime: time.Now().Add(2 * time.Second), EndTime: time.Now().Add(5 * time.Second), TCPFlags: 0x18},
+		}
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
