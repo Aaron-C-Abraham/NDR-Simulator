@@ -112,8 +112,6 @@ func runOSFingerprint(req AttackRequest) (*AttackResult, error) {
 	fw := getFirewall()
 
 	for _, targetIP := range req.TargetIPs {
-		targetDev, _ := getDeviceByIP(targetIP)
-
 		var message []string = []string{
 			fmt.Sprintf("connection from %s to %s port 80 TCP SYN ACCEPTED", req.AttackerIP, targetIP),
 			fmt.Sprintf("connection from %s to %s port 80 TCP SYN ACCEPTED", req.AttackerIP, targetIP),
@@ -164,37 +162,40 @@ func runOSFingerprint(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
 
-		if targetDev != nil {
-			srcMAC := parseMACAddress(attackerDev.MACAddress)
-			dstMAC := parseMACAddress(targetDev.MACAddress)
-			var frames [][]byte
-			openPort := uint16(80)
-			closedPort := uint16(60)
-
-			seqFrames, _ := buildSEQProbes(req.AttackerIP, targetIP, openPort, srcMAC, dstMAC)
-			frames = append(frames, seqFrames...)
-
-			ieFrames := buildIEProbes(req.AttackerIP, targetIP, srcMAC, dstMAC)
-			frames = append(frames, ieFrames...)
-
-			ecnFrames := buildECNProbe(req.AttackerIP, targetIP, openPort, srcMAC, dstMAC)
-			frames = append(frames, ecnFrames...)
-
-			t2t7Frames := buildT2T7Probes(req.AttackerIP, targetIP, openPort, closedPort, srcMAC, dstMAC)
-			frames = append(frames, t2t7Frames...)
-
-			u1Probe, u1Response := buildU1Probe(req.AttackerIP, targetIP, randomPort(), closedPort, srcMAC, dstMAC)
-			frames = append(frames, u1Probe, u1Response)
-
-			bgFrames := generateBackgroundTraffic(getAllDevices())
-			finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
-			path, _ := writePCAPFile(req.RunID, "os_fingerprint", finalFrames, defaultDuration)
-			if path != "" {
-				result.PCAPFiles = append(result.PCAPFiles, path)
-			}
-		}
-
 		go sendRealServiceProbe(targetIP, 80)
+	}
+
+	// PCAP — single file across all targets
+	var osfPaths []string
+	for _, targetIP := range req.TargetIPs {
+		targetDev, _ := getDeviceByIP(targetIP)
+		if targetDev == nil {
+			continue
+		}
+		srcMAC := parseMACAddress(attackerDev.MACAddress)
+		dstMAC := parseMACAddress(targetDev.MACAddress)
+		var frames [][]byte
+		openPort := uint16(80)
+		closedPort := uint16(60)
+		seqFrames, _ := buildSEQProbes(req.AttackerIP, targetIP, openPort, srcMAC, dstMAC)
+		frames = append(frames, seqFrames...)
+		ieFrames := buildIEProbes(req.AttackerIP, targetIP, srcMAC, dstMAC)
+		frames = append(frames, ieFrames...)
+		ecnFrames := buildECNProbe(req.AttackerIP, targetIP, openPort, srcMAC, dstMAC)
+		frames = append(frames, ecnFrames...)
+		t2t7Frames := buildT2T7Probes(req.AttackerIP, targetIP, openPort, closedPort, srcMAC, dstMAC)
+		frames = append(frames, t2t7Frames...)
+		u1Probe, u1Response := buildU1Probe(req.AttackerIP, targetIP, randomPort(), closedPort, srcMAC, dstMAC)
+		frames = append(frames, u1Probe, u1Response)
+		bgFrames := generateBackgroundTraffic(getAllDevices())
+		finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
+		p, _ := writePCAPFile(req.RunID, "os_fingerprint", finalFrames, defaultDuration)
+		if p != "" {
+			osfPaths = append(osfPaths, p)
+		}
+	}
+	if merged, merr := mergePCAPFiles(req.RunID, "os_fingerprint", osfPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
 	}
 
 	logInfo("Return from runOSFingerprint syslogs=%d flows=%d", result.SyslogCount, result.FlowCount)
@@ -218,6 +219,7 @@ func runServiceEnum(req AttackRequest) (*AttackResult, error) {
 	if attackerDev == nil {
 		attackerDev = getAttackerDevice()
 	}
+
 	for _, targetIP := range req.TargetIPs {
 		targetDev, _ := getDeviceByIP(targetIP)
 		if targetDev == nil {
@@ -242,7 +244,6 @@ func runServiceEnum(req AttackRequest) (*AttackResult, error) {
 				eventID, _ := recordRunEvent(req.RunID, "syslog", targetDev.Name, req.AttackerIP, targetIP, "UDP", ev)
 				result.EventIDs = append(result.EventIDs, eventID)
 			}
-
 		}
 
 		enumFlows := []FlowRecord{
@@ -253,7 +254,16 @@ func runServiceEnum(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "UDP+TCP", enumFlows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
+	}
 
+	// PCAP — single file across all targets
+	var svcEnumPaths []string
+	for _, targetIP := range req.TargetIPs {
+		targetDev, _ := getDeviceByIP(targetIP)
+		if targetDev == nil {
+			continue
+		}
+		src_port := randomPort()
 		seq := rand.Uint32()
 		srcMAC := parseMACAddress(attackerDev.MACAddress)
 		dstMAC := parseMACAddress(targetDev.MACAddress)
@@ -270,31 +280,23 @@ func runServiceEnum(req AttackRequest) (*AttackResult, error) {
 		frames = append(frames, create_TCP_frame(src_port, 445, 0x12, seq+5, 4, req.AttackerIP, targetIP, srcMAC, dstMAC, SMB2_IOCTL_Request_NetShareEnumAll))
 		frames = append(frames, create_TCP_frame(445, src_port, 0x12, 4, seq+6, targetIP, req.AttackerIP, dstMAC, srcMAC, SMB2_IOCTL_Response_NetShareEnumAll))
 		frames = append(frames, create_TCP_frame(src_port, 445, 0x02, seq+6, 5, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
-
 		SNMP_query := buildUDPDatagram(src_port, 161, SNMP_GetRequest)
-		ipPkt_q := buildIPv4Packet(req.AttackerIP, targetIP, 17, SNMP_query)
-		frame_q := buildEthernetFrame(srcMAC, dstMAC, ipPkt_q)
-		frames = append(frames, frame_q)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 17, SNMP_query)))
 		SNMP_response := buildUDPDatagram(161, src_port, SNMP_GetRequest)
-		ipPkt_r := buildIPv4Packet(targetIP, req.AttackerIP, 17, SNMP_response)
-		frame_r := buildEthernetFrame(dstMAC, srcMAC, ipPkt_r)
-		frames = append(frames, frame_r)
-
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 17, SNMP_response)))
 		NetBIOS_query := buildUDPDatagram(src_port, 137, NBNS_Name_Query_Request)
-		ipPkt_nq := buildIPv4Packet(req.AttackerIP, targetIP, 137, NetBIOS_query)
-		frame_nq := buildEthernetFrame(srcMAC, dstMAC, ipPkt_nq)
-		frames = append(frames, frame_nq)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 137, NetBIOS_query)))
 		NetBIOS_response := buildUDPDatagram(137, src_port, Get_NBNS_Response(targetIP))
-		ipPkt_nr := buildIPv4Packet(targetIP, req.AttackerIP, 137, NetBIOS_response)
-		frame_nr := buildEthernetFrame(dstMAC, srcMAC, ipPkt_nr)
-		frames = append(frames, frame_nr)
-
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 137, NetBIOS_response)))
 		bgFrames := generateBackgroundTraffic(getAllDevices())
 		finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
-		path, _ := writePCAPFile(req.RunID, "service_enumeration", finalFrames, defaultDuration)
-		if path != "" {
-			result.PCAPFiles = append(result.PCAPFiles, path)
+		p, _ := writePCAPFile(req.RunID, "service_enumeration", finalFrames, defaultDuration)
+		if p != "" {
+			svcEnumPaths = append(svcEnumPaths, p)
 		}
+	}
+	if merged, merr := mergePCAPFiles(req.RunID, "service_enumeration", svcEnumPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
 	}
 
 	logInfo("Return from runServiceEnum syslogs=%d flows=%d", result.SyslogCount, result.FlowCount)
@@ -541,7 +543,6 @@ func get_IPs_from_subnet(IPAddress string) []string {
 // traffic on an internal subnet, so there's no NetFlow/IPFIX equivalent
 // here without inventing an unrealistic data path.
 func runNetDiscover(req AttackRequest) (*AttackResult, error) {
-
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering runNetDiscover attacker=%s", req.AttackerIP)
 
@@ -580,10 +581,6 @@ func runNetDiscover(req AttackRequest) (*AttackResult, error) {
 		}
 		targets := get_IPs_from_subnet(targetIP)
 
-		srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
-		broadcastMAC := [6]byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
-		var frames [][]byte
-
 		for _, ip := range targets {
 			msg := fmt.Sprintf("ARP request: who-has %s tell %s", ip, req.AttackerIP)
 			ev := sendSyslog(sw, msg, 7)
@@ -599,7 +596,38 @@ func runNetDiscover(req AttackRequest) (*AttackResult, error) {
 				flowID, _ := recordRunEvent(req.RunID, "sflow", sw.Name, req.AttackerIP, ip, "ARP", arpFlows)
 				result.EventIDs = append(result.EventIDs, flowID)
 			}
+		}
+	}
 
+	// PCAP — single file across all targets
+	var arpPaths []string
+	for _, targetIP := range req.TargetIPs {
+		var subnet string
+		if strings.ContainsRune(targetIP, '/') {
+			for i := len(targetIP) - 1; i > 0; i-- {
+				if targetIP[i] == '/' {
+					subnet = targetIP[:i-1]
+					break
+				} else if targetIP[i] == '.' {
+					subnet = targetIP[:i]
+				}
+			}
+		}
+		var sw *Device
+		for _, switchDev := range switches {
+			if strings.Contains(switchDev.IPAddress, subnet) {
+				sw = switchDev
+				break
+			}
+		}
+		if sw == nil {
+			continue
+		}
+		targets := get_IPs_from_subnet(targetIP)
+		srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+		broadcastMAC := [6]byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
+		var frames [][]byte
+		for _, ip := range targets {
 			arpReq := buildARPRequest(srcMAC, req.AttackerIP, ip)
 			frame := make([]byte, 14+len(arpReq))
 			copy(frame[0:6], broadcastMAC[:])
@@ -607,26 +635,27 @@ func runNetDiscover(req AttackRequest) (*AttackResult, error) {
 			binary.BigEndian.PutUint16(frame[12:14], 0x0806)
 			copy(frame[14:], arpReq)
 			frames = append(frames, frame)
-
 			dev, res := getDeviceByIP(ip)
 			if res {
 				targetMAC := parseMACAddress(dev.MACAddress)
 				arpReply := buildARPReply(srcMAC, targetMAC, ip, req.AttackerIP)
-				frame := make([]byte, 14+len(arpReply))
-				copy(frame[0:6], srcMAC[:])
-				copy(frame[6:12], targetMAC[:])
-				binary.BigEndian.PutUint16(frame[12:14], 0x0806)
-				copy(frame[14:], arpReply)
-				frames = append(frames, frame)
+				replyFrame := make([]byte, 14+len(arpReply))
+				copy(replyFrame[0:6], srcMAC[:])
+				copy(replyFrame[6:12], targetMAC[:])
+				binary.BigEndian.PutUint16(replyFrame[12:14], 0x0806)
+				copy(replyFrame[14:], arpReply)
+				frames = append(frames, replyFrame)
 			}
 		}
-
 		bgFrames := generateBackgroundTraffic(getAllDevices())
 		finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
-		path, _ := writePCAPFile(req.RunID, "arp_scan", finalFrames, defaultDuration)
-		if path != "" {
-			result.PCAPFiles = append(result.PCAPFiles, path)
+		p, _ := writePCAPFile(req.RunID, "arp_scan", finalFrames, defaultDuration)
+		if p != "" {
+			arpPaths = append(arpPaths, p)
 		}
+	}
+	if merged, merr := mergePCAPFiles(req.RunID, "arp_scan", arpPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
 	}
 
 	logInfo("Return from runNetDiscover syslogs=%d", result.SyslogCount)
@@ -640,6 +669,7 @@ func runSNMPEnum(req AttackRequest) (*AttackResult, error) {
 	community := getAttackParam(req.Params, "community", "public")
 	fw := getFirewall()
 	attackerDev, _ := getDeviceByIP(req.AttackerIP)
+
 	for _, targetIP := range req.TargetIPs {
 		targetDev, _ := getDeviceByIP(targetIP)
 		msgs := []string{
@@ -661,41 +691,47 @@ func runSNMPEnum(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "UDP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
+	}
 
-		if attackerDev == nil || dev == nil {
-			logWarn("runSNMPEnum target=%s: no device with MAC address available, skipping PCAP", targetIP)
+	// PCAP — single file across all targets
+	var snmpEnumPaths []string
+	for _, targetIP := range req.TargetIPs {
+		if attackerDev == nil {
+			logWarn("runSNMPEnum target=%s: no attacker device with MAC address available, skipping PCAP", targetIP)
 			continue
 		}
-
+		dev := fw
+		if d, ok := getDeviceByIP(targetIP); ok && d != nil {
+			dev = d
+		}
+		if dev == nil {
+			continue
+		}
 		srcMAC := parseMACAddress(attackerDev.MACAddress)
 		dstMAC := parseMACAddress(dev.MACAddress)
 		src_port := randomPort()
 		var frames [][]byte
 		SNMP_query := buildUDPDatagram(src_port, 161, SNMPQuery(community))
-		ipPkt_q := buildIPv4Packet(req.AttackerIP, targetIP, 17, SNMP_query)
-		frame_q := buildEthernetFrame(srcMAC, dstMAC, ipPkt_q)
-		frames = append(frames, frame_q)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 17, SNMP_query)))
 		SNMP_response := buildUDPDatagram(161, src_port, SNMPresponse(community))
-		ipPkt_r := buildIPv4Packet(targetIP, req.AttackerIP, 17, SNMP_response)
-		frame_r := buildEthernetFrame(dstMAC, srcMAC, ipPkt_r)
-		frames = append(frames, frame_r)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 17, SNMP_response)))
 		for i := 0; i < 5; i++ {
-			SNMP_query := buildUDPDatagram(src_port, 161, SNMPGetNextResponse(community))
-			ipPkt_q := buildIPv4Packet(req.AttackerIP, targetIP, 17, SNMP_query)
-			frame_q := buildEthernetFrame(srcMAC, dstMAC, ipPkt_q)
-			frames = append(frames, frame_q)
-			SNMP_response := buildUDPDatagram(161, src_port, SNMPReplyNextResponse(community))
-			ipPkt_r := buildIPv4Packet(targetIP, req.AttackerIP, 17, SNMP_response)
-			frame_r := buildEthernetFrame(dstMAC, srcMAC, ipPkt_r)
-			frames = append(frames, frame_r)
+			q := buildUDPDatagram(src_port, 161, SNMPGetNextResponse(community))
+			frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 17, q)))
+			r := buildUDPDatagram(161, src_port, SNMPReplyNextResponse(community))
+			frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 17, r)))
 		}
 		bgFrames := generateBackgroundTraffic(getAllDevices())
 		finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
-		path, _ := writePCAPFile(req.RunID, "SNMP_enum", finalFrames, defaultDuration)
-		if path != "" {
-			result.PCAPFiles = append(result.PCAPFiles, path)
+		p, _ := writePCAPFile(req.RunID, "SNMP_enum", finalFrames, defaultDuration)
+		if p != "" {
+			snmpEnumPaths = append(snmpEnumPaths, p)
 		}
 	}
+	if merged, merr := mergePCAPFiles(req.RunID, "SNMP_enum", snmpEnumPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
+	}
+
 	logInfo("Return from runSNMPEnum syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -707,6 +743,7 @@ func runSMTPUserEnum(req AttackRequest) (*AttackResult, error) {
 	domain := getAttackParam(req.Params, "domain", "corp.local")
 	fw := getFirewall()
 	users := []string{"admin", "administrator", "root", "postmaster", "john.doe", "jane.smith", "support", "sales"}
+
 	for _, targetIP := range req.TargetIPs {
 		targetDev, _ := getDeviceByIP(targetIP)
 		for _, user := range users {
@@ -725,72 +762,70 @@ func runSMTPUserEnum(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
+	}
 
+	// PCAP — single file across all targets
+	var smtpEnumPaths []string
+	for _, targetIP := range req.TargetIPs {
+		targetDev, _ := getDeviceByIP(targetIP)
 		attackerDev, _ := getDeviceByIP(req.AttackerIP)
 		if attackerDev == nil || targetDev == nil {
 			logWarn("runSMTPUserEnum target=%s: no device with MAC address available, skipping PCAP", targetIP)
 			continue
 		}
-
-		var frames [][]byte
-
-		attackerdomain := fmt.Sprintf("mail.%s", domain)
 		srcMAC := parseMACAddress(attackerDev.MACAddress)
 		dstMAC := parseMACAddress(targetDev.MACAddress)
 		src_port := randomPort()
 		dst_port := uint16(587)
-
+		attackerdomain := fmt.Sprintf("mail.%s", domain)
 		clientSeq := rand.Uint32()
 		serverSeq := uint32(0)
-
+		var frames [][]byte
 		frames = append(frames, create_TCP_frame(src_port, dst_port, 0x02, clientSeq, 0, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
 		clientSeq++
 		frames = append(frames, create_TCP_frame(dst_port, src_port, 0x12, serverSeq, clientSeq, targetIP, req.AttackerIP, dstMAC, srcMAC, nil))
 		serverSeq++
 		frames = append(frames, create_TCP_frame(src_port, dst_port, 0x10, clientSeq, serverSeq, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
-
 		banner := serverBanner(attackerdomain)
 		frames = append(frames, create_TCP_frame(dst_port, src_port, 0x18, serverSeq, clientSeq, targetIP, req.AttackerIP, dstMAC, srcMAC, banner))
 		serverSeq += uint32(len(banner))
 		frames = append(frames, create_TCP_frame(src_port, dst_port, 0x10, clientSeq, serverSeq, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
-
 		ehlo := clientEhlo(fmt.Sprintf("attacker@%s", domain))
 		frames = append(frames, create_TCP_frame(src_port, dst_port, 0x18, clientSeq, serverSeq, req.AttackerIP, targetIP, srcMAC, dstMAC, ehlo))
 		clientSeq += uint32(len(ehlo))
 		frames = append(frames, create_TCP_frame(dst_port, src_port, 0x10, serverSeq, clientSeq, targetIP, req.AttackerIP, dstMAC, srcMAC, nil))
-
 		ehloResp := serverEhloResponse(attackerdomain)
 		frames = append(frames, create_TCP_frame(dst_port, src_port, 0x18, serverSeq, clientSeq, targetIP, req.AttackerIP, dstMAC, srcMAC, ehloResp))
 		serverSeq += uint32(len(ehloResp))
 		frames = append(frames, create_TCP_frame(src_port, dst_port, 0x10, clientSeq, serverSeq, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
-
 		for _, user := range users {
 			mail_id := fmt.Sprintf("%s@%s", user, domain)
 			vrfy := clientVrfy(user)
 			frames = append(frames, create_TCP_frame(src_port, dst_port, 0x18, clientSeq, serverSeq, req.AttackerIP, targetIP, srcMAC, dstMAC, vrfy))
 			clientSeq += uint32(len(vrfy))
 			frames = append(frames, create_TCP_frame(dst_port, src_port, 0x10, serverSeq, clientSeq, targetIP, req.AttackerIP, dstMAC, srcMAC, nil))
-
 			resp := serverEhloResponse(mail_id)
 			frames = append(frames, create_TCP_frame(dst_port, src_port, 0x18, serverSeq, clientSeq, targetIP, req.AttackerIP, dstMAC, srcMAC, resp))
 			serverSeq += uint32(len(resp))
 			frames = append(frames, create_TCP_frame(src_port, dst_port, 0x10, clientSeq, serverSeq, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
 		}
-
 		frames = append(frames, create_TCP_frame(src_port, dst_port, 0x01, clientSeq, serverSeq, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
 		clientSeq++
 		frames = append(frames, create_TCP_frame(dst_port, src_port, 0x10, serverSeq, clientSeq, targetIP, req.AttackerIP, dstMAC, srcMAC, nil))
 		frames = append(frames, create_TCP_frame(dst_port, src_port, 0x01, serverSeq, clientSeq, targetIP, req.AttackerIP, dstMAC, srcMAC, nil))
 		serverSeq++
 		frames = append(frames, create_TCP_frame(src_port, dst_port, 0x10, clientSeq, serverSeq, req.AttackerIP, targetIP, srcMAC, dstMAC, nil))
-
 		bgFrames := generateBackgroundTraffic(getAllDevices())
 		finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
-		path, _ := writePCAPFile(req.RunID, "smtp_user_enum", finalFrames, defaultDuration)
-		if path != "" {
-			result.PCAPFiles = append(result.PCAPFiles, path)
+		p, _ := writePCAPFile(req.RunID, "smtp_user_enum", finalFrames, defaultDuration)
+		if p != "" {
+			smtpEnumPaths = append(smtpEnumPaths, p)
 		}
 	}
+	if merged, merr := mergePCAPFiles(req.RunID, "smtp_user_enum", smtpEnumPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
+	}
+
 	logInfo("Return from runSMTPUserEnum syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -807,18 +842,10 @@ func runWebDirBrute(req AttackRequest) (*AttackResult, error) {
 		path   string
 		status int
 	}{
-		{"/admin", 403},
-		{"/backup", 200},
-		{"/.git", 200},
-		{"/wp-admin", 301},
-		{"/phpmyadmin", 403},
-		{"/api/v1", 200},
-		{"/swagger", 200},
-		{"/actuator", 403},
-		{"/.env", 200},
-		{"/config", 404},
+		{"/admin", 403}, {"/backup", 200}, {"/.git", 200}, {"/wp-admin", 301},
+		{"/phpmyadmin", 403}, {"/api/v1", 200}, {"/swagger", 200},
+		{"/actuator", 403}, {"/.env", 200}, {"/config", 404},
 	}
-
 	genericWords := []string{
 		"test", "old", "new", "tmp", "data", "files", "uploads", "images",
 		"css", "js", "lib", "src", "include", "scripts", "assets", "media",
@@ -829,7 +856,6 @@ func runWebDirBrute(req AttackRequest) (*AttackResult, error) {
 		"accounts", "user", "users", "profile", "settings", "dashboard",
 		"panel", "cpanel", "webmail", "mail", "ftp", "ssh", "rdp",
 	}
-
 	var paths []struct {
 		path   string
 		status int
@@ -855,7 +881,6 @@ func runWebDirBrute(req AttackRequest) (*AttackResult, error) {
 		if dev == nil {
 			dev = fw
 		}
-
 		for _, p := range paths {
 			msg := fmt.Sprintf("%s - - \"GET %s HTTP/1.1\" %d 0 \"-\" \"gobuster/3.1.0\"", req.AttackerIP, p.path, p.status)
 			ev := sendSyslog(dev, msg, 6)
@@ -863,22 +888,29 @@ func runWebDirBrute(req AttackRequest) (*AttackResult, error) {
 			eventID, _ := recordRunEvent(req.RunID, "syslog", targetIP, req.AttackerIP, targetIP, "TCP", ev)
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
-
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: uint16(targetPort), Protocol: 6, Bytes: uint32(len(paths) * 300), Packets: uint32(len(paths) * 3), StartTime: time.Now(), EndTime: time.Now().Add(10 * time.Second), TCPFlags: 0x18}}
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
+	}
 
+	// PCAP — single file across all targets
+	var wdbPaths []string
+	for _, targetIP := range req.TargetIPs {
 		var httpRequests, httpResponses [][]byte
 		for _, p := range paths {
 			httpRequests = append(httpRequests, []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: gobuster/3.1.0\r\n\r\n", p.path, targetIP)))
 			httpResponses = append(httpResponses, []byte(fmt.Sprintf("HTTP/1.1 %d %s\r\nContent-Length: 0\r\n\r\n", p.status, httpStatusText(p.status))))
 		}
-		wdbPath, wdbErr := PCAPHTTPMultiRequest(req.RunID, "web_dir_brute", req.AttackerIP, targetIP, uint16(targetPort), httpRequests, httpResponses)
-		if wdbErr == nil {
-			result.PCAPFiles = append(result.PCAPFiles, wdbPath)
+		p2, e := PCAPHTTPMultiRequest(req.RunID, "web_dir_brute", req.AttackerIP, targetIP, uint16(targetPort), httpRequests, httpResponses)
+		if e == nil {
+			wdbPaths = append(wdbPaths, p2)
 		}
 	}
+	if merged, merr := mergePCAPFiles(req.RunID, "web_dir_brute", wdbPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
+	}
+
 	logInfo("Return from runWebDirBrute syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -889,6 +921,7 @@ func runLDAPEnum(req AttackRequest) (*AttackResult, error) {
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	baseDN := getAttackParam(req.Params, "base_dn", "dc=corp,dc=local")
 	fw := getFirewall()
+
 	for _, targetIP := range req.TargetIPs {
 		targetDev, _ := getDeviceByIP(targetIP)
 		msgs := []string{
@@ -911,45 +944,46 @@ func runLDAPEnum(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
+	}
+
+	// PCAP — single file across all targets
+	var ldapPaths []string
+	for _, targetIP := range req.TargetIPs {
 		srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
 		dstMAC := [6]byte{0x00, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
 		srcPort := randomPort()
 		var frames [][]byte
-
 		clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
 		syn := buildTCPSegment(srcPort, 389, 0x02, clientSeq, 0, nil)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, syn)))
 		clientSeq++
-
 		synAck := buildTCPSegment(389, srcPort, 0x12, serverSeq, clientSeq, nil)
 		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 6, synAck)))
 		serverSeq++
-
 		ack := buildTCPSegment(srcPort, 389, 0x10, clientSeq, serverSeq, nil)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, ack)))
-
 		bindReq := buildLDAPBindRequest(baseDN)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, buildTCPSegment(srcPort, 389, 0x18, clientSeq, serverSeq, bindReq))))
 		clientSeq += uint32(len(bindReq))
-
 		bindResp := buildLDAPBindResponse()
 		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 6, buildTCPSegment(389, srcPort, 0x18, serverSeq, clientSeq, bindResp))))
 		serverSeq += uint32(len(bindResp))
-
 		searchReq := buildLDAPSearchRequest(baseDN)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, buildTCPSegment(srcPort, 389, 0x18, clientSeq, serverSeq, searchReq))))
 		clientSeq += uint32(len(searchReq))
-
 		searchResp := buildLDAPSearchResponse(142)
 		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 6, buildTCPSegment(389, srcPort, 0x18, serverSeq, clientSeq, searchResp))))
-
 		bgFrames := generateBackgroundTraffic(getAllDevices())
 		finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
-		path, _ := writePCAPFile(req.RunID, "ldap_enum", finalFrames, defaultDuration)
-		if path != "" {
-			result.PCAPFiles = append(result.PCAPFiles, path)
+		p, _ := writePCAPFile(req.RunID, "ldap_enum", finalFrames, defaultDuration)
+		if p != "" {
+			ldapPaths = append(ldapPaths, p)
 		}
 	}
+	if merged, merr := mergePCAPFiles(req.RunID, "ldap_enum", ldapPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
+	}
+
 	logInfo("Return from runLDAPEnum syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -959,6 +993,7 @@ func runNetBIOSEnum(req AttackRequest) (*AttackResult, error) {
 	logInfo("Entering runNetBIOSEnum attacker=%s", req.AttackerIP)
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	fw := getFirewall()
+
 	for _, targetIP := range req.TargetIPs {
 		dev := fw
 		if d, ok := getDeviceByIP(targetIP); ok && d != nil {
@@ -981,24 +1016,34 @@ func runNetBIOSEnum(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "UDP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
-		if attackerDev, ok := getDeviceByIP(req.AttackerIP); ok && attackerDev != nil {
-			if devMAC, ok2 := getDeviceByIP(targetIP); ok2 && devMAC != nil {
-				srcMAC := parseMACAddress(attackerDev.MACAddress)
-				dstMAC := parseMACAddress(devMAC.MACAddress)
-				srcPort := randomPort()
-				query := buildUDPDatagram(srcPort, 137, NBNS_Name_Query_Request)
-				queryFrame := buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 17, query))
-				response := buildUDPDatagram(137, srcPort, Get_NBNS_Response(targetIP))
-				responseFrame := buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 17, response))
-				bgFrames := generateBackgroundTraffic(getAllDevices())
-				finalFrames := interleaveBackgroundTraffic([][]byte{queryFrame, responseFrame}, bgFrames)
-				nbPath, _ := writePCAPFile(req.RunID, "netbios_enum", finalFrames, defaultDuration)
-				if nbPath != "" {
-					result.PCAPFiles = append(result.PCAPFiles, nbPath)
-				}
-			}
+	}
+
+	// PCAP — single file across all targets
+	var nbPaths []string
+	for _, targetIP := range req.TargetIPs {
+		attackerDev, ok1 := getDeviceByIP(req.AttackerIP)
+		devMAC, ok2 := getDeviceByIP(targetIP)
+		if !ok1 || attackerDev == nil || !ok2 || devMAC == nil {
+			continue
+		}
+		srcMAC := parseMACAddress(attackerDev.MACAddress)
+		dstMAC := parseMACAddress(devMAC.MACAddress)
+		srcPort := randomPort()
+		query := buildUDPDatagram(srcPort, 137, NBNS_Name_Query_Request)
+		queryFrame := buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 17, query))
+		response := buildUDPDatagram(137, srcPort, Get_NBNS_Response(targetIP))
+		responseFrame := buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 17, response))
+		bgFrames := generateBackgroundTraffic(getAllDevices())
+		finalFrames := interleaveBackgroundTraffic([][]byte{queryFrame, responseFrame}, bgFrames)
+		p, _ := writePCAPFile(req.RunID, "netbios_enum", finalFrames, defaultDuration)
+		if p != "" {
+			nbPaths = append(nbPaths, p)
 		}
 	}
+	if merged, merr := mergePCAPFiles(req.RunID, "netbios_enum", nbPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
+	}
+
 	logInfo("Return from runNetBIOSEnum syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -1009,6 +1054,7 @@ func runSSLScan(req AttackRequest) (*AttackResult, error) {
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	targetPort := getAttackParamInt(req.Params, "target_port", 443)
 	fw := getFirewall()
+
 	for _, targetIP := range req.TargetIPs {
 		msgs := []string{
 			fmt.Sprintf("TLS ClientHello from %s to %s:%d — SSLv3 offered (POODLE probe)", req.AttackerIP, targetIP, targetPort),
@@ -1029,53 +1075,52 @@ func runSSLScan(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
+	}
+
+	// PCAP — single file across all targets
+	var sslPaths []string
+	for _, targetIP := range req.TargetIPs {
 		srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
 		dstMAC := [6]byte{0x00, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
 		srcPort := randomPort()
 		var frames [][]byte
 		clientSeq, serverSeq := rand.Uint32(), rand.Uint32()
-
 		syn := buildTCPSegment(srcPort, uint16(targetPort), 0x02, clientSeq, 0, nil)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, syn)))
 		clientSeq++
-
 		synAck := buildTCPSegment(uint16(targetPort), srcPort, 0x12, serverSeq, clientSeq, nil)
 		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 6, synAck)))
 		serverSeq++
-
 		ack := buildTCPSegment(srcPort, uint16(targetPort), 0x10, clientSeq, serverSeq, nil)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, ack)))
-
 		clientHello := buildTLSClientHelloSNI(targetIP)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, buildTCPSegment(srcPort, uint16(targetPort), 0x18, clientSeq, serverSeq, clientHello))))
 		clientSeq += uint32(len(clientHello))
-
 		serverHelloCert := buildTLSServerHelloCertificate()
 		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 6, buildTCPSegment(uint16(targetPort), srcPort, 0x18, serverSeq, clientSeq, serverHelloCert))))
 		serverSeq += uint32(len(serverHelloCert))
-
 		heartbeatReq := buildTLSHeartbeatRequest()
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, buildTCPSegment(srcPort, uint16(targetPort), 0x18, clientSeq, serverSeq, heartbeatReq))))
 		clientSeq += uint32(len(heartbeatReq))
-
 		heartbeatResp := buildTLSHeartbeatResponse()
 		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 6, buildTCPSegment(uint16(targetPort), srcPort, 0x18, serverSeq, clientSeq, heartbeatResp))))
 		serverSeq += uint32(len(heartbeatResp))
-
 		paddingProbe := buildTLSPaddingOracleProbe()
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, buildIPv4Packet(req.AttackerIP, targetIP, 6, buildTCPSegment(srcPort, uint16(targetPort), 0x18, clientSeq, serverSeq, paddingProbe))))
 		clientSeq += uint32(len(paddingProbe))
-
 		alertResp := buildTLSAlertBadRecordMAC()
 		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, buildIPv4Packet(targetIP, req.AttackerIP, 6, buildTCPSegment(uint16(targetPort), srcPort, 0x18, serverSeq, clientSeq, alertResp))))
-
 		bgFrames := generateBackgroundTraffic(getAllDevices())
 		finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
-		path, _ := writePCAPFile(req.RunID, "ssl_scan", finalFrames, defaultDuration)
-		if path != "" {
-			result.PCAPFiles = append(result.PCAPFiles, path)
+		p, _ := writePCAPFile(req.RunID, "ssl_scan", finalFrames, defaultDuration)
+		if p != "" {
+			sslPaths = append(sslPaths, p)
 		}
 	}
+	if merged, merr := mergePCAPFiles(req.RunID, "ssl_scan", sslPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
+	}
+
 	logInfo("Return from runSSLScan syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -1085,6 +1130,7 @@ func runCloudMetaDiscovery(req AttackRequest) (*AttackResult, error) {
 	logInfo("Entering runCloudMetaDiscovery attacker=%s", req.AttackerIP)
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	fw := getFirewall()
+
 	for _, targetIP := range req.TargetIPs {
 		dev := fw
 		if fw == nil {
@@ -1105,13 +1151,22 @@ func runCloudMetaDiscovery(req AttackRequest) (*AttackResult, error) {
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, "169.254.169.254", "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
-		ssrfPath, ssrfErr := PCAPGenericTCPExchange(req.RunID, "cloud_meta_discovery", req.AttackerIP, "169.254.169.254", 80,
+	}
+
+	// PCAP — single file across all targets
+	var cloudPaths []string
+	for range req.TargetIPs {
+		p, e := PCAPGenericTCPExchange(req.RunID, "cloud_meta_discovery", req.AttackerIP, "169.254.169.254", 80,
 			[]byte("GET /latest/meta-data/iam/security-credentials/ HTTP/1.1\r\nHost: 169.254.169.254\r\n\r\n"),
 			[]byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"))
-		if ssrfErr == nil {
-			result.PCAPFiles = append(result.PCAPFiles, ssrfPath)
+		if e == nil {
+			cloudPaths = append(cloudPaths, p)
 		}
 	}
+	if merged, merr := mergePCAPFiles(req.RunID, "cloud_meta_discovery", cloudPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
+	}
+
 	logInfo("Return from runCloudMetaDiscovery syslogs=%d", result.SyslogCount)
 	return result, nil
 }

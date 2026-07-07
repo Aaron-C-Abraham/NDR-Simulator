@@ -18,6 +18,7 @@ func runIPFragmentation(req AttackRequest) (*AttackResult, error) {
 	if fragSize < 1 {
 		fragSize = 1
 	}
+
 	for _, targetIP := range req.TargetIPs {
 		targetDev, _ := getDeviceByIP(targetIP)
 		devName := targetIP
@@ -36,6 +37,7 @@ func runIPFragmentation(req AttackRequest) (*AttackResult, error) {
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 	}
+
 	fw := getFirewall()
 	flows := []FlowRecord{}
 	for _, targetIP := range req.TargetIPs {
@@ -46,12 +48,19 @@ func runIPFragmentation(req AttackRequest) (*AttackResult, error) {
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
 	}
+
+	// PCAP — single file across all targets
+	var fragPaths []string
 	for _, targetIP := range req.TargetIPs {
-		pcapPath, pcapErr := PCAPIPFragmentation(req.RunID, req.AttackerIP, targetIP, uint16(randomPort()), fragSize)
-		if pcapErr == nil {
-			result.PCAPFiles = append(result.PCAPFiles, pcapPath)
+		p, e := PCAPIPFragmentation(req.RunID, req.AttackerIP, targetIP, uint16(randomPort()), fragSize)
+		if e == nil {
+			fragPaths = append(fragPaths, p)
 		}
 	}
+	if merged, merr := mergePCAPFiles(req.RunID, "ip_fragmentation", fragPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
+	}
+
 	logInfo("Return from runIPFragmentation syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -74,24 +83,29 @@ func runProtocolTunnel(req AttackRequest) (*AttackResult, error) {
 			eventID, _ := recordRunEvent(req.RunID, "syslog", "fw-perimeter", req.AttackerIP, targetIP, "IPv6-in-IPv4", ev)
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
-
-		// Flow: protocol 41 = IPv6-in-IPv4
 		flows := []FlowRecord{{
 			SrcIP: req.AttackerIP, DstIP: targetIP,
-			SrcPort: 0, DstPort: 0, // protocol 41 has no ports
+			SrcPort: 0, DstPort: 0,
 			Protocol: 41, Bytes: 2097152, Packets: 4096,
 			StartTime: time.Now().Add(-5 * time.Minute), EndTime: time.Now(),
 		}}
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "IPv6-in-IPv4", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)
+	}
 
-		// PCAP: IPv6-in-IPv4 encapsulated packets
-		pcapPath, pcapErr := PCAPIPv6InIPv4Tunnel(req.RunID, req.AttackerIP, targetIP)
-		if pcapErr == nil {
-			result.PCAPFiles = append(result.PCAPFiles, pcapPath)
+	// PCAP — single file across all targets
+	var tunPaths []string
+	for _, targetIP := range req.TargetIPs {
+		p, e := PCAPIPv6InIPv4Tunnel(req.RunID, req.AttackerIP, targetIP)
+		if e == nil {
+			tunPaths = append(tunPaths, p)
 		}
 	}
+	if merged, merr := mergePCAPFiles(req.RunID, "protocol_tunnel", tunPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
+	}
+
 	logInfo("Return from runProtocolTunnel syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -116,7 +130,6 @@ func runLowSlowScan(req AttackRequest) (*AttackResult, error) {
 	delayDuration := time.Duration(delayMs) * time.Millisecond
 	scanInterval := fmt.Sprintf("%dms", delayMs)
 
-	// Build port list — common ports cycling through well-known services
 	allPorts := []uint16{22, 80, 443, 3389, 8080, 3306, 5432, 1433, 21, 23, 25, 53,
 		110, 139, 445, 993, 995, 1723, 3306, 5900, 8443, 8888, 9090, 9200}
 	var ports []uint16
@@ -163,12 +176,18 @@ func runLowSlowScan(req AttackRequest) (*AttackResult, error) {
 		result.EventIDs = append(result.EventIDs, fids...)
 	}
 
+	// PCAP — single file across all targets
+	var lowSlowPaths []string
 	for _, targetIP := range req.TargetIPs {
-		pcapPath, pcapErr := PCAPLowSlowScan(req.RunID, req.AttackerIP, targetIP, ports, delayDuration)
-		if pcapErr == nil {
-			result.PCAPFiles = append(result.PCAPFiles, pcapPath)
+		p, e := PCAPLowSlowScan(req.RunID, req.AttackerIP, targetIP, ports, delayDuration)
+		if e == nil {
+			lowSlowPaths = append(lowSlowPaths, p)
 		}
 	}
+	if merged, merr := mergePCAPFiles(req.RunID, "low_slow_scan", lowSlowPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
+	}
+
 	logInfo("Return from runLowSlowScan syslogs=%d", result.SyslogCount)
 	return result, nil
 }
@@ -221,14 +240,18 @@ func runDecoyScan(req AttackRequest) (*AttackResult, error) {
 		result.EventIDs = append(result.EventIDs, fids...)
 	}
 
-	// One PCAP per target — all source IPs interleaved so Wireshark shows
-	// simultaneous SYNs from many sources (the nmap -D signature)
+	// PCAP — single file across all targets
+	var decoyPaths []string
 	for _, targetIP := range req.TargetIPs {
-		pcapPath, pcapErr := PCAPDecoyScan(req.RunID, req.AttackerIP, targetIP, decoyIPs)
-		if pcapErr == nil {
-			result.PCAPFiles = append(result.PCAPFiles, pcapPath)
+		p, e := PCAPDecoyScan(req.RunID, req.AttackerIP, targetIP, decoyIPs)
+		if e == nil {
+			decoyPaths = append(decoyPaths, p)
 		}
 	}
+	if merged, merr := mergePCAPFiles(req.RunID, "decoy_scan", decoyPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
+	}
+
 	logInfo("Return from runDecoyScan syslogs=%d", result.SyslogCount)
 	return result, nil
 }
