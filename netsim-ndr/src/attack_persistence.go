@@ -16,7 +16,7 @@ func runIPFragmentation(req AttackRequest) (*AttackResult, error) {
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	fragSize := getAttackParamInt(req.Params, "frag_size", 8)
 	if fragSize < 1 {
-		fragSize = 1
+		return result, fmt.Errorf("frag_size must be at least 1, got %d", fragSize)
 	}
 
 	for _, targetIP := range req.TargetIPs {
