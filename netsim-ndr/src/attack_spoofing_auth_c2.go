@@ -208,6 +208,8 @@ func runMACSpoofing(req AttackRequest) (*AttackResult, error) {
 	targetMAC := getAttackParam(req.Params, "target_mac", "00:11:22:33:44:05")
 	attackerDev := getAttackerDevice()
 
+	var macSpoofPaths []string
+
 	for _, swDev := range getSwitches() {
 		msg := fmt.Sprintf("MAC address %s has moved from port Gi0/1 to port Gi0/5 — possible MAC spoofing", targetMAC)
 		ev := sendSyslog(swDev, msg, 3)
@@ -215,14 +217,11 @@ func runMACSpoofing(req AttackRequest) (*AttackResult, error) {
 		eventID, _ := recordRunEvent(req.RunID, "syslog", swDev.Name, req.AttackerIP, "broadcast", "ETH", ev)
 		result.EventIDs = append(result.EventIDs, eventID)
 
-		// PCAP: target device TCP chatter interleaved with attacker's DHCP request
-		// Both happening simultaneously on the network
 		if attackerDev != nil {
 			clonedMAC := parseMACAddress(targetMAC)
 			dstMAC := parseMACAddress(swDev.MACAddress)
 			broadcastMAC := [6]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 
-			// Find target device IP
 			var targetDevIP string
 			for _, d := range getAllDevices() {
 				if d.MACAddress == targetMAC {
@@ -234,7 +233,6 @@ func runMACSpoofing(req AttackRequest) (*AttackResult, error) {
 				targetDevIP = "10.0.1.10"
 			}
 
-			// Find other devices for TCP chatter
 			var otherDevices []*Device
 			for _, d := range getDevicesByZone("internal") {
 				if d.MACAddress != targetMAC && d.DeviceType != "switch" && len(otherDevices) < 3 {
@@ -242,7 +240,6 @@ func runMACSpoofing(req AttackRequest) (*AttackResult, error) {
 				}
 			}
 
-			// Pre-build TCP chatter frames
 			type tcpConv struct{ syn, synAck, ack []byte }
 			var convs []tcpConv
 			for _, other := range otherDevices {
@@ -256,7 +253,6 @@ func runMACSpoofing(req AttackRequest) (*AttackResult, error) {
 				convs = append(convs, tcpConv{syn, synAck, ack})
 			}
 
-			// Pre-build DHCP frames
 			xid := rand.Uint32()
 			discoverOptions := buildDHCPOption(53, []byte{0x01})
 			discoverOptions = append(discoverOptions, buildDHCPOption(50, []byte{192, 168, 1, 99})...)
@@ -284,29 +280,28 @@ func runMACSpoofing(req AttackRequest) (*AttackResult, error) {
 			dhcpAck := buildDHCPPacket(0x02, xid, clonedMAC, "0.0.0.0", "192.168.1.99", swDev.IPAddress, "0.0.0.0", ackOptions)
 			dhcpAckFrame := buildEthernetFrame(dstMAC, clonedMAC, buildIPv4Packet(swDev.IPAddress, "255.255.255.255", 17, buildUDPDatagram(67, 68, dhcpAck)))
 
-			// Interleave TCP chatter with DHCP — everything happening at once
 			var frames [][]byte
 			if len(convs) > 0 {
-				frames = append(frames, convs[0].syn) // target SYN to device 1
+				frames = append(frames, convs[0].syn)
 			}
-			frames = append(frames, discoverFrame) // attacker DHCP Discover (cloned MAC)
+			frames = append(frames, discoverFrame)
 			if len(convs) > 0 {
-				frames = append(frames, convs[0].synAck) // device 1 SYN-ACK to target
-				frames = append(frames, convs[0].ack)    // target ACK
+				frames = append(frames, convs[0].synAck)
+				frames = append(frames, convs[0].ack)
 			}
-			frames = append(frames, offerFrame) // DHCP Offer from server
+			frames = append(frames, offerFrame)
 			if len(convs) > 1 {
-				frames = append(frames, convs[1].syn) // target SYN to device 2
+				frames = append(frames, convs[1].syn)
 				frames = append(frames, convs[1].synAck)
 			}
-			frames = append(frames, requestFrame) // attacker DHCP Request
+			frames = append(frames, requestFrame)
 			if len(convs) > 1 {
 				frames = append(frames, convs[1].ack)
 			}
 			if len(convs) > 2 {
-				frames = append(frames, convs[2].syn) // target SYN to device 3
+				frames = append(frames, convs[2].syn)
 			}
-			frames = append(frames, dhcpAckFrame) // DHCP ACK — attacker gets new IP
+			frames = append(frames, dhcpAckFrame)
 			if len(convs) > 2 {
 				frames = append(frames, convs[2].synAck)
 				frames = append(frames, convs[2].ack)
@@ -314,9 +309,9 @@ func runMACSpoofing(req AttackRequest) (*AttackResult, error) {
 
 			bgFrames := generateBackgroundTraffic(getAllDevices())
 			finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
-			path, _ := writePCAPFile(req.RunID, "mac_spoof", finalFrames, defaultDuration)
-			if path != "" {
-				result.PCAPFiles = append(result.PCAPFiles, path)
+			p, _ := writePCAPFile(req.RunID, "mac_spoof", finalFrames, defaultDuration)
+			if p != "" {
+				macSpoofPaths = append(macSpoofPaths, p)
 			}
 
 			// Flow export
@@ -338,6 +333,12 @@ func runMACSpoofing(req AttackRequest) (*AttackResult, error) {
 			result.EventIDs = append(result.EventIDs, fids...)
 		}
 	}
+
+	// PCAP — single file across all switches
+	if merged, merr := mergePCAPFiles(req.RunID, "mac_spoof", macSpoofPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
+	}
+
 	return result, nil
 }
 

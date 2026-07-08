@@ -48,6 +48,10 @@ func runPortScan(req AttackRequest) (*AttackResult, error) {
 	}
 
 	duration, _ := strconv.ParseUint(req.Params["rate"], 10, 64)
+
+	var portScanMu sync.Mutex
+	var portScanPaths []string
+
 	for _, targetIP := range req.TargetIPs {
 		targetDev, _ := getDeviceByIP(targetIP)
 		if targetDev == nil {
@@ -88,11 +92,17 @@ func runPortScan(req AttackRequest) (*AttackResult, error) {
 			defer wg.Done()
 			_, path, err := PCAPPortScan(attackerDev, targetDev, ports, port_mapping)
 			if err == nil && path != "" {
-				result.PCAPFiles = append(result.PCAPFiles, path)
+				portScanMu.Lock()
+				portScanPaths = append(portScanPaths, path)
+				portScanMu.Unlock()
 			}
 		}(result)
 		wg.Wait()
+	}
 
+	// PCAP — single file across all targets
+	if merged, merr := mergePCAPFiles(req.RunID, "port_scan", portScanPaths); merr == nil {
+		result.PCAPFiles = append(result.PCAPFiles, merged)
 	}
 
 	logInfo("Return from runPortScan syslogs=%d flows=%d pcap=%d", result.SyslogCount, result.FlowCount, len(result.PCAPFiles))
