@@ -400,19 +400,23 @@ func PCAPDNSTunnel(runID, attackerIP string, infectedDev, dnsDev *Device, domain
 	const b32Alphabet = "abcdefghijklmnopqrstuvwxyz234567"
 	var frames [][]byte
 
-	for idx := 0; idx < count; idx++ {
-		srcPort := uint16(50000 + idx%10000)
-		txID := uint16(0x1000 + idx)
+	for i := 0; i < count; i++ {
+		srcPort := uint16(50000 + i%10000)
+		txID := uint16(0x1000 + i)
 
 		// ── DNS TXT query (client→server) ────────────────────────────────
-		// Long base32-encoded subdomain — 63 bytes (max DNS label) carries exfil data
-		chunk := make([]byte, 63)
-		for j := range chunk {
-			chunk[j] = b32Alphabet[(idx*7+j*13)%len(b32Alphabet)]
+		// Three 63-byte base32 labels simulate iodine/dnscat2 chunk shape.
+		numChunks := 3
+		var labelParts []string
+		for c := 0; c < numChunks; c++ {
+			chunk := make([]byte, 63)
+			for j := range chunk {
+				chunk[j] = b32Alphabet[(i*7+c*31+j*13)%len(b32Alphabet)]
+			}
+			labelParts = append(labelParts, string(chunk))
 		}
-		subdomain := string(chunk) + "." + domain
+		subdomain := strings.Join(labelParts, ".") + "." + domain
 		query := buildDNSQueryType(subdomain, 0x0010) // TXT
-		// Patch transaction ID so query/response share the same TXID
 		query[0] = byte(txID >> 8)
 		query[1] = byte(txID & 0xFF)
 
@@ -421,32 +425,26 @@ func PCAPDNSTunnel(runID, attackerIP string, infectedDev, dnsDev *Device, domain
 			buildIPv4Packet(infectedDev.IPAddress, dnsDev.IPAddress, 17, udpQuery)))
 
 		// ── DNS TXT response (server→client) ─────────────────────────────
-		// Small response — just a short C2 ACK/command (real DNS tunnel
-		// responses are tiny compared to the exfil queries)
-		cmdChunk := make([]byte, 10) // small C2 command, not 200 bytes
+		cmdChunk := make([]byte, 10)
 		for j := range cmdChunk {
-			cmdChunk[j] = b32Alphabet[(idx*3+j*5)%len(b32Alphabet)]
+			cmdChunk[j] = b32Alphabet[(i*3+j*5)%len(b32Alphabet)]
 		}
-		txtData := cmdChunk // the TXT RDATA string
+		txtData := cmdChunk
 
 		var resp []byte
-		// Header: TXID, flags=response+recursion available, QDCOUNT=1, ANCOUNT=1
 		resp = append(resp, byte(txID>>8), byte(txID&0xFF))
-		resp = append(resp, 0x81, 0x80) // QR=1, RA=1
-		resp = append(resp, 0x00, 0x01) // QDCOUNT=1
-		resp = append(resp, 0x00, 0x01) // ANCOUNT=1
-		resp = append(resp, 0x00, 0x00) // NSCOUNT=0
-		resp = append(resp, 0x00, 0x00) // ARCOUNT=0
-		// Question section: compressed name pointer back to original QNAME at offset 12
-		resp = append(resp, 0xC0, 0x0C) // QNAME pointer
-		resp = append(resp, 0x00, 0x10) // QTYPE=TXT
-		resp = append(resp, 0x00, 0x01) // QCLASS=IN
-
-		// Answer RR: same compressed name pointer
-		resp = append(resp, 0xC0, 0x0C)             // NAME pointer
-		resp = append(resp, 0x00, 0x10)             // TYPE=TXT
-		resp = append(resp, 0x00, 0x01)             // CLASS=IN
-		resp = append(resp, 0x00, 0x00, 0x00, 0x3C) // TTL=60
+		resp = append(resp, 0x81, 0x80)
+		resp = append(resp, 0x00, 0x01)
+		resp = append(resp, 0x00, 0x01)
+		resp = append(resp, 0x00, 0x00)
+		resp = append(resp, 0x00, 0x00)
+		resp = append(resp, 0xC0, 0x0C)
+		resp = append(resp, 0x00, 0x10)
+		resp = append(resp, 0x00, 0x01)
+		resp = append(resp, 0xC0, 0x0C)
+		resp = append(resp, 0x00, 0x10)
+		resp = append(resp, 0x00, 0x01)
+		resp = append(resp, 0x00, 0x00, 0x00, 0x3C)
 		rdLen := uint16(1 + len(txtData))
 		resp = append(resp, byte(rdLen>>8), byte(rdLen&0xFF))
 		resp = append(resp, byte(len(txtData)))
@@ -463,7 +461,6 @@ func PCAPDNSTunnel(runID, attackerIP string, infectedDev, dnsDev *Device, domain
 		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC,
 			buildIPv4Packet(dnsDev.IPAddress, attackerIP, 17, udpFwd)))
 
-		// Attacker authoritative server responds
 		udpFwdResp := buildUDPDatagram(53, uint16(50000+rand.Intn(10000)), resp)
 		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC,
 			buildIPv4Packet(attackerIP, dnsDev.IPAddress, 17, udpFwdResp)))
@@ -4192,57 +4189,79 @@ func PCAPDNSExfilMulti(runID, infectedIP, attackerIP, dnsTargetIP, domain string
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering PCAPDNSExfilMulti infectedIP=%s attacker=%s dnsTarget=%s domain=%s chunks=%d", infectedIP, attackerIP, dnsTargetIP, domain, chunkCount)
 
-	srcMAC := [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
-	dstMAC := [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	infectedDev, _ := getDeviceByIP(infectedIP)
+	dnsDev, _ := getDeviceByIP(dnsTargetIP)
+
+	var srcMAC, dstMAC [6]byte
+	if infectedDev != nil {
+		srcMAC = parseMACAddress(infectedDev.MACAddress)
+	} else {
+		srcMAC = [6]byte{0x00, 0xAA, 0x11, 0x22, 0x33, byte(rand.Intn(255))}
+	}
+	if dnsDev != nil {
+		dstMAC = parseMACAddress(dnsDev.MACAddress)
+	} else {
+		dstMAC = [6]byte{0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x01}
+	}
 
 	const chunkAlphabet = "abcdefghijklmnopqrstuvwxyz234567"
 	if chunkCount > 200 {
 		chunkCount = 200
 	}
 	var frames [][]byte
+
 	for i := 0; i < chunkCount; i++ {
-		// Attacker → DNS server: small trigger query
-		triggerTxID := uint16(0x2000 + i)
-		triggerQuery := buildDNSQueryType("ready."+domain, 0x0001)
-		triggerQuery[0] = byte(triggerTxID >> 8)
-		triggerQuery[1] = byte(triggerTxID & 0xFF)
-		triggerSrcPort := uint16(40000 + i%10000)
-		triggerIP := buildIPv4Packet(attackerIP, dnsTargetIP, 17, buildUDPDatagram(triggerSrcPort, 53, triggerQuery))
-		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, triggerIP))
+		txID := uint16(0x1000 + i)
+		srcPort := uint16(50000 + i%10000)
 
-		// DNS server → attacker: response to trigger
-		var triggerResp []byte
-		triggerResp = append(triggerResp, byte(triggerTxID>>8), byte(triggerTxID&0xFF))
-		triggerResp = append(triggerResp, 0x81, 0x80) // QR=1, RCODE=0 success
-		triggerResp = append(triggerResp, 0x00, 0x01) // QDCOUNT=1
-		triggerResp = append(triggerResp, 0x00, 0x00) // ANCOUNT=0
-		triggerResp = append(triggerResp, 0x00, 0x00) // NSCOUNT=0
-		triggerResp = append(triggerResp, 0x00, 0x00) // ARCOUNT=0
-		triggerResp = append(triggerResp, triggerQuery[12:]...)
-		triggerRespIP := buildIPv4Packet(dnsTargetIP, attackerIP, 17, buildUDPDatagram(53, triggerSrcPort, triggerResp))
-		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, triggerRespIP))
-		// Infected host → DNS: TXT query with exfil chunk
-		chunk := make([]byte, 28)
-		for j := range chunk {
-			chunk[j] = chunkAlphabet[(i*7+j*13)%len(chunkAlphabet)]
+		// ── Infected host → DNS server: TXT query with sequenced exfil chunk ──
+		// Two 63-byte base32 labels + 4-char sequence prefix per chunk.
+		// Wire size ~200 bytes — realistic for iodine/dnscat2-style exfil.
+		seqLabel := fmt.Sprintf("%04x", i) // sequence number as its own label
+		var labelParts []string
+		for c := 0; c < 2; c++ {
+			chunk := make([]byte, 63)
+			for j := range chunk {
+				chunk[j] = chunkAlphabet[(i*7+c*31+j*13)%len(chunkAlphabet)]
+			}
+			labelParts = append(labelParts, string(chunk))
 		}
-		qname := string(chunk) + "." + domain
-		query := buildDNSQueryType(qname, 0x0010)
-		ip := buildIPv4Packet(infectedIP, dnsTargetIP, 17, buildUDPDatagram(uint16(50000+i%10000), 53, query))
-		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC, ip))
+		qname := seqLabel + "." + labelParts[0] + "." + labelParts[1] + "." + domain
+		query := buildDNSQueryType(qname, 0x0010) // TXT
+		query[0] = byte(txID >> 8)
+		query[1] = byte(txID & 0xFF)
 
-		// DNS → infected host: NXDOMAIN response
-		var nxResp []byte
-		nxResp = append(nxResp, query[0], query[1])
-		nxResp = append(nxResp, 0x81, 0x83)
-		nxResp = append(nxResp, 0x00, 0x01)
-		nxResp = append(nxResp, 0x00, 0x00)
-		nxResp = append(nxResp, 0x00, 0x00)
-		nxResp = append(nxResp, 0x00, 0x00)
-		nxResp = append(nxResp, query[12:]...)
-		respIP := buildIPv4Packet(dnsTargetIP, infectedIP, 17, buildUDPDatagram(53, uint16(50000+i%10000), nxResp))
-		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC, respIP))
+		udpQuery := buildUDPDatagram(srcPort, 53, query)
+		frames = append(frames, buildEthernetFrame(srcMAC, dstMAC,
+			buildIPv4Packet(infectedIP, dnsTargetIP, 17, udpQuery)))
+
+		// ── DNS server → infected host: NOERROR with minimal A record ──
+		// Attacker's authoritative server acknowledges receipt of chunk.
+		var resp []byte
+		resp = append(resp, byte(txID>>8), byte(txID&0xFF))
+		resp = append(resp, 0x81, 0x80) // NOERROR
+		resp = append(resp, 0x00, 0x01) // QDCOUNT=1
+		resp = append(resp, 0x00, 0x01) // ANCOUNT=1
+		resp = append(resp, 0x00, 0x00)
+		resp = append(resp, 0x00, 0x00)
+		// Copy full question section from query (skip 12-byte header)
+		resp = append(resp, query[12:]...)
+		// Answer RR
+		resp = append(resp, 0xC0, 0x0C)             // NAME pointer to offset 12
+		resp = append(resp, 0x00, 0x01)             // TYPE=A
+		resp = append(resp, 0x00, 0x01)             // CLASS=IN
+		resp = append(resp, 0x00, 0x00, 0x00, 0x3C) // TTL=60
+		resp = append(resp, 0x00, 0x04)             // RDLENGTH=4
+		parts := strings.Split(attackerIP, ".")
+		for _, p := range parts {
+			v, _ := strconv.Atoi(p)
+			resp = append(resp, byte(v))
+		}
+		udpResp := buildUDPDatagram(53, srcPort, resp)
+		frames = append(frames, buildEthernetFrame(dstMAC, srcMAC,
+			buildIPv4Packet(dnsTargetIP, infectedIP, 17, udpResp)))
 	}
+
 	bgFrames := generateBackgroundTraffic(getAllDevices())
 	finalFrames := interleaveBackgroundTraffic(frames, bgFrames)
 	path, err := writePCAPFile(runID, "dns_exfil", finalFrames, defaultDuration)
