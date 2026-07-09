@@ -189,6 +189,7 @@ func runHTTPFlood(req AttackRequest) (*AttackResult, error) {
 	logInfo("Entering runHTTPFlood attacker=%s targets=%v", req.AttackerIP, req.TargetIPs)
 
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
+	targetPort := uint16(getAttackParamInt(req.Params, "target_port", 80))
 	rps := getAttackParamInt(req.Params, "rps", 5000)
 	fw := getFirewall()
 
@@ -216,7 +217,7 @@ func runHTTPFlood(req AttackRequest) (*AttackResult, error) {
 
 		duration := getAttackParamInt(req.Params, "duration", 30)
 		totalPkts := uint32(rps * duration)
-		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 80, Protocol: 6,
+		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: targetPort, Protocol: 6,
 			Bytes: totalPkts * 500, Packets: totalPkts,
 			StartTime: time.Now().Add(-time.Duration(duration) * time.Second), EndTime: time.Now(), TCPFlags: 0x18}}
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
@@ -229,7 +230,7 @@ func runHTTPFlood(req AttackRequest) (*AttackResult, error) {
 
 	var httpPaths []string
 	for _, targetIP := range req.TargetIPs {
-		p, _ := PCAPHTTPFlood(req.RunID, req.AttackerIP, targetIP, 80, 20)
+		p, _ := PCAPHTTPFlood(req.RunID, req.AttackerIP, targetIP, targetPort, 20)
 		if p != "" {
 			httpPaths = append(httpPaths, p)
 		}

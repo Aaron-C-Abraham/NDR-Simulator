@@ -47,7 +47,7 @@ func runPortScan(req AttackRequest) (*AttackResult, error) {
 		ports = append(ports, uint16(p))
 	}
 
-	duration, _ := strconv.ParseUint(req.Params["rate"], 10, 64)
+	duration, _ := strconv.ParseUint(getAttackParam(req.Params, "rate", "1000"), 10, 64)
 
 	var portScanMu sync.Mutex
 	var portScanPaths []string

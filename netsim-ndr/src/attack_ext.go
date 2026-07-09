@@ -412,6 +412,7 @@ func runBruteForceFTP(req AttackRequest) (*AttackResult, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering runBruteForceFTP attacker=%s", req.AttackerIP)
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
+	rate := getAttackParamInt(req.Params, "rate", 5)
 	fw := getFirewall()
 	users := []string{"admin", "ftp", "anonymous", "user", "ftpuser"}
 	for _, targetIP := range req.TargetIPs {
@@ -425,9 +426,9 @@ func runBruteForceFTP(req AttackRequest) (*AttackResult, error) {
 			result.SyslogCount++
 			eventID, _ := recordRunEvent(req.RunID, "syslog", targetIP, req.AttackerIP, targetIP, "TCP", ev)
 			result.EventIDs = append(result.EventIDs, eventID)
-			time.Sleep(15 * time.Millisecond)
+			time.Sleep(time.Duration(1000/rate) * time.Millisecond)
 		}
-		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 21, Protocol: 6, Bytes: 3000, Packets: uint32(len(users) * 4), StartTime: time.Now(), EndTime: time.Now().Add(5 * time.Second), TCPFlags: 0x18}}
+		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 21, Protocol: 6, Bytes: 3000, Packets: uint32(len(users) * rate), StartTime: time.Now(), EndTime: time.Now().Add(5 * time.Second), TCPFlags: 0x18}}
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
 		result.FlowCount += fc
 		result.EventIDs = append(result.EventIDs, fids...)

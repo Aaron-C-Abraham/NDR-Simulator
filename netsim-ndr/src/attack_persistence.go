@@ -196,7 +196,7 @@ func runDecoyScan(req AttackRequest) (*AttackResult, error) {
 	defer panicHandler(traceFunc(), nil)
 	logInfo("Entering runDecoyScan attacker=%s", req.AttackerIP)
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
-	numDecoys := getAttackParamInt(req.Params, "num_decoys", 10)
+	numDecoys := getAttackParamInt(req.Params, "decoy_count", 10)
 	decoyIPs := make([]string, numDecoys)
 	for idx := range decoyIPs {
 		decoyIPs[idx] = fmt.Sprintf("10.%d.%d.%d", rand.Intn(256), rand.Intn(256), 1+rand.Intn(254))

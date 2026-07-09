@@ -601,8 +601,17 @@ func runBruteForceSSH(req AttackRequest) (*AttackResult, error) {
 	if attackerDev == nil {
 		attackerDev = getAttackerDevice()
 	}
-	sshUsers := []string{"root", "admin", "ubuntu", "ec2-user", "deploy", "git", "user", "test", "oracle", "postgres"}
-
+	wordlist := getAttackParam(req.Params, "wordlist", "common")
+	rate := getAttackParamInt(req.Params, "rate", 10)
+	var sshUsers []string
+	switch wordlist {
+	case "extended":
+		sshUsers = []string{"root", "admin", "ubuntu", "ec2-user", "deploy", "git", "user", "test", "oracle", "postgres", "ansible", "vagrant", "jenkins", "tomcat", "www-data", "backup", "ftp", "mail", "nobody", "pi"}
+	case "minimal":
+		sshUsers = []string{"root", "admin", "user"}
+	default: // "common"
+		sshUsers = []string{"root", "admin", "ubuntu", "ec2-user", "deploy", "git", "user", "test", "oracle", "postgres"}
+	}
 	for _, targetIP := range req.TargetIPs {
 		targetDev, _ := getDeviceByIP(targetIP)
 		if targetDev == nil {
@@ -615,7 +624,7 @@ func runBruteForceSSH(req AttackRequest) (*AttackResult, error) {
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
 		duration := getAttackParamInt(req.Params, "duration", 60)
-		sshPkts := uint32(200 * duration / 60)
+		sshPkts := uint32(rate * duration)
 		flows := []FlowRecord{{SrcIP: req.AttackerIP, DstIP: targetIP, SrcPort: randomPort(), DstPort: 22, Protocol: 6,
 			Bytes: sshPkts * 200, Packets: sshPkts,
 			StartTime: time.Now().Add(-time.Duration(duration) * time.Second), EndTime: time.Now()}}
@@ -882,14 +891,19 @@ func runC2Beaconing(req AttackRequest) (*AttackResult, error) {
 
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	intervalSecs := getAttackParamInt(req.Params, "interval_secs", 60)
+	jitterPct := getAttackParamInt(req.Params, "jitter_pct", 20)
 	count := getAttackParamInt(req.Params, "count", 10)
+	jitterSecs := intervalSecs * jitterPct / 100
+	if jitterSecs < 1 {
+		jitterSecs = 1
+	}
 
 	for _, infectedIP := range req.TargetIPs {
 		infectedDev, _ := getDeviceByIP(infectedIP)
 		if infectedDev == nil {
 			continue
 		}
-		interval := time.Duration(intervalSecs) * time.Second
+		interval := time.Duration(intervalSecs+rand.Intn(jitterSecs*2+1)-jitterSecs) * time.Second
 		syslogEvents := SyslogBeaconing(infectedDev, req.AttackerIP, 100*time.Millisecond, count)
 		result.SyslogCount += len(syslogEvents)
 		for _, ev := range syslogEvents {
@@ -927,6 +941,12 @@ func runDGA(req AttackRequest) (*AttackResult, error) {
 	defer panicHandler(traceFunc(), nil)
 	result := &AttackResult{AttackID: req.AttackID, RunID: req.RunID, AttackerIP: req.AttackerIP, TargetIPs: req.TargetIPs, StartedAt: time.Now()}
 	count := getAttackParamInt(req.Params, "count", 50)
+	seed := getAttackParam(req.Params, "seed", "xorshift42")
+	seedHash := int64(0)
+	for _, c := range seed {
+		seedHash = seedHash*31 + int64(c)
+	}
+	seededRand := rand.New(rand.NewSource(seedHash))
 	dnsDev := getDNSServer()
 	if dnsDev == nil {
 		return result, nil
@@ -937,7 +957,12 @@ func runDGA(req AttackRequest) (*AttackResult, error) {
 	for _, infectedIP := range req.TargetIPs {
 		var dgaDomains []string
 		for idx := 0; idx < count; idx++ {
-			domain := fmt.Sprintf("%s.%s", randomHexString(12), tlds[rand.Intn(len(tlds))])
+			const letters = "abcdefghijklmnopqrstuvwxyz0123456789"
+			b := make([]byte, 12)
+			for i := range b {
+				b[i] = letters[seededRand.Intn(len(letters))]
+			}
+			domain := fmt.Sprintf("%s.%s", string(b), tlds[seededRand.Intn(len(tlds))])
 			dgaDomains = append(dgaDomains, domain)
 			msg := fmt.Sprintf("client %s#%d: query: %s IN A NXDOMAIN (%s)", infectedIP, randomPort(), domain, dnsDev.IPAddress)
 			ev := sendSyslog(dnsDev, msg, 5)
@@ -960,7 +985,12 @@ func runDGA(req AttackRequest) (*AttackResult, error) {
 	for _, infectedIP := range req.TargetIPs {
 		var dgaDomains []string
 		for idx := 0; idx < count; idx++ {
-			dgaDomains = append(dgaDomains, fmt.Sprintf("%s.%s", randomHexString(12), tlds[rand.Intn(len(tlds))]))
+			const letters = "abcdefghijklmnopqrstuvwxyz0123456789"
+			b := make([]byte, 12)
+			for i := range b {
+				b[i] = letters[seededRand.Intn(len(letters))]
+			}
+			dgaDomains = append(dgaDomains, fmt.Sprintf("%s.%s", string(b), tlds[seededRand.Intn(len(tlds))]))
 		}
 		p, _ := PCAPDGAMulti(req.RunID, infectedIP, dnsDev.IPAddress, req.AttackerIP, dgaDomains)
 		if p != "" {
@@ -1085,7 +1115,7 @@ func runLateralSMB(req AttackRequest) (*AttackResult, error) {
 	if sourceDev == nil {
 		sourceDev = getAttackerDevice()
 	}
-
+	share := getAttackParam(req.Params, "share", "C$")
 	for _, targetIP := range req.TargetIPs {
 		targetDev, _ := getDeviceByIP(targetIP)
 		if targetDev == nil {
@@ -1097,6 +1127,11 @@ func runLateralSMB(req AttackRequest) (*AttackResult, error) {
 			eventID, _ := recordRunEvent(req.RunID, "syslog", targetDev.Name, req.AttackerIP, targetIP, "SMB", ev)
 			result.EventIDs = append(result.EventIDs, eventID)
 		}
+		shareMsg := fmt.Sprintf("SMB share accessed: \\\\%s\\%s from %s — file copied via lateral movement", targetIP, share, req.AttackerIP)
+		ev := sendSyslog(targetDev, shareMsg, 3)
+		result.SyslogCount++
+		eventID, _ := recordRunEvent(req.RunID, "syslog", targetDev.Name, req.AttackerIP, targetIP, "SMB", ev)
+		result.EventIDs = append(result.EventIDs, eventID)
 		flows := FlowLateral(req.AttackerIP, targetIP)
 		fw := getFirewall()
 		fc, fids := exportFlowsAllFormats(req.RunID, fw, "fw-perimeter", req.AttackerIP, targetIP, "TCP", flows)
